@@ -2,8 +2,8 @@
  * GitLab VCS Strategy Implementation
  */
 
-import { IVcsStrategy } from './vcs-strategy.interface';
-import { CreateVcsStrategyInput } from './types';
+import { IVcsStrategy } from './vcs-strategy.interface.js';
+import { CreateVcsStrategyInput } from './types.js';
 
 export class GitLabStrategy implements IVcsStrategy {
   private credentials: { token: string; baseUrl?: string };

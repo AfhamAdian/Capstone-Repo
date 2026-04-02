@@ -3,10 +3,10 @@
  * Creates the appropriate strategy based on provider
  */
 
-import { CreateVcsStrategyInput, VcsProvider } from './types';
-import { IVcsStrategy } from './vcs-strategy.interface';
-import { GitHubStrategy } from './github.strategy';
-import { GitLabStrategy } from './gitlab.strategy';
+import { CreateVcsStrategyInput, VcsProvider } from './types.js';
+import { IVcsStrategy } from './vcs-strategy.interface.js';
+import { GitHubStrategy } from './github.strategy.js';
+import { GitLabStrategy } from './gitlab.strategy.js';
 
 export function createVcsStrategy(input: CreateVcsStrategyInput): IVcsStrategy {
   const provider = input.provider as VcsProvider;
