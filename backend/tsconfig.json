@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "outDir": "dist",
-    "rootDir": "src",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@libs/*": ["libs/*"]
+    },
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
@@ -19,6 +23,10 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": [
+    "apps/api/src/**/*.ts",
+    "libs/**/*.ts",
+    "scripts/**/*.ts"
+  ],
   "exclude": ["dist", "node_modules"]
 }

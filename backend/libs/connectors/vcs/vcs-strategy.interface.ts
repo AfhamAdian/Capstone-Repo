@@ -8,5 +8,5 @@ export interface IVcsStrategy {
    * Fetch data from the VCS provider
    * Return type is flexible and not fixed yet
    */
-  getData(): Promise<any>;
+  getData(): Promise<unknown>;
 }

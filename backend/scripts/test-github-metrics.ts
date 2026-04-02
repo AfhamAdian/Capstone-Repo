@@ -1,12 +1,11 @@
-import { createVcsStrategy } from '../dist/utils/vcs/index.js';
 import 'dotenv/config';
-import type { GitHubMetricsResponse } from '../dist/utils/vcs/github-metrics.types.js';
+import { createVcsStrategy, type GitHubMetricsResponse } from '@libs/connectors/vcs/index.js';
 
 /**
  * Test script for GitHub metrics calculation
  * 
  * Usage:
- *   GITHUB_TOKEN=your_token GITHUB_OWNER=owner GITHUB_REPO=repo npx ts-node scripts/test-github-metrics.ts
+ *   GITHUB_TOKEN=your_token GITHUB_OWNER=owner GITHUB_REPO=repo npm run test:github-metrics
  * 
  * Or with tsx:
  *   GITHUB_TOKEN=your_token GITHUB_OWNER=owner GITHUB_REPO=repo npx tsx scripts/test-github-metrics.ts

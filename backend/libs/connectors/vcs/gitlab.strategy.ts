@@ -27,7 +27,7 @@ export class GitLabStrategy implements IVcsStrategy {
     };
   }
 
-  async getData(): Promise<any> {
+  async getData(): Promise<unknown> {
     // Implementation to be added
     throw new Error('getData() not yet implemented for GitLab');
   }
