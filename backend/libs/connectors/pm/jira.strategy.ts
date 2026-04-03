@@ -171,7 +171,7 @@ export class JiraStrategy implements IPmStrategy {
 
     while (true) {
       const jql = `project = ${this.project.projectKey} AND updated >= "${since}" ORDER BY created DESC`;
-      const url = `${this.credentials.baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&expand=changelog&fields=created,updated,resolutiondate,status,issuetype,priority,assignee,customfield_10016,duedate,summary`;
+      const url = `${this.credentials.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&expand=changelog&fields=created,updated,resolutiondate,status,issuetype,priority,assignee,customfield_10016,duedate,summary`;
 
       const data = await this.fetchWithAuth(url);
       issues.push(...data.issues);
@@ -191,23 +191,28 @@ export class JiraStrategy implements IPmStrategy {
       return [];
     }
 
-    const sprints: JiraSprint[] = [];
-    let startAt = 0;
-    const maxResults = 50;
+    try {
+      const sprints: JiraSprint[] = [];
+      let startAt = 0;
+      const maxResults = 50;
 
-    while (true) {
-      const url = `${this.credentials.baseUrl}/rest/agile/1.0/board/${this.project.boardId}/sprint?startAt=${startAt}&maxResults=${maxResults}`;
+      while (true) {
+        const url = `${this.credentials.baseUrl}/rest/agile/1.0/board/${this.project.boardId}/sprint?startAt=${startAt}&maxResults=${maxResults}`;
 
-      const data = await this.fetchWithAuth(url);
-      sprints.push(...data.values);
+        const data = await this.fetchWithAuth(url);
+        sprints.push(...data.values);
 
-      if (data.isLast) break;
-      startAt += maxResults;
+        if (data.isLast) break;
+        startAt += maxResults;
 
-      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_PAUSE_MS));
+        await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_PAUSE_MS));
+      }
+
+      return sprints.filter((s) => s.state === 'closed').slice(-10); // Last 10 closed sprints
+    } catch (error) {
+      // Board doesn't support sprints (e.g., Kanban board)
+      return [];
     }
-
-    return sprints.filter((s) => s.state === 'closed').slice(-10); // Last 10 closed sprints
   }
 
   private calculateSprintCompletionRate(sprints: JiraSprint[], issues: JiraIssue[]): number | null {
