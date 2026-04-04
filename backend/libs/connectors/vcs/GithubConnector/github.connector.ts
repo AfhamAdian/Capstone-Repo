@@ -1,23 +1,23 @@
 /**
- * GitHub VCS Strategy Implementation
+ * GitHub VCS Connector Implementation
  */
 
 import { Octokit } from '@octokit/rest';
-import { IVcsStrategy } from './vcs-strategy.interface.js';
-import { CreateVcsStrategyInput } from './types.js';
-import { GitHubMetricsResponse } from './github-metrics.types.js';
-import type { IConnector, ConnectorOutput } from '@libs/sync/connector.interface.js';
+import { IVcsConnector } from '../connector.interface.js';
+import { CreateVcsConnectorInput } from '../types.js';
+import { GitHubMetricsResponse } from '../github-metrics.types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
 
-export class GitHubStrategy implements IVcsStrategy, IConnector {
+export class GitHubConnector implements IVcsConnector, IConnector {
   private credentials: { token: string };
   private project: { owner: string; repo: string };
   private octokit: Octokit;
 
-  constructor(input: CreateVcsStrategyInput) {
+  constructor(input: CreateVcsConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('GitHub token is required');
     }

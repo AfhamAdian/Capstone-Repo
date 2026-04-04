@@ -10,6 +10,7 @@ import type { SupportedTool, ConnectorOutput } from './types.js';
  */
 export interface ConnectorCredentials {
   token?: string;
+  email?: string;
   apiKey?: string;
   baseUrl?: string;
   username?: string;
@@ -23,6 +24,8 @@ export interface ConnectorCredentials {
 export interface ConnectorProject {
   owner?: string;
   repo?: string;
+  projectKey?: string;
+  boardId?: string;
   path?: string;
   id?: string;
   key?: string;

@@ -16,7 +16,7 @@ export interface PmProject {
   boardId?: string; // Jira: board ID for sprint data
 }
 
-export interface CreatePmStrategyInput {
+export interface CreatePmConnectorInput {
   provider: PmProvider;
   credentials: PmCredentials;
   project: PmProject;

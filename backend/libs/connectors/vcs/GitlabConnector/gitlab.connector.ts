@@ -1,16 +1,16 @@
 /**
- * GitLab VCS Strategy Implementation
+ * GitLab VCS Connector Implementation
  */
 
-import { IVcsStrategy } from './vcs-strategy.interface.js';
-import { CreateVcsStrategyInput } from './types.js';
-import type { IConnector, ConnectorOutput } from '@libs/sync/connector.interface.js';
+import { IVcsConnector } from '../connector.interface.js';
+import { CreateVcsConnectorInput } from '../types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 
-export class GitLabStrategy implements IVcsStrategy, IConnector {
+export class GitLabConnector implements IVcsConnector, IConnector {
   private credentials: { token: string; baseUrl?: string };
   private project: { path?: string; id?: string };
 
-  constructor(input: CreateVcsStrategyInput) {
+  constructor(input: CreateVcsConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('GitLab token is required');
     }

@@ -5,27 +5,48 @@
 
 import type { SupportedTool } from './types.js';
 import type { IConnector, CreateConnectorInput } from './connector.interface.js';
-import { GitHubStrategy } from '@libs/connectors/vcs/github.strategy.js';
-import { GitLabStrategy } from '@libs/connectors/vcs/gitlab.strategy.js';
-// import { JiraConnector } from '@libs/connectors/projectManagement/jira.connector.js';
+import { GitHubConnector } from '@libs/connectors/vcs/GithubConnector/github.connector.js';
+import { GitLabConnector } from '@libs/connectors/vcs/GitlabConnector/gitlab.connector.js';
+import { JiraConnector } from '@libs/connectors/pm/JiraConnector/jira.connector.js';
 
 /**
  * Connector registry maps tool names to their factory functions
  */
-const connectorRegistry: Record<SupportedTool, (input: CreateConnectorInput) => IConnector> = {
+const connectorRegistry: Partial<Record<SupportedTool, (input: CreateConnectorInput) => IConnector>> = {
   // VCS providers
-  github: (input) => new GitHubStrategy({
+  github: (input) => new GitHubConnector({
     provider: 'github',
-    credentials: input.credentials,
-    project: input.project,
+    credentials: {
+      token: input.credentials.token ?? '',
+    },
+    project: {
+      owner: input.project.owner ?? '',
+      repo: input.project.repo ?? '',
+    },
   }),
-  gitlab: (input) => new GitLabStrategy({
+  gitlab: (input) => new GitLabConnector({
     provider: 'gitlab',
-    credentials: input.credentials,
-    project: input.project,
+    credentials: {
+      token: input.credentials.token ?? '',
+    },
+    project: {
+      owner: input.project.owner ?? '',
+      repo: input.project.repo ?? '',
+    },
   }),
   // Project management providers
-  // jira: (input) => new JiraConnector(input),
+  jira: (input) => new JiraConnector({
+    provider: 'jira',
+    credentials: {
+      token: input.credentials.token ?? '',
+      email: input.credentials.email,
+      baseUrl: input.credentials.baseUrl,
+    },
+    project: {
+      projectKey: input.project.projectKey ?? input.project.key,
+      boardId: input.project.boardId,
+    },
+  }),
 } as const;
 
 /**

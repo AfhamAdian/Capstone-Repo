@@ -1,15 +1,15 @@
 /**
- * Linear PM Strategy Implementation (Placeholder)
+ * Linear PM Connector Implementation (Placeholder)
  */
 
-import { IPmStrategy } from './pm-strategy.interface.js';
-import { CreatePmStrategyInput } from './types.js';
+import { IPmConnector } from '../connector.interface.js';
+import { CreatePmConnectorInput } from '../types.js';
 
-export class LinearStrategy implements IPmStrategy {
+export class LinearConnector implements IPmConnector {
   private credentials: { token: string };
   private project: { projectId?: string };
 
-  constructor(input: CreatePmStrategyInput) {
+  constructor(input: CreatePmConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('Linear token is required');
     }

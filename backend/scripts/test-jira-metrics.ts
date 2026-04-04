@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createPmStrategy, type JiraMetricsResponse } from '@libs/connectors/pm/index.js';
+import { createPmConnector, type JiraMetricsResponse } from '@libs/connectors/pm/index.js';
 
 /**
  * Test script for Jira metrics calculation
@@ -71,7 +71,7 @@ async function testJiraMetrics() {
   };
 
   try {
-    const strategy = createPmStrategy({
+    const connector = createPmConnector({
       provider: 'jira',
       credentials: {
         token,
@@ -85,7 +85,7 @@ async function testJiraMetrics() {
     });
 
     const startTime = Date.now();
-    const metrics = (await strategy.getData()) as JiraMetricsResponse;
+  const metrics = (await connector.getData()) as JiraMetricsResponse;
     const endTime = Date.now();
 
     console.log('✅ Metrics calculated successfully!\n');

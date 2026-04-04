@@ -1,10 +1,11 @@
 /**
- * Jira PM Strategy Implementation
+ * Jira PM Connector Implementation
  */
 
-import { IPmStrategy } from './pm-strategy.interface.js';
-import { CreatePmStrategyInput } from './types.js';
-import { JiraMetricsResponse } from './jira-metrics.types.js';
+import { IPmConnector } from '../connector.interface.js';
+import { CreatePmConnectorInput } from '../types.js';
+import { JiraMetricsResponse } from '../jira-metrics.types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 
 // Jira API types
 interface JiraIssue {
@@ -51,11 +52,11 @@ const PAGE_SIZE = 100;
 const STALE_DAYS_THRESHOLD = 14;
 const BLOCKED_STATUS_KEYWORDS = ['blocked', 'impediment', 'waiting'];
 
-export class JiraStrategy implements IPmStrategy {
+export class JiraConnector implements IPmConnector, IConnector {
   private credentials: { token: string; email: string; baseUrl: string };
   private project: { projectKey: string; boardId?: string };
 
-  constructor(input: CreatePmStrategyInput) {
+  constructor(input: CreatePmConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('Jira token is required');
     }
@@ -80,7 +81,7 @@ export class JiraStrategy implements IPmStrategy {
     };
   }
 
-  async getData(): Promise<JiraMetricsResponse> {
+  async getData(): Promise<ConnectorOutput> {
     const now = new Date();
 
     // Fetch all required data
@@ -106,7 +107,7 @@ export class JiraStrategy implements IPmStrategy {
     const scopeChurn = this.calculateScopeChurnMetrics(sprints, issues);
     const staleTickets = this.calculateStaleTicketsMetrics(issues);
 
-    return {
+    const metrics: JiraMetricsResponse = {
       generatedAt: now.toISOString(),
       project: {
         key: projectInfo.key,
@@ -129,6 +130,13 @@ export class JiraStrategy implements IPmStrategy {
         scopeChurn,
         staleTickets,
       },
+    };
+
+    return {
+      tool: 'jira',
+      provider: 'jira',
+      data: metrics,
+      fetchedAt: now,
     };
   }
 

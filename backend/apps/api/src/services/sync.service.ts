@@ -44,12 +44,19 @@ export class SyncService {
     // TODO: Replace this with DB lookup per user/project integration.
     // Example future flow:
     // 1) query integrations table using payload.projectId and authenticated user id
-    // 2) read encrypted GitHub token from DB/secret store
-    // 3) read repo owner/name from DB project integration settings
-    // 4) pass all of them to queue via `integrations.github.{credentials,project}`
+    // 2) read encrypted provider tokens from DB/secret store
+    // 3) read provider project settings from DB (repo, owner, jira project key, board id, etc.)
+    // 4) pass all of them to queue via `integrations.<tool>.{credentials,project}`
     const TEST_GITHUB_TOKEN = '';
     const TEST_GITHUB_OWNER = 'AfhamAdian';
-    const TEST_GITHUB_REPO = 'Web-Session-Record-and-Playback';
+    const TEST_GITHUB_REPO = 'NiramoyAI';
+
+    const TEST_JIRA_TOKEN='-4iH4NW-tDU4vmZwad1GyXMmaIfgrOUb0xk2Nw7mRI-grWqAU=0EB0E3E8'
+    const TEST_JIRA_EMAIL='tahmidulislamomi01@gmail.com'
+    const TEST_JIRA_BASE_URL='https://capstoneprojectbyomi2.atlassian.net'
+    const TEST_JIRA_PROJECT_KEY='SCRUM'
+    const TEST_JIRA_BOARD_ID=1
+
 
     // Create sync job record in database
     const jobId = this.generateJobId();
@@ -79,6 +86,23 @@ export class SyncService {
           ...(mergedIntegrations.github?.project ?? {}),
           owner: mergedIntegrations.github?.project?.owner ?? TEST_GITHUB_OWNER,
           repo: mergedIntegrations.github?.project?.repo ?? TEST_GITHUB_REPO,
+        },
+      };
+    }
+
+    if (payload.tools.includes('jira')) {
+      mergedIntegrations.jira = {
+        ...(mergedIntegrations.jira ?? {}),
+        credentials: {
+          ...(mergedIntegrations.jira?.credentials ?? {}),
+          token: mergedIntegrations.jira?.credentials?.token ?? TEST_JIRA_TOKEN,
+          email: mergedIntegrations.jira?.credentials?.email ?? TEST_JIRA_EMAIL,
+          baseUrl: mergedIntegrations.jira?.credentials?.baseUrl ?? TEST_JIRA_BASE_URL,
+        },
+        project: {
+          ...(mergedIntegrations.jira?.project ?? {}),
+          projectKey: mergedIntegrations.jira?.project?.projectKey ?? TEST_JIRA_PROJECT_KEY,
+          boardId: mergedIntegrations.jira?.project?.boardId ?? String(TEST_JIRA_BOARD_ID),
         },
       };
     }
