@@ -1,7 +1,7 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { DeliveryMetrics, RiskResult, RiskType } from "../types.js";
+import { DeliveryMetrics, RiskResult, RiskType } from "../../types.js";
+import { DeliveryRiskCalculator } from "./delivery-risk-calculator.interface.js";
 
-export class DeliveryStrategy implements RiskCalculator<DeliveryMetrics> {
+export class DeliveryStrategy implements DeliveryRiskCalculator {
   getType(): RiskType {
     return RiskType.DELIVERY;
   }

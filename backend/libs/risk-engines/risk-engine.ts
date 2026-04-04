@@ -9,12 +9,12 @@ import {
   SecurityRiskMetrics,
   TeamHealthMetrics,
 } from "./types.js";
-import { DeliveryStrategy } from "./risks/delivery.risk.js";
-import { CodeQualityStrategy } from "./risks/code-quality.risk.js";
-import { EngineeringProcessStrategy } from "./risks/engineering-process.risk.js";
-import { CicdReliabilityStrategy } from "./risks/cicd-reliability.risk.js";
-import { TeamHealthStrategy } from "./risks/team-health.risk.js";
-import { SecurityRiskStrategy } from "./risks/security-risk.risk.js";
+import { DeliveryStrategy } from "./risks/delivery/delivery.strategy.js";
+import { CodeQualityStrategy } from "./risks/code-quality/code-quality.strategy.js";
+import { EngineeringProcessStrategy } from "./risks/engineering-process/engineering-process.strategy.js";
+import { CicdReliabilityStrategy } from "./risks/cicd-reliability/cicd-reliability.strategy.js";
+import { TeamHealthStrategy } from "./risks/team-health/team-health.strategy.js";
+import { SecurityRiskStrategy } from "./risks/security-risk/security-risk.strategy.js";
 import { saveRiskScore } from "../../apps/api/src/database/risk-score.js";
 
 export class RiskEngine {

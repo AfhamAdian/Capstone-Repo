@@ -1,7 +1,7 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { RiskResult, RiskType, SecurityRiskMetrics } from "../types.js";
+import { RiskResult, RiskType, SecurityRiskMetrics } from "../../types.js";
+import { SecurityRiskRiskCalculator } from "./security-risk-risk-calculator.interface.js";
 
-export class SecurityRiskStrategy implements RiskCalculator<SecurityRiskMetrics> {
+export class SecurityRiskStrategy implements SecurityRiskRiskCalculator {
   getType(): RiskType {
     return RiskType.SECURITY_RISK;
   }

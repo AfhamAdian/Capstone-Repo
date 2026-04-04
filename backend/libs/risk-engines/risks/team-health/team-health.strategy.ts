@@ -1,7 +1,7 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { RiskResult, RiskType, TeamHealthMetrics } from "../types.js";
+import { RiskResult, RiskType, TeamHealthMetrics } from "../../types.js";
+import { TeamHealthRiskCalculator } from "./team-health-risk-calculator.interface.js";
 
-export class TeamHealthStrategy implements RiskCalculator<TeamHealthMetrics> {
+export class TeamHealthStrategy implements TeamHealthRiskCalculator {
   getType(): RiskType {
     return RiskType.TEAM_HEALTH;
   }

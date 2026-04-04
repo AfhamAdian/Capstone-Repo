@@ -1,7 +1,7 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { CodeQualityMetrics, RiskResult, RiskType } from "../types.js";
+import { CodeQualityMetrics, RiskResult, RiskType } from "../../types.js";
+import { CodeQualityRiskCalculator } from "./code-quality-risk-calculator.interface.js";
 
-export class CodeQualityStrategy implements RiskCalculator<CodeQualityMetrics> {
+export class CodeQualityStrategy implements CodeQualityRiskCalculator {
   getType(): RiskType {
     return RiskType.CODE_QUALITY;
   }

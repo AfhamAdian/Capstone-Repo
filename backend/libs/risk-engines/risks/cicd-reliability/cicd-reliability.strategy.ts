@@ -1,8 +1,8 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { CicdReliabilityMetrics, RiskResult, RiskType } from "../types.js";
+import { CicdReliabilityMetrics, RiskResult, RiskType } from "../../types.js";
+import { CicdReliabilityRiskCalculator } from "./cicd-reliability-risk-calculator.interface.js";
 
 export class CicdReliabilityStrategy
-  implements RiskCalculator<CicdReliabilityMetrics>
+  implements CicdReliabilityRiskCalculator
 {
   getType(): RiskType {
     return RiskType.CICD_RELIABILITY;
@@ -37,7 +37,6 @@ export class CicdReliabilityStrategy
       flakyTestScore,
     };
 
-    // weights need to be fetched from the database
     const weights = [
       { key: "pipelineSuccessRatePercent", w: 0.3 },
       { key: "pipelineDurationScore", w: 0.15 },

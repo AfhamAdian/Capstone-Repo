@@ -1,8 +1,8 @@
-import { RiskCalculator } from "../risk-calculator.interface.js";
-import { EngineeringProcessMetrics, RiskResult, RiskType } from "../types.js";
+import { EngineeringProcessMetrics, RiskResult, RiskType } from "../../types.js";
+import { EngineeringProcessRiskCalculator } from "./engineering-process-risk-calculator.interface.js";
 
 export class EngineeringProcessStrategy
-  implements RiskCalculator<EngineeringProcessMetrics>
+  implements EngineeringProcessRiskCalculator
 {
   getType(): RiskType {
     return RiskType.ENGINEERING_PROCESS;
