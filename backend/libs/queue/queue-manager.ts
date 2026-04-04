@@ -4,7 +4,12 @@
  */
 
 import { Queue, Worker } from 'bullmq';
-import type { SyncJob } from '@libs/sync/index.js';
+import type { SupportedTool } from '@libs/sync/index.js';
+
+interface ToolIntegration {
+  credentials?: Record<string, string | undefined>;
+  project?: Record<string, string | undefined>;
+}
 
 /**
  * Sync job data structure sent to the queue
@@ -12,9 +17,9 @@ import type { SyncJob } from '@libs/sync/index.js';
 export interface SyncJobData {
   jobId: string;
   projectId: string;
-  tools: string[];
+  tools: SupportedTool[];
   sessionId: string;
-  integrations: Record<string, any>;
+  integrations: Record<string, ToolIntegration>;
 }
 
 /**

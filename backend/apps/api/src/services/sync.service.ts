@@ -41,6 +41,16 @@ export class SyncService {
     //   }
     // }
 
+    // TODO: Replace this with DB lookup per user/project integration.
+    // Example future flow:
+    // 1) query integrations table using payload.projectId and authenticated user id
+    // 2) read encrypted GitHub token from DB/secret store
+    // 3) read repo owner/name from DB project integration settings
+    // 4) pass all of them to queue via `integrations.github.{credentials,project}`
+    const TEST_GITHUB_TOKEN = '';
+    const TEST_GITHUB_OWNER = 'AfhamAdian';
+    const TEST_GITHUB_REPO = 'Web-Session-Record-and-Playback';
+
     // Create sync job record in database
     const jobId = this.generateJobId();
     // TODO: Store in database
@@ -54,12 +64,31 @@ export class SyncService {
     // });
 
     // TODO: Enqueue job with BullMQ
+    const mergedIntegrations = {
+      ...(payload.integrations ?? {}),
+    };
+
+    if (payload.tools.includes('github')) {
+      mergedIntegrations.github = {
+        ...(mergedIntegrations.github ?? {}),
+        credentials: {
+          ...(mergedIntegrations.github?.credentials ?? {}),
+          token: mergedIntegrations.github?.credentials?.token ?? TEST_GITHUB_TOKEN,
+        },
+        project: {
+          ...(mergedIntegrations.github?.project ?? {}),
+          owner: mergedIntegrations.github?.project?.owner ?? TEST_GITHUB_OWNER,
+          repo: mergedIntegrations.github?.project?.repo ?? TEST_GITHUB_REPO,
+        },
+      };
+    }
+
     await this.deps.queueManager.enqueue({
       jobId,
       projectId: payload.projectId,
       tools: payload.tools,
       sessionId: payload.sessionId,
-      integrations: {},
+      integrations: mergedIntegrations,
     });
 
     return {

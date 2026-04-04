@@ -7,6 +7,7 @@
 
 import type { SyncJobData } from '@libs/queue/index.js';
 import type { SupportedTool } from '@libs/sync/index.js';
+import { createConnector } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 
 /**
@@ -35,18 +36,35 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           timestamp: new Date(),
         });
 
-        // Add 1s sleep
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        const integration = integrations?.[tool] ?? {};
+        const fallbackCredentials = tool === 'github'
+          ? {
+              token: integration?.credentials?.token ?? process.env.GITHUB_TOKEN,
+            }
+          : {};
+        const fallbackProject = tool === 'github'
+          ? {
+              owner: process.env.GITHUB_OWNER,
+              repo: process.env.GITHUB_REPO,
+            }
+          : {};
 
-        // Create and execute connector
-        // Create and execute connector
-        // const connector = createConnector({
-        //   tool,
-        //   credentials: integration.credentials,
-        //   project: integration.project,
-        // });
+        const connector = createConnector({
+          tool,
+          credentials: {
+            ...fallbackCredentials,
+            ...(integration?.credentials ?? {}),
+          },
+          project: {
+            ...fallbackProject,
+            ...(integration?.project ?? {}),
+          },
+        });
 
-        // const connectorOutput = await connector.getData();
+        const connectorOutput = await connector.getData();
+        const prettyData = JSON.stringify(connectorOutput.data, null, 2);
+        console.log(`[Sync ${jobId}] ${tool} data fetched:`);
+        console.log(prettyData);
 
         // TODO: Store connector output in database
         // await db.storeConnectorOutput(jobId, tool, connectorOutput);

@@ -20,6 +20,10 @@ export interface SyncRequestPayload {
   projectId: string;
   tools: SupportedTool[];
   sessionId: string;
+  integrations?: Record<string, {
+    credentials?: Record<string, string | undefined>;
+    project?: Record<string, string | undefined>;
+  }>;
 }
 
 /**
