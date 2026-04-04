@@ -4,8 +4,9 @@
 
 import { IVcsStrategy } from './vcs-strategy.interface.js';
 import { CreateVcsStrategyInput } from './types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/connector.interface.js';
 
-export class GitLabStrategy implements IVcsStrategy {
+export class GitLabStrategy implements IVcsStrategy, IConnector {
   private credentials: { token: string; baseUrl?: string };
   private project: { path?: string; id?: string };
 
@@ -27,8 +28,9 @@ export class GitLabStrategy implements IVcsStrategy {
     };
   }
 
-  async getData(): Promise<unknown> {
-    // Implementation to be added
-    throw new Error('getData() not yet implemented for GitLab');
+  async getData(): Promise<ConnectorOutput> {
+    // TODO: Implement GitLab metrics fetching
+    // For now, throw error to indicate not yet fully implemented
+    throw new Error('getData() not yet fully implemented for GitLab');
   }
 }

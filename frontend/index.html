@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project Health Dashboard - Sync Demo</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+        'Helvetica Neue', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+    }
+
+    h1 {
+      color: #333;
+      margin-top: 0;
+      margin-bottom: 10px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .sync-button {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border: none;
+      color: white;
+      padding: 14px 28px;
+      font-size: 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: 600;
+      transition: all 0.3s ease;
+      margin-bottom: 20px;
+    }
+
+    .sync-button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .sync-button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .status-section {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 20px;
+      border: 1px solid #e9ecef;
+      display: none;
+    }
+
+    .status-section.active {
+      display: block;
+    }
+
+    .status-header {
+      font-size: 14px;
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-item {
+      margin-bottom: 12px;
+      padding: 12px;
+      background: white;
+      border-radius: 6px;
+      border-left: 4px solid #667eea;
+      font-size: 14px;
+    }
+
+    .status-item.success {
+      border-left-color: #28a745;
+      background: #f0f9f6;
+    }
+
+    .status-item.error {
+      border-left-color: #dc3545;
+      background: #fdf6f6;
+    }
+
+    .status-item.pending {
+      border-left-color: #ffc107;
+      background: #fffbf0;
+    }
+
+    .status-text {
+      color: #333;
+      font-weight: 500;
+    }
+
+    .status-time {
+      color: #999;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    .completion-message {
+      font-size: 16px;
+      font-weight: 600;
+      padding: 15px;
+      border-radius: 6px;
+      text-align: center;
+      margin-top: 15px;
+      display: none;
+    }
+
+    .completion-message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+      display: block;
+    }
+
+    .completion-message.partial {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+      display: block;
+    }
+
+    .completion-message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+      display: block;
+    }
+
+    .api-config {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 15px;
+      margin-bottom: 20px;
+      border: 1px solid #e9ecef;
+      font-size: 13px;
+    }
+
+    .api-config-label {
+      color: #666;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .api-config-value {
+      color: #333;
+      word-break: break-all;
+      font-family: 'Monaco', 'Courier New', monospace;
+      background: white;
+      padding: 8px;
+      border-radius: 4px;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📊 Project Health Dashboard</h1>
+    <p class="subtitle">Sync project data from GitHub and Jira</p>
+
+    <div class="api-config">
+      <div class="api-config-label">API Endpoint</div>
+      <div class="api-config-value" id="apiEndpoint">http://localhost:3000/api/v1/sync</div>
+      <div class="api-config-label" style="margin-top: 8px;">SSE Stream</div>
+      <div class="api-config-value" id="sseEndpoint">http://localhost:3000/api/v1/progress/{sessionId}</div>
+    </div>
+
+    <button class="sync-button" id="syncButton" onclick="startSync()">
+      <span id="buttonText">🔄 Start Sync</span>
+    </button>
+
+    <div class="status-section" id="statusSection">
+      <div class="status-header">Sync Progress</div>
+      <div id="statusList"></div>
+      <div class="completion-message" id="completionMessage"></div>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE_URL = 'http://localhost:3000/api/v1';
+    const PROJECT_ID = 'project-123'; // Hardcoded test project
+    const TOOLS = ['github', 'jira']; // Tools to sync
+    const SESSION_ID = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const syncButton = document.getElementById('syncButton');
+    const buttonText = document.getElementById('buttonText');
+    const statusSection = document.getElementById('statusSection');
+    const statusList = document.getElementById('statusList');
+    const completionMessage = document.getElementById('completionMessage');
+
+    /**
+     * Start the sync process
+     */
+    async function startSync() {
+      syncButton.disabled = true;
+      statusSection.classList.add('active');
+      statusList.innerHTML = '';
+      completionMessage.innerHTML = '';
+      completionMessage.className = 'completion-message';
+      buttonText.innerHTML = '<span class="spinner"></span>Syncing...';
+
+      try {
+        // POST request to enqueue sync job
+        console.log('Sending sync request:', {
+          projectId: PROJECT_ID,
+          tools: TOOLS,
+          sessionId: SESSION_ID,
+        });
+
+        const response = await fetch(`${API_BASE_URL}/sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            projectId: PROJECT_ID,
+            tools: TOOLS,
+            sessionId: SESSION_ID,
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.message || 'Failed to start sync');
+        }
+
+        const result = await response.json();
+        console.log('Sync job queued:', result);
+
+        // Add initial status message
+        addStatusItem('pending', 'Sync job queued', 'Waiting for worker to process...');
+
+        // Open SSE stream to listen for progress updates
+        listenForProgress();
+      } catch (error) {
+        console.error('Sync error:', error);
+        addStatusItem(
+          'error',
+          'Failed to start sync',
+          error instanceof Error ? error.message : 'Unknown error'
+        );
+        syncButton.disabled = false;
+        buttonText.innerHTML = '🔄 Start Sync';
+      }
+    }
+
+    /**
+     * Listen for SSE progress updates
+     */
+    function listenForProgress() {
+      const eventSource = new EventSource(`${API_BASE_URL}/progress/${SESSION_ID}`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const eventData = JSON.parse(event.data);
+          console.log('Progress event:', eventData);
+
+          if (eventData.type === 'connected') {
+            console.log('SSE connection established');
+            return;
+          }
+
+          // Type detection based on event structure
+          if (eventData.tool) {
+            // This is a SyncProgressEvent
+            handleProgressEvent(eventData);
+          } else if (eventData.status === 'success' || eventData.status === 'partial' || eventData.status === 'failed') {
+            // This is a SyncCompletionEvent
+            handleCompletionEvent(eventData);
+            eventSource.close();
+          }
+        } catch (error) {
+          console.error('Failed to parse event:', error);
+        }
+      };
+
+      eventSource.onerror = (error) => {
+        console.error('SSE error:', error);
+        eventSource.close();
+        syncButton.disabled = false;
+        buttonText.innerHTML = '🔄 Start Sync';
+
+        if (!completionMessage.innerHTML) {
+          addCompletionMessage('error', 'Connection lost');
+        }
+      };
+    }
+
+    /**
+     * Handle individual tool sync progress
+     */
+    function handleProgressEvent(event) {
+      const { tool, status, timestamp, error } = event;
+
+      if (status === 'syncing') {
+        addStatusItem('pending', `${tool}`, `Syncing ${tool}...`);
+      } else if (status === 'completed') {
+        addStatusItem('success', `${tool}`, `✓ Successfully synced`);
+      } else if (status === 'failed') {
+        addStatusItem('error', `${tool}`, `✗ Failed: ${error || 'Unknown error'}`);
+      }
+    }
+
+    /**
+     * Handle sync completion
+     */
+    function handleCompletionEvent(event) {
+      const { status, toolsCompleted, toolsFailed, riskScore } = event;
+
+      let message = '';
+      if (status === 'success') {
+        message = `✓ All tools synced successfully!`;
+        if (riskScore !== undefined) {
+          message += ` Risk Score: ${riskScore}`;
+        }
+        addCompletionMessage('success', message);
+      } else if (status === 'partial') {
+        message = `⚠ Partial sync completed. ${toolsCompleted.length} tool(s) synced, ${toolsFailed.length} failed.`;
+        addCompletionMessage('partial', message);
+      } else {
+        message = `✗ Sync failed`;
+        addCompletionMessage('error', message);
+      }
+
+      syncButton.disabled = false;
+      buttonText.innerHTML = '🔄 Start Sync';
+    }
+
+    /**
+     * Add status item to the list
+     */
+    function addStatusItem(type, title, description) {
+      const time = new Date().toLocaleTimeString();
+      const statusItem = document.createElement('div');
+      statusItem.className = `status-item ${type}`;
+      statusItem.innerHTML = `
+        <div class="status-text">${type === 'pending' ? '<span class="spinner"></span>' : ''}${title}</div>
+        <div class="status-time">${description} • ${time}</div>
+      `;
+      statusList.appendChild(statusItem);
+
+      // Auto-scroll to bottom
+      statusList.parentElement?.scrollTop = statusList.parentElement?.scrollHeight;
+    }
+
+    /**
+     * Add completion message
+     */
+    function addCompletionMessage(type, message) {
+      completionMessage.className = `completion-message ${type}`;
+      completionMessage.textContent = message;
+    }
+  </script>
+</body>
+</html>
