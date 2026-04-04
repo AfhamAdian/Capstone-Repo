@@ -13,7 +13,8 @@
     "start": "node dist/apps/api/src/server.js",
     "start:worker": "node dist/apps/worker/src/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js"
+    "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js",
+    "test:jira-metrics": "npm run build && node dist/scripts/test-jira-metrics.js"
   },
   "dependencies": {
     "@octokit/rest": "^20.1.0",
