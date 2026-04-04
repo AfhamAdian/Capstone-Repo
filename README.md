@@ -31,7 +31,8 @@ Express + TypeScript backend scaffold.
 - `apps/api/src/middlewares` — reusable middleware
 - `apps/api/src/config` — environment and app configuration
 - `apps/api/src/utils` — shared helpers
-- `libs/connectors/vcs` — shared VCS strategies and types
+- `libs/connectors/vcs` — shared VCS strategies and types (GitHub, GitLab)
+- `libs/connectors/pm` — shared PM strategies and types (Jira, Linear)
 - `scripts` — maintenance and verification scripts
 
 ## TypeScript aliases
@@ -45,6 +46,7 @@ Express + TypeScript backend scaffold.
 - `npm run start` — run the compiled API
 - `npm run typecheck` — type-check without emitting
 - `npm run test:github-metrics` — build and run the GitHub metrics script
+- `npm run test:jira-metrics` — build and run the Jira metrics script
 
 ## Setup
 

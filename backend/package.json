@@ -1,24 +1,30 @@
 {
   "name": "backend",
   "version": "1.0.0",
+  "description": "Node.js Express MVC backend",
   "private": true,
   "type": "module",
   "main": "dist/apps/api/src/server.js",
   "scripts": {
     "dev": "tsx watch apps/api/src/server.ts",
+    "dev:worker": "tsx watch apps/worker/src/worker.ts",
     "build": "tsc -p tsconfig.json",
     "postbuild": "tsc-alias -p tsconfig.json",
     "start": "node dist/apps/api/src/server.js",
+    "start:worker": "node dist/apps/worker/src/worker.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js"
+    "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js",
+    "test:jira-metrics": "npm run build && node dist/scripts/test-jira-metrics.js"
   },
   "dependencies": {
     "@octokit/rest": "^20.1.0",
     "@supabase/supabase-js": "^2.101.1",
+    "bullmq": "^5.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
+    "ioredis": "^5.10.1",
     "morgan": "^1.10.0"
   },
   "devDependencies": {

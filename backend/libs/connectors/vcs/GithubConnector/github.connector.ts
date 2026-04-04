@@ -1,22 +1,23 @@
 /**
- * GitHub VCS Strategy Implementation
+ * GitHub VCS Connector Implementation
  */
 
 import { Octokit } from '@octokit/rest';
-import { IVcsStrategy } from './vcs-strategy.interface.js';
-import { CreateVcsStrategyInput } from './types.js';
-import { GitHubMetricsResponse } from './github-metrics.types.js';
+import { IVcsConnector } from '../connector.interface.js';
+import { CreateVcsConnectorInput } from '../types.js';
+import { GitHubMetricsResponse } from '../github-metrics.types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
 
-export class GitHubStrategy implements IVcsStrategy {
+export class GitHubConnector implements IVcsConnector, IConnector {
   private credentials: { token: string };
   private project: { owner: string; repo: string };
   private octokit: Octokit;
 
-  constructor(input: CreateVcsStrategyInput) {
+  constructor(input: CreateVcsConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('GitHub token is required');
     }
@@ -51,7 +52,7 @@ export class GitHubStrategy implements IVcsStrategy {
     return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   }
 
-  async getData(): Promise<GitHubMetricsResponse> {
+  async getData(): Promise<ConnectorOutput> {
     const { owner, repo } = this.project;
     const now = new Date();
 
@@ -88,7 +89,7 @@ export class GitHubStrategy implements IVcsStrategy {
     const prRevertRate = this.calculatePrRevertRate(prs);
     const dependencyUpdateLag = await this.calculateDependencyUpdateLag();
 
-    return {
+    const metrics: GitHubMetricsResponse = {
       generatedAt: now.toISOString(),
       repo: {
         owner,
@@ -113,6 +114,14 @@ export class GitHubStrategy implements IVcsStrategy {
         prRevertRatePercent: prRevertRate,
         dependencyUpdateLagAvgDays: dependencyUpdateLag,
       },
+    };
+
+    // Return as ConnectorOutput for the general sync pipeline
+    return {
+      tool: 'github',
+      provider: 'github',
+      data: metrics,
+      fetchedAt: now,
     };
   }
 

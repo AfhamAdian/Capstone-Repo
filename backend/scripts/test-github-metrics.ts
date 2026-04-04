@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { createVcsStrategy, type GitHubMetricsResponse } from '@libs/connectors/vcs/index.js';
+import { createVcsConnector, type GitHubMetricsResponse } from '@libs/connectors/vcs/index.js';
 
 /**
  * Test script for GitHub metrics calculation
@@ -55,7 +55,7 @@ async function testGitHubMetrics() {
   };
 
   try {
-    const strategy = createVcsStrategy({
+    const connector = createVcsConnector({
       provider: 'github',
       credentials: {
         token,
@@ -67,7 +67,7 @@ async function testGitHubMetrics() {
     });
 
     const startTime = Date.now();
-    const metrics = (await strategy.getData()) as GitHubMetricsResponse;
+  const metrics = (await connector.getData()) as GitHubMetricsResponse;
     const endTime = Date.now();
 
     console.log('✅ Metrics calculated successfully!\n');

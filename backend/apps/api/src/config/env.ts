@@ -28,6 +28,15 @@ if (hasAnySupabaseValue && !hasBothSupabaseValues) {
   supabaseConfigError = 'SUPABASE_URL must be a valid HTTP or HTTPS URL.';
 }
 
+// Queue and persistence configuration
+const redisUrl = process.env.REDIS_URL;
+const databaseUrl = process.env.DATABASE_URL;
+
+// Connector credentials (may be provided per-project in DB, but these can be defaults)
+const githubToken = process.env.GITHUB_TOKEN;
+const jiraBaseUrl = process.env.JIRA_BASE_URL;
+const jiraToken = process.env.JIRA_TOKEN;
+
 export const env = {
   nodeEnv,
   port,
@@ -35,4 +44,28 @@ export const env = {
   supabaseServiceRoleKey,
   supabaseConfigError,
   isSupabaseConfigured: hasBothSupabaseValues && hasValidSupabaseUrl,
+  redisUrl,
+  databaseUrl,
+  githubToken,
+  jiraBaseUrl,
+  jiraToken,
 } as const;
+
+/**
+ * Validate that required environment variables are set
+ */
+export function validateEnv() {
+  const errors: string[] = [];
+
+  if (!env.databaseUrl) {
+    errors.push('DATABASE_URL is required for persistence');
+  }
+
+  if (!env.redisUrl) {
+    errors.push('REDIS_URL is required for queue processing');
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Missing required environment variables:\n${errors.join('\n')}`);
+  }
+}

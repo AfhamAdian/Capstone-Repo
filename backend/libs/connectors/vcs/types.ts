@@ -16,7 +16,7 @@ export interface VcsProject {
   id?: string; // GitLab: project ID (numeric or encoded)
 }
 
-export interface CreateVcsStrategyInput {
+export interface CreateVcsConnectorInput {
   provider: VcsProvider;
   credentials: VcsCredentials;
   project: VcsProject;

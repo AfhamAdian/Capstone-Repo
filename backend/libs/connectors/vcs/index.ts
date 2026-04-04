@@ -2,9 +2,9 @@
  * VCS module exports
  */
 
-export { IVcsStrategy } from './vcs-strategy.interface.js';
-export { GitHubStrategy } from './github.strategy.js';
-export { GitLabStrategy } from './gitlab.strategy.js';
-export { createVcsStrategy } from './factory.js';
-export type { CreateVcsStrategyInput, VcsCredentials, VcsProject, VcsProvider } from './types.js';
+export { IVcsConnector } from './connector.interface.js';
+export { GitHubConnector } from './GithubConnector/github.connector.js';
+export { GitLabConnector } from './GitlabConnector/gitlab.connector.js';
+export { createVcsConnector } from './connector-factory.js';
+export type { CreateVcsConnectorInput, VcsCredentials, VcsProject, VcsProvider } from './types.js';
 export type { GitHubMetricsResponse } from './github-metrics.types.js';
