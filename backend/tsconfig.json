@@ -25,6 +25,7 @@
   },
   "include": [
     "apps/api/src/**/*.ts",
+    "apps/worker/src/**/*.ts",
     "libs/**/*.ts",
     "scripts/**/*.ts"
   ],

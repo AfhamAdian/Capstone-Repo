@@ -7,7 +7,7 @@ import type { SupportedTool } from './types.js';
 import type { IConnector, CreateConnectorInput } from './connector.interface.js';
 import { GitHubStrategy } from '@libs/connectors/vcs/github.strategy.js';
 import { GitLabStrategy } from '@libs/connectors/vcs/gitlab.strategy.js';
-import { JiraConnector } from '@libs/connectors/projectManagement/jira.connector.js';
+// import { JiraConnector } from '@libs/connectors/projectManagement/jira.connector.js';
 
 /**
  * Connector registry maps tool names to their factory functions
@@ -25,7 +25,7 @@ const connectorRegistry: Record<SupportedTool, (input: CreateConnectorInput) => 
     project: input.project,
   }),
   // Project management providers
-  jira: (input) => new JiraConnector(input),
+  // jira: (input) => new JiraConnector(input),
 } as const;
 
 /**

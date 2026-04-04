@@ -3,6 +3,7 @@
  * Handles enqueuing sync jobs and managing sync lifecycle
  */
 
+import type { QueueManager } from '@libs/queue/index.js';
 import type { SyncRequestPayload, SyncJob } from '@libs/sync/index.js';
 
 /**
@@ -14,7 +15,7 @@ import type { SyncRequestPayload, SyncJob } from '@libs/sync/index.js';
  */
 
 interface SyncServiceDependencies {
-  queueManager: any; // TODO: Replace with BullMQ queue manager once implemented
+  queueManager: QueueManager;
 }
 
 export class SyncService {
@@ -53,12 +54,13 @@ export class SyncService {
     // });
 
     // TODO: Enqueue job with BullMQ
-    // await this.deps.queueManager.enqueue('sync', {
-    //   jobId,
-    //   projectId: payload.projectId,
-    //   tools: payload.tools,
-    //   integrations,
-    // });
+    await this.deps.queueManager.enqueue({
+      jobId,
+      projectId: payload.projectId,
+      tools: payload.tools,
+      sessionId: payload.sessionId,
+      integrations: {},
+    });
 
     return {
       jobId,
@@ -70,9 +72,8 @@ export class SyncService {
    * Get sync job status
    */
   async getSyncJobStatus(jobId: string): Promise<SyncJob | null> {
-    // TODO: Query database for sync job
-    // return await db.getSyncJob(jobId);
-    return null;
+    const job = await this.deps.queueManager.getJobStatus(jobId);
+    return job as SyncJob | null;
   }
 
   /**

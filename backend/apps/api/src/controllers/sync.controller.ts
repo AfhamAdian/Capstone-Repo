@@ -4,12 +4,19 @@
  */
 
 import type { Request, Response } from 'express';
+import { QueueManager } from '@libs/queue/index.js';
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { SyncService } from '../services/sync.service.js';
+import { env } from '../config/env.js';
 
-// TODO: Inject SyncService with actual queue manager and database
+if (!env.redisUrl) {
+  throw new Error('REDIS_URL is required to enqueue sync jobs');
+}
+
+const queueManager = new QueueManager({ redisUrl: env.redisUrl });
+
 const syncService = new SyncService({
-  queueManager: null as any, // TODO: Replace with real BullMQ queue
+  queueManager,
 });
 
 /**

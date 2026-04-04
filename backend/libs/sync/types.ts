@@ -42,6 +42,7 @@ export interface SyncJob {
  */
 export interface SyncProgressEvent {
   jobId: string;
+  sessionId: string;
   tool: SupportedTool;
   status: 'queued' | 'syncing' | 'completed' | 'failed';
   timestamp: Date;
@@ -53,6 +54,7 @@ export interface SyncProgressEvent {
  */
 export interface SyncCompletionEvent {
   jobId: string;
+  sessionId: string;
   status: 'success' | 'partial' | 'failed';
   timestamp: Date;
   toolsCompleted: SupportedTool[];

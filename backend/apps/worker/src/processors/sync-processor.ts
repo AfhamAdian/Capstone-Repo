@@ -7,7 +7,6 @@
 
 import type { SyncJobData } from '@libs/queue/index.js';
 import type { SupportedTool } from '@libs/sync/index.js';
-import { createConnector } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 
 /**
@@ -28,27 +27,26 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
     for (const tool of tools) {
       try {
         // Emit progress event: tool sync started
-        eventStore.emitProgress({
+        await eventStore.emitProgress({
           jobId,
+          sessionId,
           tool,
           status: 'syncing',
           timestamp: new Date(),
         });
 
-        // Get integration credentials for this tool
-        const integration = integrations[tool];
-        if (!integration) {
-          throw new Error(`No integration found for ${tool}`);
-        }
+        // Add 1s sleep
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Create and execute connector
-        const connector = createConnector({
-          tool,
-          credentials: integration.credentials,
-          project: integration.project,
-        });
+        // Create and execute connector
+        // const connector = createConnector({
+        //   tool,
+        //   credentials: integration.credentials,
+        //   project: integration.project,
+        // });
 
-        const connectorOutput = await connector.getData();
+        // const connectorOutput = await connector.getData();
 
         // TODO: Store connector output in database
         // await db.storeConnectorOutput(jobId, tool, connectorOutput);
@@ -62,8 +60,9 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         // await db.storeRiskScore(jobId, tool, riskScore);
 
         // Emit progress event: tool sync completed
-        eventStore.emitProgress({
+        await eventStore.emitProgress({
           jobId,
+          sessionId,
           tool,
           status: 'completed',
           timestamp: new Date(),
@@ -75,8 +74,9 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         console.error(`Failed to sync ${tool}:`, message);
 
         // Emit progress event: tool sync failed
-        eventStore.emitProgress({
+        await eventStore.emitProgress({
           jobId,
+          sessionId,
           tool,
           status: 'failed',
           timestamp: new Date(),
@@ -97,8 +97,9 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
     // });
 
     // Emit completion event
-    eventStore.emitCompletion({
+    await eventStore.emitCompletion({
       jobId,
+      sessionId,
       status,
       timestamp: new Date(),
       toolsCompleted: completedTools,
@@ -118,8 +119,9 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
     // });
 
     // Emit error event
-    eventStore.emitCompletion({
+    await eventStore.emitCompletion({
       jobId,
+      sessionId,
       status: 'failed',
       timestamp: new Date(),
       toolsCompleted: completedTools,
