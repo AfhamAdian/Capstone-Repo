@@ -54,4 +54,13 @@ Express + TypeScript backend scaffold.
 2. Install dependencies with `npm install`
 3. Run `npm run dev`
 
+### Supabase configuration
+
+Set the following variables in `backend/.env` to enable Supabase database connectivity:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+After configuring them, hit `GET /api/v1/health` to verify status under `services.supabase`.
+
 The backend now supports shared imports from `@libs/...` instead of long relative paths.
