@@ -68,9 +68,9 @@ export class GitHubStrategy implements IVcsStrategy {
     const issuesClosedPerWeek = this.calculateIssuesClosedPerWeek(issues);
     const issueCycleTimeAvgDays = this.calculateIssueCycleTime(issues);
     const codeChurn = await this.calculateCodeChurn(commits);
-    const prReviewCoverage = this.calculatePrReviewCoverage(prs);
-    const reviewPerPrAvg = this.calculateReviewPerPr(prs);
-    const selfMergedPrRate = this.calculateSelfMergedPrRate(prs);
+    const prReviewCoverage = await this.calculatePrReviewCoverage(prs);
+    const reviewPerPrAvg = await this.calculateReviewPerPr(prs);
+    const selfMergedPrRate = await this.calculateSelfMergedPrRate(prs);
     const timeToFirstReview = await this.calculateTimeToFirstReview(prs);
     const commitMessageQuality = this.calculateCommitMessageQuality(commits);
     const stalePrCount = this.calculateStalePrCount(prs);
@@ -224,26 +224,88 @@ export class GitHubStrategy implements IVcsStrategy {
     return { filesModifiedGte10Times, filesModifiedByGte3People };
   }
 
-  private calculatePrReviewCoverage(prs: any[]): number {
+  private async calculatePrReviewCoverage(prs: any[]): Promise<number> {
     if (prs.length === 0) return 0;
-    const reviewed = prs.filter((pr: any) => (pr.review_comments || 0) > 0).length;
+
+    let reviewed = 0;
+    for (const pr of prs) {
+      try {
+        await this.checkRateLimit();
+        const reviews = await this.octokit.paginate(this.octokit.pulls.listReviews, {
+          owner: this.project.owner,
+          repo: this.project.repo,
+          pull_number: pr.number,
+          per_page: PAGE_SIZE,
+        });
+
+        const hasNonAuthorReview = reviews.some(
+          (r: any) => r.user?.login && r.user.login !== pr.user?.login,
+        );
+
+        if (hasNonAuthorReview) reviewed += 1;
+      } catch {
+        // Skip on error
+      }
+    }
+
     return Math.round((reviewed / prs.length) * 100);
   }
 
-  private calculateReviewPerPr(prs: any[]): number {
+  private async calculateReviewPerPr(prs: any[]): Promise<number> {
     if (prs.length === 0) return 0;
-    const total = prs.reduce((sum: number, pr: any) => sum + (pr.review_comments || 0), 0);
+
+    let total = 0;
+    for (const pr of prs) {
+      try {
+        await this.checkRateLimit();
+        const reviews = await this.octokit.paginate(this.octokit.pulls.listReviews, {
+          owner: this.project.owner,
+          repo: this.project.repo,
+          pull_number: pr.number,
+          per_page: PAGE_SIZE,
+        });
+
+        const nonAuthorReviews = reviews.filter(
+          (r: any) => r.user?.login && r.user.login !== pr.user?.login,
+        );
+
+        total += nonAuthorReviews.length;
+      } catch {
+        // Skip on error
+      }
+    }
+
     return Math.round((total / prs.length) * 10) / 10;
   }
 
-  private calculateSelfMergedPrRate(prs: any[]): number {
+  private async calculateSelfMergedPrRate(prs: any[]): Promise<number> {
     const mergedPrs = prs.filter((pr: any) => pr.merged_at);
     if (mergedPrs.length === 0) return 0;
 
-    const selfMerged = mergedPrs.filter(
-      (pr: any) =>
-        pr.user?.login === pr.merged_by?.login,
-    ).length;
+    let selfMerged = 0;
+
+    for (const pr of mergedPrs) {
+      try {
+        let mergedByLogin = pr.merged_by?.login;
+
+        // `pulls.list` may not include merged_by reliably; fetch full PR as fallback.
+        if (!mergedByLogin) {
+          await this.checkRateLimit();
+          const { data: fullPr } = await this.octokit.pulls.get({
+            owner: this.project.owner,
+            repo: this.project.repo,
+            pull_number: pr.number,
+          });
+          mergedByLogin = fullPr.merged_by?.login;
+        }
+
+        if (pr.user?.login && mergedByLogin && pr.user.login === mergedByLogin) {
+          selfMerged += 1;
+        }
+      } catch {
+        // Skip on error
+      }
+    }
 
     return Math.round((selfMerged / mergedPrs.length) * 100);
   }
