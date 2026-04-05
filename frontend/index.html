@@ -224,7 +224,7 @@
   <script>
     // Configuration
     const API_BASE_URL = 'http://localhost:3000/api/v1';
-    const PROJECT_ID = 'project-123'; // Hardcoded test project
+    const PROJECT_ID = '1'; // Hardcoded test project
     const TOOLS = ['github', 'jira']; // Tools to sync
     const SESSION_ID = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -386,7 +386,10 @@
       statusList.appendChild(statusItem);
 
       // Auto-scroll to bottom
-      statusList.parentElement?.scrollTop = statusList.parentElement?.scrollHeight;
+      const parent = statusList.parentElement;
+      if (parent) {
+        parent.scrollTop = parent.scrollHeight;
+      }
     }
 
     /**
