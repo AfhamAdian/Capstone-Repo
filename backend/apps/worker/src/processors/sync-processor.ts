@@ -30,6 +30,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
   const failedTools: SupportedTool[] = [];
   let snapshotId: number | null = null;
   let finalRiskScore: number | undefined;
+  let finalRiskScores: Record<string, number | null> | undefined;
 
   try {
     log.info({ tools }, 'started processing sync job');
@@ -174,6 +175,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         });
 
         const riskScores = await calculateAndSaveRiskScores(snapshotId);
+        finalRiskScores = riskScores;
         const numericScores = Object.values(riskScores).filter((score): score is number => typeof score === 'number');
         if (numericScores.length > 0) {
           finalRiskScore = Math.round(numericScores.reduce((sum, score) => sum + score, 0) / numericScores.length);
@@ -204,6 +206,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       toolsCompleted: completedTools,
       toolsFailed: failedTools,
       riskScore: finalRiskScore,
+      riskScores: finalRiskScores,
     });
 
     log.info(

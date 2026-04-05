@@ -31,6 +31,10 @@ function getNumberMetric(obj: MetricsRecord | null, key: string): number | undef
   return undefined;
 }
 
+function roundRiskScore(score: number | null): number | null {
+  return typeof score === 'number' ? Math.round(score) : null;
+}
+
 /**
  * Calculate and save all risk scores for a project snapshot
  */
@@ -61,7 +65,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
 
     if (Object.values(deliveryMetrics).some((v) => v !== undefined)) {
       const deliveryResult = riskEngine.calculateRisk(RiskType.DELIVERY, deliveryMetrics);
-      scores[RiskType.DELIVERY] = deliveryResult.score;
+      scores[RiskType.DELIVERY] = roundRiskScore(deliveryResult.score);
       log.info({ score: deliveryResult.score, level: deliveryResult.level }, 'calculated delivery risk');
     } else {
       scores[RiskType.DELIVERY] = null;
@@ -76,7 +80,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     };
 
     const codeQualityResult = riskEngine.calculateRisk(RiskType.CODE_QUALITY, codeQualityMetrics);
-    scores[RiskType.CODE_QUALITY] = codeQualityResult.score;
+    scores[RiskType.CODE_QUALITY] = roundRiskScore(codeQualityResult.score);
     log.info({ score: codeQualityResult.score, level: codeQualityResult.level }, 'calculated code quality risk');
 
     // 3. Engineering Process Risk
@@ -95,7 +99,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     };
 
     const engineeringProcessResult = riskEngine.calculateRisk(RiskType.ENGINEERING_PROCESS, engineeringProcessMetrics);
-    scores[RiskType.ENGINEERING_PROCESS] = engineeringProcessResult.score;
+    scores[RiskType.ENGINEERING_PROCESS] = roundRiskScore(engineeringProcessResult.score);
     log.info(
       { score: engineeringProcessResult.score, level: engineeringProcessResult.level },
       'calculated engineering process risk'
@@ -110,7 +114,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     };
 
     const cicdReliabilityResult = riskEngine.calculateRisk(RiskType.CICD_RELIABILITY, cicdReliabilityMetrics);
-    scores[RiskType.CICD_RELIABILITY] = cicdReliabilityResult.score;
+    scores[RiskType.CICD_RELIABILITY] = roundRiskScore(cicdReliabilityResult.score);
     log.info(
       { score: cicdReliabilityResult.score, level: cicdReliabilityResult.level },
       'calculated ci/cd reliability risk'
@@ -128,7 +132,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     };
 
     const teamHealthResult = riskEngine.calculateRisk(RiskType.TEAM_HEALTH, teamHealthMetrics);
-    scores[RiskType.TEAM_HEALTH] = teamHealthResult.score;
+    scores[RiskType.TEAM_HEALTH] = roundRiskScore(teamHealthResult.score);
     log.info({ score: teamHealthResult.score, level: teamHealthResult.level }, 'calculated team health risk');
 
     // 6. Security Risk
@@ -141,7 +145,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     };
 
     const securityRiskResult = riskEngine.calculateRisk(RiskType.SECURITY_RISK, securityRiskMetrics);
-    scores[RiskType.SECURITY_RISK] = securityRiskResult.score;
+    scores[RiskType.SECURITY_RISK] = roundRiskScore(securityRiskResult.score);
     log.info({ score: securityRiskResult.score, level: securityRiskResult.level }, 'calculated security risk');
 
     // Save all risk scores to database

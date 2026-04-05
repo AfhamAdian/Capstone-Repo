@@ -2,6 +2,8 @@
  * Shared sync pipeline types and contracts
  */
 
+import type { RiskType } from '../risk-engines/types.js';
+
 /**
  * Supported tool categories and providers
  */
@@ -64,6 +66,7 @@ export interface SyncCompletionEvent {
   toolsCompleted: SupportedTool[];
   toolsFailed: SupportedTool[];
   riskScore?: number;
+  riskScores?: Partial<Record<RiskType, number | null>>;
   error?: string;
 }
 

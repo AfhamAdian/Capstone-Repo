@@ -116,6 +116,45 @@ export function TrackedProjects() {
   const bannerTimerRef = useRef<number | null>(null);
   const activeSyncRef = useRef<{ projectId: string; sessionId: string } | null>(null);
 
+  const mapRiskScoresToProject = (
+    project: Project,
+    riskScores?: Record<string, number | null>,
+    riskScore?: number,
+  ): Project => {
+    const mapped = riskScores
+      ? {
+          deliveryRisk: typeof riskScores.DELIVERY === "number" ? riskScores.DELIVERY : project.deliveryRisk,
+          codeQualityRisk: typeof riskScores.CODE_QUALITY === "number" ? riskScores.CODE_QUALITY : project.codeQualityRisk,
+          engineeringProcessRisk:
+            typeof riskScores.ENGINEERING_PROCESS === "number"
+              ? riskScores.ENGINEERING_PROCESS
+              : project.engineeringProcessRisk,
+          ciCdReliabilityRisk:
+            typeof riskScores.CICD_RELIABILITY === "number" ? riskScores.CICD_RELIABILITY : project.ciCdReliabilityRisk,
+          teamHealthRisk: typeof riskScores.TEAM_HEALTH === "number" ? riskScores.TEAM_HEALTH : project.teamHealthRisk,
+          securityRisk: typeof riskScores.SECURITY_RISK === "number" ? riskScores.SECURITY_RISK : project.securityRisk,
+        }
+      : null;
+
+    const resolvedOverallRisk =
+      typeof riskScore === "number"
+        ? riskScore
+        : mapped
+          ? Math.round(
+              (mapped.deliveryRisk + mapped.codeQualityRisk + mapped.engineeringProcessRisk + mapped.ciCdReliabilityRisk + mapped.teamHealthRisk + mapped.securityRisk) /
+                6,
+            )
+          : project.overallRisk;
+
+    return {
+      ...project,
+      ...(mapped ?? {}),
+      overallRisk: resolvedOverallRisk,
+      riskTrend: resolvedOverallRisk > project.overallRisk ? "up" : resolvedOverallRisk < project.overallRisk ? "down" : project.riskTrend,
+      lastActivity: "just now",
+    };
+  };
+
   const trackedProjects = projects.filter((p) => p.status === "Tracked");
 
   useEffect(() => {
@@ -138,21 +177,13 @@ export function TrackedProjects() {
     }
   };
 
-  const updateProjectRisk = (projectId: string, riskScore?: number) => {
-    if (typeof riskScore !== "number" || Number.isNaN(riskScore)) {
+  const updateProjectRisk = (projectId: string, riskScore?: number, riskScores?: Record<string, number | null>) => {
+    if (typeof riskScore !== "number" && !riskScores) {
       return;
     }
 
     setProjects((current) =>
-      current.map((project) =>
-        project.id === projectId
-          ? {
-              ...project,
-              overallRisk: riskScore,
-              lastActivity: "just now",
-            }
-          : project,
-      ),
+      current.map((project) => (project.id === projectId ? mapRiskScoresToProject(project, riskScores, riskScore) : project)),
     );
   };
 
@@ -251,6 +282,7 @@ export function TrackedProjects() {
             tool?: string;
             status?: string;
             riskScore?: number;
+            riskScores?: Record<string, number | null>;
             toolsCompleted?: string[];
             toolsFailed?: string[];
             error?: string;
@@ -290,7 +322,7 @@ export function TrackedProjects() {
           }
 
           if (eventData.status === "success" || eventData.status === "partial" || eventData.status === "failed") {
-            updateProjectRisk(id, eventData.riskScore);
+            updateProjectRisk(id, eventData.riskScore, eventData.riskScores);
 
             if (eventData.status === "success") {
               showBanner(
