@@ -1,7 +1,7 @@
 import { Octokit } from "@octokit/rest";
 
 const username = 'AfhamAdian';
-const token = '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';
+const token = '';
 
 if (!username) {
   console.error("Usage: node scripts/list-public-repos.mjs <github-username>");
