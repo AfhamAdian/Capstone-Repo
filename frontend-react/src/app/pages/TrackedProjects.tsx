@@ -4,9 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../co
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { mockProjects, type Project } from "../data/mockData";
+import { type Project } from "../data/mockData";
 import { Search, Plus, SlidersHorizontal, RefreshCw, Loader2, CheckCircle2, AlertTriangle, Sparkles } from "lucide-react";
 import { TrendArrow } from "../components/TrendArrow";
+import { useProjects } from "../context/ProjectDataContext";
 
 // ── Inline mini gauge that matches the design in the reference image ──
 function MiniGauge({ value, prominent = false }: { value: number; prominent?: boolean }) {
@@ -95,7 +96,7 @@ export function TrackedProjects() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("risk-desc");
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
-  const [projects, setProjects] = useState<Project[]>(() => mockProjects);
+  const [viewingProjectId, setViewingProjectId] = useState<string | null>(null);
   const [syncBanner, setSyncBanner] = useState<{
     visible: boolean;
     variant: "info" | "success" | "warning" | "error";
@@ -115,6 +116,7 @@ export function TrackedProjects() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const bannerTimerRef = useRef<number | null>(null);
   const activeSyncRef = useRef<{ projectId: string; sessionId: string } | null>(null);
+  const { projects, updateProject } = useProjects();
 
   const mapRiskScoresToProject = (
     project: Project,
@@ -182,9 +184,7 @@ export function TrackedProjects() {
       return;
     }
 
-    setProjects((current) =>
-      current.map((project) => (project.id === projectId ? mapRiskScoresToProject(project, riskScores, riskScore) : project)),
-    );
+    updateProject(projectId, (project) => mapRiskScoresToProject(project, riskScores, riskScore));
   };
 
   const showBanner = (
@@ -373,6 +373,14 @@ export function TrackedProjects() {
         finishSync(id);
       }
     }
+  };
+
+  const handleViewProject = (projectId: string) => {
+    setViewingProjectId(projectId);
+    window.setTimeout(() => {
+      navigate(`/project/${projectId}`);
+      setViewingProjectId((current) => (current === projectId ? null : current));
+    }, 2500);
   };
 
   const bannerStyles =
@@ -592,9 +600,17 @@ export function TrackedProjects() {
                             variant="outline"
                             size="sm"
                             className="border-slate-200 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 h-8 text-xs px-3 transition-colors"
-                            onClick={() => navigate(`/project/${project.id}`)}
+                            disabled={viewingProjectId === project.id}
+                            onClick={() => handleViewProject(project.id)}
                           >
-                            View
+                            {viewingProjectId === project.id ? (
+                              <span className="flex items-center gap-2">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Loading…
+                              </span>
+                            ) : (
+                              "View"
+                            )}
                           </Button>
                         </div>
                       </td>

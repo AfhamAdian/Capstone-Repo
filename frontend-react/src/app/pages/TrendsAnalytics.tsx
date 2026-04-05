@@ -1,12 +1,14 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { mockProjects, sprintRiskData } from "../data/mockData";
+import { sprintRiskData } from "../data/mockData";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter, ZAxis } from "recharts";
 import { TrendingUp, Calendar } from "lucide-react";
 import { useState } from "react";
+import { useProjects } from "../context/ProjectDataContext";
 
 export function TrendsAnalytics() {
   const [timeRange, setTimeRange] = useState("6-months");
+  const { projects } = useProjects();
 
   const riskOverTime = [
     { month: "Sep 2023", avgRisk: 48, avgDelivery: 42, avgTechnical: 45 },
@@ -17,14 +19,14 @@ export function TrendsAnalytics() {
     { month: "Feb 2024", avgRisk: 32, avgDelivery: 30, avgTechnical: 32 },
   ];
 
-  const correlationData = mockProjects.map((p) => ({
+  const correlationData = projects.map((p) => ({
     name: p.name,
     delivery: p.deliveryRisk,
     technical: p.technicalRisk,
     overall: p.overallRisk,
   }));
 
-  const heatmapData = mockProjects.map((p) => ({
+  const heatmapData = projects.map((p) => ({
     project: p.name.substring(0, 15),
     delivery: p.deliveryRisk,
     technical: p.technicalRisk,

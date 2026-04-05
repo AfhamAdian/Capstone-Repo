@@ -4,7 +4,7 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Label } from "../components/ui/label";
-import { mockProjects, mockHistoricalData } from "../data/mockData";
+import { mockHistoricalData } from "../data/mockData";
 import { ArrowLeft, RefreshCw, ExternalLink, AlertTriangle, TrendingUp, Clock, GitPullRequest, Users, Zap, Code2, AlertCircle, Target, EyeOff, Activity, Shield, Timer, BarChart3, Gauge } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell, Area, AreaChart } from "recharts";
 import { RiskGauge } from "../components/RiskGauge";
@@ -22,11 +22,13 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { useUser } from "../context/UserContext";
+import { useProjects } from "../context/ProjectDataContext";
 
 export function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const project = mockProjects.find((p) => p.id === id);
+  const { getProjectById } = useProjects();
+  const project = getProjectById(id ?? "");
   const [velocityAdjustment, setVelocityAdjustment] = useState([0]);
   const [scopeAdjustment, setScopeAdjustment] = useState([0]);
   const { isProjectTracked, trackProject, untrackProject, user } = useUser();

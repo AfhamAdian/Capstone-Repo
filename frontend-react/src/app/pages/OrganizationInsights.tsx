@@ -1,7 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { mockProjects } from "../data/mockData";
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, LineChart, Line } from "recharts";
 import { TrendingUp, AlertTriangle, Building } from "lucide-react";
 import { Link, useNavigate } from "react-router";
@@ -13,10 +12,12 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+import { useProjects } from "../context/ProjectDataContext";
 
 export function OrganizationInsights() {
   const navigate = useNavigate();
-  const trackedProjects = mockProjects.filter((p) => p.status === "Tracked");
+  const { projects } = useProjects();
+  const trackedProjects = projects.filter((p) => p.status === "Tracked");
 
   // Risk heatmap data — uses all 6 canonical risk scores
   const heatmapData = trackedProjects.map((p) => ({

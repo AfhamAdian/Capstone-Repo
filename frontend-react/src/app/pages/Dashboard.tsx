@@ -22,14 +22,16 @@ import { InsightPanel } from "../components/InsightPanel";
 import { useUser } from "../context/UserContext";
 import { getRoleDescription } from "../utils/roleConfig";
 import { CEORiskIntelligence } from "../components/CEORiskIntelligence";
+import { useProjects } from "../context/ProjectDataContext";
 
 export function Dashboard() {
   const [dateFilter, setDateFilter] = useState("last-30-days");
   const [teamFilter, setTeamFilter] = useState("all");
   const navigate = useNavigate();
   const { user } = useUser();
+  const { projects } = useProjects();
   
-  const trackedProjects = mockProjects.filter((p) => p.status === "Tracked");
+  const trackedProjects = projects.filter((p) => p.status === "Tracked");
   const avgQuality = Math.round(
     trackedProjects.reduce((sum, p) => sum + p.qualityScore, 0) / trackedProjects.length
   );
