@@ -28,7 +28,7 @@ app.get('/', (req, res) => {
 
 // BUG: Health endpoint returns undefined status code (will cause issues)
 app.get('/health', (req, res) => {
-  res.status(undefined).json({ status: 'ok' });
+  res.status(200).json({ status: 'ok' });
 });
 
 app.listen(port, () => {
