@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 
 export type UserRole = "CEO" | "CTO" | "Manager" | "Developer";
 
@@ -28,11 +28,35 @@ interface UserContextType {
   setActiveWorkspace: (workspace: Workspace) => void;
   workspaces: Workspace[];
   addWorkspace: (workspace: Workspace) => void;
+  logout: () => void;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
-const DEFAULT_TRACKED_PROJECTS = ["1", "2"];
+const DEFAULT_TRACKED_PROJECTS: string[] = [];
+const TRACKED_PROJECTS_STORAGE_KEY = "pminsight.trackedProjects.v1";
+
+function loadTrackedProjects(): string[] {
+  if (typeof window === "undefined") {
+    return DEFAULT_TRACKED_PROJECTS;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TRACKED_PROJECTS_STORAGE_KEY);
+    if (!raw) {
+      return DEFAULT_TRACKED_PROJECTS;
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return DEFAULT_TRACKED_PROJECTS;
+    }
+
+    return parsed.filter((item): item is string => typeof item === "string");
+  } catch {
+    return DEFAULT_TRACKED_PROJECTS;
+  }
+}
 
 const MOCK_WORKSPACES: Workspace[] = [
   {
@@ -67,10 +91,10 @@ const MOCK_WORKSPACES: Workspace[] = [
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>({
-    name: "Alex Johnson",
-    email: "alex.johnson@company.com",
+    name: "Afham Adian",
+    email: "afham.adian@company.com",
     role: "CEO",
-    trackedProjects: DEFAULT_TRACKED_PROJECTS,
+    trackedProjects: loadTrackedProjects(),
   });
 
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
@@ -97,6 +121,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const isProjectTracked = (projectId: string) => {
     return user.trackedProjects.includes(projectId);
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      TRACKED_PROJECTS_STORAGE_KEY,
+      JSON.stringify(user.trackedProjects),
+    );
+  }, [user.trackedProjects]);
 
   const addWorkspace = (workspace: Workspace) => {
     setWorkspaces((prev) => [...prev, workspace]);

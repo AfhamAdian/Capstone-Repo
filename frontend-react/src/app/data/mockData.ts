@@ -191,7 +191,7 @@ export const sprintRiskData = [
 
 // Current user context (in real app, this would come from auth)
 export const currentUser = {
-  name: "John Doe",
-  email: "john.doe@company.com",
+  name: "Afham Adian",
+  email: "afham.adian@company.com",
   role: "CTO" as UserRole,
 };

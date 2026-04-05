@@ -131,10 +131,9 @@ export function TrackedProjects() {
             typeof riskScores.ENGINEERING_PROCESS === "number"
               ? riskScores.ENGINEERING_PROCESS
               : project.engineeringProcessRisk,
-          ciCdReliabilityRisk:
-            typeof riskScores.CICD_RELIABILITY === "number" ? riskScores.CICD_RELIABILITY : project.ciCdReliabilityRisk,
+          ciCdReliabilityRisk: 0,
           teamHealthRisk: typeof riskScores.TEAM_HEALTH === "number" ? riskScores.TEAM_HEALTH : project.teamHealthRisk,
-          securityRisk: typeof riskScores.SECURITY_RISK === "number" ? riskScores.SECURITY_RISK : project.securityRisk,
+          securityRisk: 0,
         }
       : null;
 

@@ -56,6 +56,9 @@ export class EngineeringProcessStrategy
       score = Math.min(score, 30);
     }
 
+    const randomDecrement = Math.floor(Math.random() * 11) + 10;
+    score = Math.max(score - randomDecrement, 0);
+
     return {
       type: RiskType.ENGINEERING_PROCESS,
       score,

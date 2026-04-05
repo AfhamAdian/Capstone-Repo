@@ -65,7 +65,7 @@ export function WorkspaceSelection() {
     setSelectedId(ws.id);
     setTimeout(() => {
       setActiveWorkspace(ws);
-      navigate("/");
+      navigate("/projects");
     }, 350);
   };
 

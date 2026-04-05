@@ -209,11 +209,11 @@ export function DashboardLayout() {
           <div className="flex items-center gap-3 px-3 py-2 mb-2">
             <Avatar className="h-9 w-9">
               <AvatarFallback className="bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 font-semibold">
-                JD
+                AA
               </AvatarFallback>
             </Avatar>
             <div className="flex-1">
-              <p className="text-sm font-medium text-slate-900">John Doe</p>
+              <p className="text-sm font-medium text-slate-900">Afham Adian</p>
               <p className="text-xs text-slate-500">CTO</p>
             </div>
             <Button 

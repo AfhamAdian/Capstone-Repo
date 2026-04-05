@@ -6,7 +6,7 @@ import { Label } from "../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { UserRole } from "../data/mockData";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle } from "lucide-react";
 
 export function Register() {
   const navigate = useNavigate();
@@ -19,6 +19,8 @@ export function Register() {
     confirmPassword: "",
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +45,14 @@ export function Register() {
     }
     
     // Mock registration - in real app would create account
-    navigate("/workspaces");
+    setIsLoading(true);
+    setTimeout(() => {
+      setIsLoading(false);
+      setShowSuccess(true);
+      setTimeout(() => {
+        navigate("/login");
+      }, 1500);
+    }, 2000);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -53,6 +62,25 @@ export function Register() {
       setErrors({ ...errors, [e.target.id]: "" });
     }
   };
+
+  if (showSuccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-8 bg-white">
+        <Card className="w-full max-w-md border-0 shadow-none">
+          <CardContent className="pt-12 pb-12 flex flex-col items-center text-center space-y-6">
+            <div className="h-20 w-20 rounded-full bg-green-50 flex items-center justify-center">
+              <CheckCircle className="h-10 w-10 text-green-600" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-slate-900">Account Created!</h2>
+              <p className="text-slate-600">Your account has been successfully created.</p>
+              <p className="text-sm text-slate-500">Redirecting to sign in...</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-8 bg-white">
@@ -77,7 +105,7 @@ export function Register() {
               <Input
                 id="name"
                 type="text"
-                placeholder="John Doe"
+                placeholder="Afham Adian"
                 value={formData.name}
                 onChange={handleChange}
                 className={`h-11 ${errors.name ? "border-red-500" : "border-slate-200"}`}
@@ -201,9 +229,10 @@ export function Register() {
 
             <Button
               type="submit"
-              className="w-full h-11 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base font-medium shadow-lg shadow-blue-500/30"
+              disabled={isLoading}
+              className="w-full h-11 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base font-medium shadow-lg shadow-blue-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Create Account
+              {isLoading ? "Creating Account..." : "Create Account"}
             </Button>
           </form>
           <div className="mt-6 text-center text-sm">

@@ -14,6 +14,14 @@ import {
 import { Search, Users, ExternalLink, RefreshCw, Filter, Target, EyeOff } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useUser } from "../context/UserContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
 
 const allProjects = [
   { id: "1", name: "Capstone-Repo", lastActivity: "5 hours ago", visibility: "Public", members: 5, status: "Untracked", repoUrl: "https://github.com/AfhamAdian/Capstone-Repo" },
@@ -50,6 +58,11 @@ export function AllProjects() {
   const [searchQuery, setSearchQuery] = useState("");
   const [projects, setProjects] = useState([...allProjects]);
   const [trackingProjectId, setTrackingProjectId] = useState<string | null>(null);
+  const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
+  const [pendingTrackProjectId, setPendingTrackProjectId] = useState<string | null>(null);
+  const [jiraToken, setJiraToken] = useState("");
+  const [jiraBoardId, setJiraBoardId] = useState("");
+  const [isSavingJira, setIsSavingJira] = useState(false);
   const navigate = useNavigate();
   const { isProjectTracked, trackProject, untrackProject } = useUser();
 
@@ -63,23 +76,31 @@ export function AllProjects() {
   );
 
   const handleTrack = (projectId: string) => {
+    setPendingTrackProjectId(projectId);
+    setJiraToken("");
+    setJiraBoardId("");
+    setJiraDialogOpen(true);
+  };
+
+  const handleSubmitJiraAndTrack = () => {
+    if (!pendingTrackProjectId || !jiraToken.trim() || !jiraBoardId.trim()) {
+      return;
+    }
+
+    const projectId = pendingTrackProjectId;
     setTrackingProjectId(projectId);
+    setIsSavingJira(true);
 
     window.setTimeout(() => {
-      setProjects((current) =>
-        current.map((project) =>
-          project.id === projectId ? { ...project, status: "Tracked" as const } : project
-        )
-      );
       trackProject(projectId);
+      setIsSavingJira(false);
+      setJiraDialogOpen(false);
+      setPendingTrackProjectId(null);
       setTrackingProjectId((current) => (current === projectId ? null : current));
-    }, 1000);
+    }, 2000);
   };
 
   const handleUntrack = (projectId: string) => {
-    setProjects((current) =>
-      current.map((project) => (project.id === projectId ? { ...project, status: "Untracked" as const } : project))
-    );
     untrackProject(projectId);
   };
 
@@ -140,6 +161,12 @@ export function AllProjects() {
               <TableBody>
                 {filteredProjects.map((project) => (
                   <TableRow key={project.id} className="hover:bg-slate-50/50 transition-colors">
+                    {(() => {
+                      const isTracked = isProjectTracked(project.id);
+                      const statusLabel = isTracked ? "Tracked" : "Untracked";
+
+                      return (
+                        <>
                     <TableCell>
                       <Link
                         to={`/project/${project.id}`}
@@ -162,15 +189,15 @@ export function AllProjects() {
                     </TableCell>
                     <TableCell>
                       <Badge
-                        variant={project.status === "Tracked" ? "default" : "secondary"}
-                        className={project.status === "Tracked" ? "bg-gradient-to-r from-blue-600 to-indigo-600 font-medium" : ""}
+                        variant={isTracked ? "default" : "secondary"}
+                        className={isTracked ? "bg-gradient-to-r from-blue-600 to-indigo-600 font-medium" : ""}
                       >
-                        {project.status}
+                        {statusLabel}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        {project.status === "Tracked" || isProjectTracked(project.id) ? (
+                        {isTracked ? (
                           <Button
                             variant="outline"
                             size="sm"
@@ -215,6 +242,9 @@ export function AllProjects() {
                         </Button>
                       </div>
                     </TableCell>
+                        </>
+                      );
+                    })()}
                   </TableRow>
                 ))}
               </TableBody>
@@ -222,6 +252,83 @@ export function AllProjects() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={jiraDialogOpen}
+        onOpenChange={(open) => {
+          if (isSavingJira) {
+            return;
+          }
+          setJiraDialogOpen(open);
+          if (!open) {
+            setPendingTrackProjectId(null);
+            setJiraToken("");
+            setJiraBoardId("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md border-slate-200 bg-white">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900">Configure Jira Integration</DialogTitle>
+            <DialogDescription>
+              Enter Jira credentials to track this project.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700" htmlFor="jira-token">
+                Jira Token
+              </label>
+              <Input
+                id="jira-token"
+                type="password"
+                value={jiraToken}
+                onChange={(event) => setJiraToken(event.target.value)}
+                placeholder="Enter Jira token"
+                disabled={isSavingJira}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-slate-700" htmlFor="jira-board-id">
+                Board ID
+              </label>
+              <Input
+                id="jira-board-id"
+                value={jiraBoardId}
+                onChange={(event) => setJiraBoardId(event.target.value)}
+                placeholder="Enter board ID"
+                disabled={isSavingJira}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setJiraDialogOpen(false)}
+              disabled={isSavingJira}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+              onClick={handleSubmitJiraAndTrack}
+              disabled={isSavingJira || !jiraToken.trim() || !jiraBoardId.trim()}
+            >
+              {isSavingJira ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save & Track"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

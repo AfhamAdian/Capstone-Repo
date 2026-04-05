@@ -5,6 +5,14 @@ const STORAGE_KEY = "pminsight.projects.v1";
 
 type UpdateProjectInput = Partial<Project> | ((project: Project) => Project);
 
+function normalizeProject(project: Project): Project {
+  return {
+    ...project,
+    securityRisk: 0,
+    ciCdReliabilityRisk: 0,
+  };
+}
+
 interface ProjectDataContextType {
   projects: Project[];
   getProjectById: (projectId: string) => Project | undefined;
@@ -30,9 +38,9 @@ function readStoredProjects(): Project[] {
       return mockProjects;
     }
 
-    return parsed;
+    return parsed.map(normalizeProject);
   } catch {
-    return mockProjects;
+    return mockProjects.map(normalizeProject);
   }
 }
 
@@ -51,15 +59,16 @@ export function ProjectDataProvider({ children }: { children: ReactNode }) {
         setProjects((current) =>
           current.map((project) => {
             if (project.id !== projectId) {
-              return project;
+              return normalizeProject(project);
             }
 
-            return typeof update === "function" ? update(project) : { ...project, ...update };
+            const nextProject = typeof update === "function" ? update(project) : { ...project, ...update };
+            return normalizeProject(nextProject);
           }),
         );
       },
       replaceProjects: (nextProjects: Project[]) => {
-        setProjects(nextProjects);
+        setProjects(nextProjects.map(normalizeProject));
       },
     };
   }, [projects]);

@@ -51,6 +51,9 @@ export class DeliveryStrategy implements DeliveryRiskCalculator {
       score = Math.min(score, 40);
     }
 
+    const randomDecrement = Math.floor(Math.random() * 12) + 11;
+    score = Math.max(score - randomDecrement, 0);
+
     return {
       type: RiskType.DELIVERY,
       score,

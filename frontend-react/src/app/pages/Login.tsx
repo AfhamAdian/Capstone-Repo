@@ -11,6 +11,7 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +29,10 @@ export function Login() {
     }
     
     // Mock login - in real app would validate credentials
-    navigate("/workspaces");
+    setIsLoading(true);
+    setTimeout(() => {
+      navigate("/workspaces");
+    }, 1300);
   };
 
   return (
@@ -132,9 +136,10 @@ export function Login() {
               </div>
               <Button
                 type="submit"
-                className="w-full h-11 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base font-medium shadow-lg shadow-blue-500/30"
+                disabled={isLoading}
+                className="w-full h-11 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-base font-medium shadow-lg shadow-blue-500/30 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Sign In
+                {isLoading ? "Signing In..." : "Sign In"}
               </Button>
             </form>
             <div className="mt-6 text-center text-sm">
