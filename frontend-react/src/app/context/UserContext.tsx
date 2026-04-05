@@ -98,7 +98,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
   });
 
   const [activeWorkspace, setActiveWorkspace] = useState<Workspace | null>(null);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(MOCK_WORKSPACES);
+  // Initialize with empty workspaces for fresh users - no pre-loaded demo data
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
 
   const setUserRole = (role: UserRole) => {
     setUser((prev) => ({ ...prev, role }));
@@ -137,6 +138,21 @@ export function UserProvider({ children }: { children: ReactNode }) {
     setWorkspaces((prev) => [...prev, workspace]);
   };
 
+  const logout = () => {
+    // Clear all tracked projects from localStorage
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(TRACKED_PROJECTS_STORAGE_KEY);
+    }
+    // Reset user state to default
+    setUser({
+      name: "Afham Adian",
+      email: "afham.adian@company.com",
+      role: "CEO",
+      trackedProjects: [],
+    });
+    setActiveWorkspace(null);
+  };
+
   return (
     <UserContext.Provider
       value={{
@@ -149,6 +165,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         setActiveWorkspace,
         workspaces,
         addWorkspace,
+        logout,
       }}
     >
       {children}

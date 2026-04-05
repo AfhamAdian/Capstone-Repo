@@ -18,6 +18,7 @@ interface ProjectDataContextType {
   getProjectById: (projectId: string) => Project | undefined;
   updateProject: (projectId: string, update: UpdateProjectInput) => void;
   replaceProjects: (projects: Project[]) => void;
+  clearProjectData: () => void;
 }
 
 const ProjectDataContext = createContext<ProjectDataContextType | undefined>(undefined);
@@ -69,6 +70,13 @@ export function ProjectDataProvider({ children }: { children: ReactNode }) {
       },
       replaceProjects: (nextProjects: Project[]) => {
         setProjects(nextProjects.map(normalizeProject));
+      },
+      clearProjectData: () => {
+        // Reset to mock data and clear localStorage
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem(STORAGE_KEY);
+        }
+        setProjects(mockProjects.map(normalizeProject));
       },
     };
   }, [projects]);

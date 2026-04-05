@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -21,6 +21,26 @@ export function Register() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [bannerOpacity, setBannerOpacity] = useState(1);
+
+  useEffect(() => {
+    if (!showSuccess) return;
+
+    // Show banner for 3 seconds, then fade out over 0.5 seconds
+    const timer1 = setTimeout(() => {
+      setBannerOpacity(0);
+    }, 3000);
+
+    // Redirect after fade completes
+    const timer2 = setTimeout(() => {
+      navigate("/login");
+    }, 3500);
+
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, [showSuccess, navigate]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,9 +69,6 @@ export function Register() {
     setTimeout(() => {
       setIsLoading(false);
       setShowSuccess(true);
-      setTimeout(() => {
-        navigate("/login");
-      }, 1500);
     }, 2000);
   };
 
@@ -66,15 +83,37 @@ export function Register() {
   if (showSuccess) {
     return (
       <div className="min-h-screen flex items-center justify-center p-8 bg-white">
-        <Card className="w-full max-w-md border-0 shadow-none">
-          <CardContent className="pt-12 pb-12 flex flex-col items-center text-center space-y-6">
-            <div className="h-20 w-20 rounded-full bg-green-50 flex items-center justify-center">
-              <CheckCircle className="h-10 w-10 text-green-600" />
+        {/* Success Banner */}
+        <div 
+          className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center pt-6 transition-opacity duration-500"
+          style={{ opacity: bannerOpacity }}
+        >
+          <div className="flex items-center gap-3 px-6 py-4 bg-green-50 border border-green-200 rounded-xl shadow-lg max-w-md mx-auto">
+            <CheckCircle className="h-6 w-6 text-green-600 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-green-900">Account Successfully Created!</p>
+              <p className="text-sm text-green-700">Redirecting to sign in...</p>
             </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-slate-900">Account Created!</h2>
-              <p className="text-slate-600">Your account has been successfully created.</p>
-              <p className="text-sm text-slate-500">Redirecting to sign in...</p>
+          </div>
+        </div>
+
+        {/* Blurred form in background */}
+        <Card className="w-full max-w-md border-0 shadow-none blur-sm opacity-50 pointer-events-none">
+          <CardHeader className="space-y-3">
+            <div className="flex items-center justify-center mb-2">
+              <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 flex items-center justify-center">
+                <span className="text-3xl font-bold text-white">PM</span>
+              </div>
+            </div>
+            <CardTitle className="text-3xl text-center font-bold">Create Account</CardTitle>
+            <CardDescription className="text-center text-base">
+              Join your team's Project Management Intelligence Platform
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="h-11 bg-slate-200 rounded" />
+              <div className="h-11 bg-slate-200 rounded" />
             </div>
           </CardContent>
         </Card>

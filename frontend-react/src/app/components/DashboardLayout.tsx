@@ -18,6 +18,7 @@ import {
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { useUser } from "../context/UserContext";
+import { useProjects } from "../context/ProjectDataContext";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,16 +31,20 @@ import {
 export function DashboardLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, setUserRole, activeWorkspace } = useUser();
+  const { user, setUserRole, activeWorkspace, logout } = useUser();
+  const { clearProjectData } = useProjects();
 
   const isActive = (path: string) => {
-    if (path === "/") {
-      return location.pathname === "/";
+    if (path === "/dashboard") {
+      return location.pathname === "/dashboard";
     }
     return location.pathname.startsWith(path);
   };
 
   const handleLogout = () => {
+    // Clear all stored data before navigating to login
+    logout();
+    clearProjectData();
     navigate("/login");
   };
 
@@ -62,30 +67,30 @@ export function DashboardLayout() {
     {
       label: "Overview",
       items: [
-        { path: "/", label: "Dashboard", icon: LayoutDashboard },
-        { path: "/organization", label: "Organization", icon: Building },
+        { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+        { path: "/dashboard/organization", label: "Organization", icon: Building },
       ]
     },
     {
       label: "Projects",
       items: [
-        { path: "/projects", label: "All Projects", icon: FolderKanban },
-        { path: "/tracked", label: "Tracked Projects", icon: Target },
-        { path: "/insights", label: "Insights", icon: Lightbulb },
+        { path: "/dashboard/projects", label: "All Projects", icon: FolderKanban },
+        { path: "/dashboard/tracked", label: "Tracked Projects", icon: Target },
+        { path: "/dashboard/insights", label: "Insights", icon: Lightbulb },
       ]
     },
     {
       label: "Operations",
       items: [
-        { path: "/issues", label: "Issues", icon: Bell },
-        { path: "/actions", label: "Action Center", icon: CheckSquare },
+        { path: "/dashboard/issues", label: "Issues", icon: Bell },
+        { path: "/dashboard/actions", label: "Action Center", icon: CheckSquare },
       ]
     },
     {
       label: "Analytics",
       items: [
-        { path: "/trends", label: "Trends", icon: TrendingUp },
-        { path: "/tools", label: "Tools", icon: Wrench },
+        { path: "/dashboard/trends", label: "Trends", icon: TrendingUp },
+        { path: "/dashboard/tools", label: "Tools", icon: Wrench },
       ]
     },
   ];
@@ -220,7 +225,7 @@ export function DashboardLayout() {
               variant="ghost" 
               size="sm" 
               className="h-8 w-8 p-0"
-              onClick={() => navigate("/settings")}
+              onClick={() => navigate("/dashboard/settings")}
             >
               <Settings className="h-4 w-4 text-slate-400" />
             </Button>

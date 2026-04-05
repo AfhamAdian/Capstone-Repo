@@ -175,7 +175,7 @@ export function CreateWorkspace() {
       addWorkspace(newWs);
       setActiveWorkspace(newWs);
       setStep("success");
-      setTimeout(() => navigate("/projects"), 1500);
+      setTimeout(() => navigate("/dashboard/projects"), 1500);
     }, 2000);
   };
 

@@ -19,6 +19,10 @@ import { NotFound } from "./pages/NotFound";
 
 export const router = createBrowserRouter([
   {
+    path: "/",
+    Component: Login,
+  },
+  {
     path: "/login",
     Component: Login,
   },
@@ -35,7 +39,7 @@ export const router = createBrowserRouter([
     Component: CreateWorkspace,
   },
   {
-    path: "/",
+    path: "/dashboard",
     Component: DashboardLayout,
     ErrorBoundary: NotFound,
     children: [

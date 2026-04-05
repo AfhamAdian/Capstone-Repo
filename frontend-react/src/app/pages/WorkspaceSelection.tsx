@@ -25,6 +25,42 @@ const VCS_BADGE: Record<string, string> = {
   azure: "bg-sky-50 text-sky-600 border-sky-200",
 };
 
+// Template workspaces showing VCS tool options for new users
+const TEMPLATE_WORKSPACES: Workspace[] = [
+  {
+    id: "template-github",
+    name: "GitHub Example",
+    vcs: "github",
+    projectsCount: 0,
+    membersCount: 0,
+    isNew: true,
+  },
+  {
+    id: "template-gitlab",
+    name: "GitLab Example",
+    vcs: "gitlab",
+    projectsCount: 0,
+    membersCount: 0,
+    isNew: true,
+  },
+  {
+    id: "template-bitbucket",
+    name: "Bitbucket Example",
+    vcs: "bitbucket",
+    projectsCount: 0,
+    membersCount: 0,
+    isNew: true,
+  },
+  {
+    id: "template-azure",
+    name: "Azure DevOps Example",
+    vcs: "azure",
+    projectsCount: 0,
+    membersCount: 0,
+    isNew: true,
+  },
+];
+
 function VCSIcon({ vcs, className }: { vcs: string; className?: string }) {
   switch (vcs) {
     case "github":
@@ -61,11 +97,14 @@ export function WorkspaceSelection() {
   const { workspaces, setActiveWorkspace } = useUser();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // Show template workspaces if user has no existing workspaces (new user)
+  const displayedWorkspaces = workspaces.length === 0 ? TEMPLATE_WORKSPACES : workspaces;
+
   const handleSelectWorkspace = (ws: Workspace) => {
     setSelectedId(ws.id);
     setTimeout(() => {
       setActiveWorkspace(ws);
-      navigate("/projects");
+      navigate("/dashboard/projects");
     }, 350);
   };
 
@@ -111,7 +150,7 @@ export function WorkspaceSelection() {
 
         {/* Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {workspaces.map((ws) => {
+          {displayedWorkspaces.map((ws) => {
             const isSelected = selectedId === ws.id;
             return (
               <button
@@ -141,7 +180,7 @@ export function WorkspaceSelection() {
                       <CheckCircle2 className="h-5 w-5 text-blue-500" />
                     ) : (
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-md border ${VCS_BADGE[ws.vcs]}`}>
-                        {VCS_LABELS[ws.vcs]}
+                        {ws.isNew ? "Template" : VCS_LABELS[ws.vcs]}
                       </span>
                     )}
                   </div>
@@ -202,7 +241,9 @@ export function WorkspaceSelection() {
 
         {/* Footer note */}
         <p className="mt-8 text-slate-400 text-sm">
-          {workspaces.length} workspace{workspaces.length !== 1 ? "s" : ""} available in your organization
+          {workspaces.length === 0 
+            ? "Select a template below or create a new workspace to get started" 
+            : `${workspaces.length} workspace${workspaces.length !== 1 ? "s" : ""} available in your organization`}
         </p>
       </main>
     </div>

@@ -282,7 +282,7 @@ export function Dashboard() {
               <p className="text-sm text-slate-600 mb-2">
                 This is the main project shown in the demo with the active repository link and tracked status.
               </p>
-              <Button size="sm" variant="outline" onClick={() => navigate("/project/1")}>
+              <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/project/1")}>
                 View Project
               </Button>
             </div>
@@ -297,7 +297,7 @@ export function Dashboard() {
               <p className="text-sm text-slate-600 mb-2">
                 This is the second tracked project in the demo and is included in the portfolio overview.
               </p>
-              <Button size="sm" variant="outline" onClick={() => navigate("/project/2")}>
+              <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/project/2")}>
                 View Project
               </Button>
             </div>

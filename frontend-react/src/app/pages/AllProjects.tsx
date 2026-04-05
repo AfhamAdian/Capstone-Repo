@@ -227,7 +227,7 @@ export function AllProjects() {
                           variant="outline" 
                           size="sm" 
                           className="border-slate-200 hover:bg-slate-50"
-                          onClick={() => navigate(`/project/${project.id}`)}
+                          onClick={() => navigate(`/dashboard/project/${project.id}`)}
                         >
                           View Details
                         </Button>

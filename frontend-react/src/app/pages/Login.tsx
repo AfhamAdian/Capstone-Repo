@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -12,6 +12,14 @@ export function Login() {
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
+
+  // Clear previous user data when login page is accessed
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem("pminsight.projects.v1");
+      window.localStorage.removeItem("pminsight.trackedProjects.v1");
+    }
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

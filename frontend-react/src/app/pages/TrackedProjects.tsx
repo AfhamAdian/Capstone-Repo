@@ -377,7 +377,7 @@ export function TrackedProjects() {
   const handleViewProject = (projectId: string) => {
     setViewingProjectId(projectId);
     window.setTimeout(() => {
-      navigate(`/project/${projectId}`);
+      navigate(`/dashboard/project/${projectId}`);
       setViewingProjectId((current) => (current === projectId ? null : current));
     }, 2500);
   };
