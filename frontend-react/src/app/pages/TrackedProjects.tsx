@@ -1,13 +1,12 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
-import { mockProjects } from "../data/mockData";
-import { Search, Plus, SlidersHorizontal, RefreshCw } from "lucide-react";
+import { mockProjects, type Project } from "../data/mockData";
+import { Search, Plus, SlidersHorizontal, RefreshCw, Loader2, CheckCircle2, AlertTriangle, Sparkles } from "lucide-react";
 import { TrendArrow } from "../components/TrendArrow";
-import { useUser } from "../context/UserContext";
 
 // ── Inline mini gauge that matches the design in the reference image ──
 function MiniGauge({ value, prominent = false }: { value: number; prominent?: boolean }) {
@@ -96,13 +95,97 @@ export function TrackedProjects() {
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("risk-desc");
   const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+  const [projects, setProjects] = useState<Project[]>(() => mockProjects);
+  const [syncBanner, setSyncBanner] = useState<{
+    visible: boolean;
+    variant: "info" | "success" | "warning" | "error";
+    title: string;
+    description: string;
+  }>({
+    visible: false,
+    variant: "info",
+    title: "",
+    description: "",
+  });
   const navigate = useNavigate();
-  const { isProjectTracked, trackProject, untrackProject } = useUser();
-  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL ?? "http://localhost:3000";
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
+  const env = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
+  const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "http://localhost:3000";
+  const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
   const SYNC_TOOLS = ["jira", "github"] as const;
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const bannerTimerRef = useRef<number | null>(null);
+  const activeSyncRef = useRef<{ projectId: string; sessionId: string } | null>(null);
 
-  const trackedProjects = mockProjects.filter((p) => p.status === "Tracked");
+  const trackedProjects = projects.filter((p) => p.status === "Tracked");
+
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      if (bannerTimerRef.current) {
+        window.clearTimeout(bannerTimerRef.current);
+        bannerTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const closeSyncStream = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+  };
+
+  const updateProjectRisk = (projectId: string, riskScore?: number) => {
+    if (typeof riskScore !== "number" || Number.isNaN(riskScore)) {
+      return;
+    }
+
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === projectId
+          ? {
+              ...project,
+              overallRisk: riskScore,
+              lastActivity: "just now",
+            }
+          : project,
+      ),
+    );
+  };
+
+  const showBanner = (
+    variant: "info" | "success" | "warning" | "error",
+    title: string,
+    description: string,
+    autoHideMs?: number,
+  ) => {
+    setSyncBanner({ visible: true, variant, title, description });
+
+    if (bannerTimerRef.current) {
+      window.clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = null;
+    }
+
+    if (autoHideMs) {
+      bannerTimerRef.current = window.setTimeout(() => {
+        setSyncBanner((current) => ({ ...current, visible: false }));
+        bannerTimerRef.current = null;
+      }, autoHideMs);
+    }
+  };
+
+  const finishSync = (projectId: string) => {
+    setSyncingIds((prev) => {
+      const next = new Set(prev);
+      next.delete(projectId);
+      return next;
+    });
+
+    activeSyncRef.current = null;
+  };
 
   const filteredProjects = trackedProjects.filter(
     (p) =>
@@ -122,9 +205,19 @@ export function TrackedProjects() {
   });
 
   const handleSync = async (id: string) => {
+    if (activeSyncRef.current) {
+      showBanner("warning", "Sync already running", "Wait for the active sync to finish before starting another one.");
+      return;
+    }
+
+    closeSyncStream();
+
     setSyncingIds((prev) => new Set(prev).add(id));
 
     const sessionId = `session_${id}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    activeSyncRef.current = { projectId: id, sessionId };
+
+    showBanner("info", "Syncing project…", "Sync job queued. Waiting for connector updates.");
 
     try {
       const response = await fetch(`${API_BASE_URL}/sync`, {
@@ -145,16 +238,128 @@ export function TrackedProjects() {
       }
 
       await response.json().catch(() => null);
+
+      const eventSource = new EventSource(`${API_BASE_URL}/progress/${sessionId}`);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onmessage = (event) => {
+        try {
+          const eventData = JSON.parse(event.data) as {
+            type?: string;
+            jobId?: string;
+            sessionId?: string;
+            tool?: string;
+            status?: string;
+            riskScore?: number;
+            toolsCompleted?: string[];
+            toolsFailed?: string[];
+            error?: string;
+          };
+
+          if (eventData.type === "connected") {
+            return;
+          }
+
+          if (activeSyncRef.current?.sessionId !== sessionId) {
+            return;
+          }
+
+          if (eventData.tool === "risk" && eventData.status === "calculating-risk") {
+            showBanner("warning", "Calculating risk…", "Connector data fetched. Calculating the latest risk scores.");
+            return;
+          }
+
+          if (eventData.tool && eventData.status === "syncing") {
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            showBanner("info", "Syncing project…", `${label} connector is fetching data.`);
+            return;
+          }
+
+          if (eventData.tool && eventData.status === "completed") {
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            showBanner("info", "Connector complete", `${label} data fetched successfully.`);
+            return;
+          }
+
+          if (eventData.tool && eventData.status === "failed") {
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            showBanner("error", "Sync failed", `${label} connector failed: ${eventData.error ?? "Unknown error"}`);
+            closeSyncStream();
+            finishSync(id);
+            return;
+          }
+
+          if (eventData.status === "success" || eventData.status === "partial" || eventData.status === "failed") {
+            updateProjectRisk(id, eventData.riskScore);
+
+            if (eventData.status === "success") {
+              showBanner(
+                "success",
+                "Sync completed",
+                typeof eventData.riskScore === "number"
+                  ? `Latest risk score: ${eventData.riskScore}`
+                  : "Project sync finished successfully.",
+                1500,
+              );
+            } else if (eventData.status === "partial") {
+              showBanner(
+                "warning",
+                "Sync completed with warnings",
+                `${eventData.toolsCompleted?.length ?? 0} connector(s) synced, ${eventData.toolsFailed?.length ?? 0} failed.`,
+              );
+            } else {
+              showBanner("error", "Sync failed", eventData.error ?? "The sync job failed.");
+            }
+
+            closeSyncStream();
+            finishSync(id);
+          }
+        } catch (error) {
+          console.error("Failed to parse SSE event:", error);
+        }
+      };
+
+      eventSource.onerror = () => {
+        closeSyncStream();
+        finishSync(id);
+
+        if (!syncBanner.visible || syncBanner.variant !== "success") {
+          showBanner("error", "Connection lost", "The live sync stream disconnected before completion.");
+        }
+      };
     } catch (error) {
       console.error("Sync request failed:", error);
+      closeSyncStream();
+      finishSync(id);
+      showBanner(
+        "error",
+        "Failed to start sync",
+        error instanceof Error ? error.message : "Unknown error",
+      );
     } finally {
-      setSyncingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
+      if (activeSyncRef.current?.projectId === id && eventSourceRef.current === null) {
+        finishSync(id);
+      }
     }
   };
+
+  const bannerStyles =
+    syncBanner.variant === "success"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+      : syncBanner.variant === "warning"
+        ? "border-amber-200 bg-amber-50 text-amber-900"
+        : syncBanner.variant === "error"
+          ? "border-rose-200 bg-rose-50 text-rose-900"
+          : "border-blue-200 bg-blue-50 text-blue-900";
+
+  const bannerIcon =
+    syncBanner.variant === "success"
+      ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+      : syncBanner.variant === "warning"
+        ? <Sparkles className="h-5 w-5 text-amber-600" />
+        : syncBanner.variant === "error"
+          ? <AlertTriangle className="h-5 w-5 text-rose-600" />
+          : <Loader2 className="h-5 w-5 animate-spin text-blue-600" />;
 
   return (
     <div className="p-8 max-w-[1800px] mx-auto">
@@ -200,6 +405,20 @@ export function TrackedProjects() {
           </Select>
         </div>
       </div>
+
+      {syncBanner.visible && (
+        <div
+          className={`mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-sm ${bannerStyles}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="mt-0.5 flex-shrink-0">{bannerIcon}</div>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold leading-6">{syncBanner.title}</p>
+            <p className="text-sm opacity-90">{syncBanner.description}</p>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <Card className="border-slate-200 bg-white shadow-sm">
@@ -329,6 +548,7 @@ export function TrackedProjects() {
                             variant="ghost"
                             size="sm"
                             className="h-8 w-8 p-0 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                            disabled={isSyncing || Boolean(activeSyncRef.current)}
                             onClick={() => handleSync(project.id)}
                             title="Sync project data"
                           >

@@ -29,6 +29,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
   const completedTools: SupportedTool[] = [];
   const failedTools: SupportedTool[] = [];
   let snapshotId: number | null = null;
+  let finalRiskScore: number | undefined;
 
   try {
     log.info({ tools }, 'started processing sync job');
@@ -164,7 +165,21 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         const riskStartedAt = Date.now();
         log.info({ snapshotId }, 'starting risk score calculation');
 
-        await calculateAndSaveRiskScores(snapshotId);
+        await eventStore.emitProgress({
+          jobId,
+          sessionId,
+          tool: 'risk',
+          status: 'calculating-risk',
+          timestamp: new Date(),
+        });
+
+        const riskScores = await calculateAndSaveRiskScores(snapshotId);
+        const numericScores = Object.values(riskScores).filter((score): score is number => typeof score === 'number');
+        if (numericScores.length > 0) {
+          finalRiskScore = Math.round(numericScores.reduce((sum, score) => sum + score, 0) / numericScores.length);
+        }
+
+        log.info({ snapshotId, riskScores }, 'risk scores calculated successfully');
 
         log.info({ snapshotId, elapsedMs: Date.now() - riskStartedAt }, 'risk scores calculated successfully');
       } catch (riskError) {
@@ -188,8 +203,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       timestamp: new Date(),
       toolsCompleted: completedTools,
       toolsFailed: failedTools,
-      // TODO: Fetch final risk score from database once all tools are synced
-      // riskScore: await db.getProjectRiskScore(projectId),
+      riskScore: finalRiskScore,
     });
 
     log.info(

@@ -47,8 +47,8 @@ export interface SyncJob {
 export interface SyncProgressEvent {
   jobId: string;
   sessionId: string;
-  tool: SupportedTool;
-  status: 'queued' | 'syncing' | 'completed' | 'failed';
+  tool: SupportedTool | 'risk';
+  status: 'queued' | 'syncing' | 'calculating-risk' | 'completed' | 'failed';
   timestamp: Date;
   error?: string;
 }

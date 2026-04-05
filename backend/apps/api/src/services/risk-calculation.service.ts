@@ -34,7 +34,7 @@ function getNumberMetric(obj: MetricsRecord | null, key: string): number | undef
 /**
  * Calculate and save all risk scores for a project snapshot
  */
-export async function calculateAndSaveRiskScores(projectSnapshotId: number): Promise<void> {
+export async function calculateAndSaveRiskScores(projectSnapshotId: number): Promise<Record<string, number | null>> {
   const startedAt = Date.now();
 
   try {
@@ -148,6 +148,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     await saveAllRiskScores(projectSnapshotId, scores);
 
     log.info({ elapsedMs: Date.now() - startedAt }, 'risk scores calculated and saved successfully');
+    return scores;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     log.error({ err: error, elapsedMs: Date.now() - startedAt }, 'failed to calculate risk scores');
