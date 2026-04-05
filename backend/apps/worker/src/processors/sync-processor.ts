@@ -9,6 +9,8 @@ import type { SyncJobData } from '@libs/queue/index.js';
 import type { SupportedTool } from '@libs/sync/index.js';
 import { createConnector } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
+import { persistConnectorMetrics } from '../../../api/src/database/metrics.js';
+import { logger } from '@libs/logger.js';
 
 /**
  * Process a single sync job
@@ -16,16 +18,24 @@ import { eventStore } from '@libs/queue/index.js';
  */
 export async function processSyncJob(jobData: SyncJobData): Promise<void> {
   const { jobId, projectId, tools, sessionId, integrations } = jobData;
+  const log = logger.child({ component: 'sync-processor', jobId, projectId, sessionId });
+
+  const numericProjectId = Number(projectId);
+  if (!Number.isFinite(numericProjectId) || numericProjectId <= 0) {
+    throw new Error(`Invalid projectId for metric persistence: ${projectId}`);
+  }
 
   const completedTools: SupportedTool[] = [];
   const failedTools: SupportedTool[] = [];
 
   try {
-    // TODO: Update job status to in-progress in database
-    // await db.updateSyncJob(jobId, { status: 'in-progress', startedAt: new Date() });
+    log.info({ tools }, 'started processing sync job');
 
     // Process each tool sequentially
     for (const tool of tools) {
+      const toolLog = log.child({ tool });
+      const toolStartedAt = Date.now();
+
       try {
         // Emit progress event: tool sync started
         await eventStore.emitProgress({
@@ -36,38 +46,76 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           timestamp: new Date(),
         });
 
-        const integration = integrations?.[tool] ?? {};
-        const fallbackCredentials = tool === 'github'
-          ? {
-              token: integration?.credentials?.token ?? process.env.GITHUB_TOKEN,
-            }
-          : {};
-        const fallbackProject = tool === 'github'
-          ? {
-              owner: process.env.GITHUB_OWNER,
-              repo: process.env.GITHUB_REPO,
-            }
-          : {};
+        toolLog.info('tool sync started');
+
+        const integration = integrations?.[tool];
+
+        if (!integration) {
+          throw new Error(`Missing integration payload for tool: ${tool}`);
+        }
+
+        if (tool === 'github') {
+          if (!integration.credentials?.token) {
+            throw new Error('Missing github.credentials.token');
+          }
+          if (!integration.project?.owner || !integration.project?.repo) {
+            throw new Error('Missing github.project.owner or github.project.repo');
+          }
+        }
+
+        if (tool === 'jira') {
+          toolLog.info(`integration details: ${JSON.stringify(integration.credentials)}`);
+          if (!integration.credentials?.token) {
+            throw new Error('Missing jira.credentials.token');
+          }
+          if (!integration.credentials?.email) {
+            throw new Error('Missing jira.credentials.email');
+          }
+          if (!integration.credentials?.baseUrl) {
+            throw new Error('Missing jira.credentials.baseUrl');
+          }
+          if (!integration.project?.projectKey && !integration.project?.key) {
+            throw new Error('Missing jira.project.projectKey (or jira.project.key)');
+          }
+        }
 
         const connector = createConnector({
           tool,
           credentials: {
-            ...fallbackCredentials,
             ...(integration?.credentials ?? {}),
           },
           project: {
-            ...fallbackProject,
             ...(integration?.project ?? {}),
           },
         });
 
-        const connectorOutput = await connector.getData();
-        const prettyData = JSON.stringify(connectorOutput.data, null, 2);
-        console.log(`[Sync ${jobId}] ${tool} data fetched:`);
-        console.log(prettyData);
+        toolLog.info('fetching connector data');
 
-        // TODO: Store connector output in database
-        // await db.storeConnectorOutput(jobId, tool, connectorOutput);
+        const connectorOutput = await connector.getData();
+
+        //FIXME : delete loggin in production
+        if (tool === 'github') {
+          toolLog.info(
+            {
+              githubData: connectorOutput.data,
+            },
+            'github data ingested from connector',
+          );
+        }
+        toolLog.info(
+          {
+            elapsedMs: Date.now() - toolStartedAt,
+          },
+          'connector data fetched',
+        );
+
+        const persistStartedAt = Date.now();
+        await persistConnectorMetrics({
+          projectId: numericProjectId,
+          tool,
+          data: connectorOutput.data,
+        });
+        toolLog.info({ elapsedMs: Date.now() - persistStartedAt }, 'persisted connector metrics');
 
         // TODO: Calculate and persist risk score
         // const riskScore = await calculateRisk({
@@ -87,9 +135,10 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         });
 
         completedTools.push(tool);
+        toolLog.info({ elapsedMs: Date.now() - toolStartedAt }, 'tool sync completed');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
-        console.error(`Failed to sync ${tool}:`, message);
+        toolLog.error({ err: error, elapsedMs: Date.now() - toolStartedAt }, 'failed to sync tool');
 
         // Emit progress event: tool sync failed
         await eventStore.emitProgress({
@@ -125,9 +174,18 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       // TODO: Fetch final risk score from database once all tools are synced
       // riskScore: await db.getProjectRiskScore(projectId),
     });
+
+    log.info(
+      {
+        status,
+        completedTools,
+        failedTools,
+      },
+      'sync job completed',
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`Sync job ${jobId} failed:`, message);
+    log.error({ err: error, completedTools, failedTools }, 'sync job failed');
 
     // TODO: Update job status to failed in database
     // await db.updateSyncJob(jobId, {

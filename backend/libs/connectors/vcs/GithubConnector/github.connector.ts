@@ -25,12 +25,14 @@ export class GitHubConnector implements IVcsConnector, IConnector {
       throw new Error('GitHub owner and repo are required');
     }
 
-    this.credentials = { token: input.credentials.token };
+    this.credentials = {
+      token: input.credentials.token,
+    };
     this.project = {
       owner: input.project.owner,
       repo: input.project.repo,
     };
-    this.octokit = new Octokit({ auth: input.credentials.token });
+    this.octokit = new Octokit({ auth: this.credentials.token });
   }
 
   private async checkRateLimit(): Promise<void> {

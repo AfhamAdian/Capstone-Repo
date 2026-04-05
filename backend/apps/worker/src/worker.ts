@@ -6,6 +6,7 @@
 import dotenv from 'dotenv';
 import { QueueManager } from '@libs/queue/index.js';
 import { processSyncJob } from './processors/sync-processor.js';
+import { logger } from '@libs/logger.js';
 
 dotenv.config();
 
@@ -18,48 +19,50 @@ if (!redisUrl) {
 
 async function startWorker() {
   const queueManager = new QueueManager({ redisUrl });
+  const log = logger.child({ component: 'sync-worker' });
 
   try {
-    console.log('Starting sync job worker...');
+    log.info('starting sync job worker');
 
     // Create and start the worker
     const worker = queueManager.createWorker(async (job) => {
-      console.log(`Processing sync job: ${job.data.jobId}`);
+      const jobLog = log.child({ jobId: job.data.jobId, projectId: job.data.projectId, sessionId: job.data.sessionId });
+      jobLog.info({ tools: job.data.tools }, 'processing sync job');
       await processSyncJob(job.data);
-      console.log(`Completed sync job: ${job.data.jobId}`);
+      jobLog.info('completed sync job');
     });
 
     // Log worker events
     worker.on('completed', (job) => {
-      console.log(`✓ Job ${job.id} completed`);
+      log.info({ jobId: job?.id }, 'worker completed job');
     });
 
     worker.on('failed', (job, error) => {
-      console.error(`✗ Job ${job?.id} failed:`, error.message);
+      log.error({ jobId: job?.id, err: error }, 'worker job failed');
     });
 
     worker.on('error', (error) => {
-      console.error('Worker error:', error);
+      log.error({ err: error }, 'worker error');
     });
 
-    console.log('Sync job worker is running');
+    log.info('sync job worker is running');
 
     // Graceful shutdown
     process.on('SIGTERM', async () => {
-      console.log('Received SIGTERM, shutting down gracefully...');
+      log.info('received SIGTERM, shutting down gracefully');
       await worker.close();
       await queueManager.close();
       process.exit(0);
     });
 
     process.on('SIGINT', async () => {
-      console.log('Received SIGINT, shutting down gracefully...');
+      log.info('received SIGINT, shutting down gracefully');
       await worker.close();
       await queueManager.close();
       process.exit(0);
     });
   } catch (error) {
-    console.error('Failed to start worker:', error);
+    log.error({ err: error }, 'failed to start worker');
     process.exit(1);
   }
 }
