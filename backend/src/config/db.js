@@ -1,4 +1,5 @@
-const { Pool } = require("pg");
+import pg from 'pg';
+const { Pool } = pg;
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -23,7 +24,7 @@ const connectDatabase = async () => {
   }
 };
 
-module.exports = {
+export {
   pool,
   connectDatabase
 };
