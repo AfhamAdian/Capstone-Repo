@@ -175,7 +175,7 @@ export async function persistConnectorMetrics(input: {
   projectId: number;
   tool: string;
   data: unknown;
-}): Promise<void> {
+}): Promise<number> {
   const snapshotTime = new Date().toISOString();
   const snapshotId = await createProjectSnapshot(input.projectId, snapshotTime);
 
@@ -186,7 +186,7 @@ export async function persistConnectorMetrics(input: {
 
     await insertVersionControlMetrics(snapshotId, input.data);
     await insertCodeOwnershipConcentration(snapshotId, input.data);
-    return;
+    return snapshotId;
   }
 
   if (input.tool === 'jira') {
@@ -196,7 +196,7 @@ export async function persistConnectorMetrics(input: {
 
     await insertProjectManagementMetrics(snapshotId, input.data);
     await insertLeadTimeTrend(snapshotId, input.data);
-    return;
+    return snapshotId;
   }
 
   throw new Error(`Unsupported tool for metric persistence: ${input.tool}`);

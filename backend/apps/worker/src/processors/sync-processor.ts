@@ -10,6 +10,7 @@ import type { SupportedTool } from '@libs/sync/index.js';
 import { createConnector } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 import { persistConnectorMetrics } from '../../../api/src/database/metrics.js';
+import { calculateAndSaveRiskScores } from '../../../api/src/services/risk-calculation.service.js';
 import { logger } from '@libs/logger.js';
 
 /**
@@ -27,6 +28,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
   const completedTools: SupportedTool[] = [];
   const failedTools: SupportedTool[] = [];
+  let snapshotId: number | null = null;
 
   try {
     log.info({ tools }, 'started processing sync job');
@@ -50,6 +52,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
         const integration = integrations?.[tool];
 
+        //FIXME: Better Design for many tools
         if (!integration) {
           throw new Error(`Missing integration payload for tool: ${tool}`);
         }
@@ -110,20 +113,18 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         );
 
         const persistStartedAt = Date.now();
-        await persistConnectorMetrics({
+        const persistedSnapshotId = await persistConnectorMetrics({
           projectId: numericProjectId,
           tool,
           data: connectorOutput.data,
         });
-        toolLog.info({ elapsedMs: Date.now() - persistStartedAt }, 'persisted connector metrics');
 
-        // TODO: Calculate and persist risk score
-        // const riskScore = await calculateRisk({
-        //   tool,
-        //   data: connectorOutput,
-        //   projectId,
-        // });
-        // await db.storeRiskScore(jobId, tool, riskScore);
+        // Store snapshot ID for risk calculation
+        if (!snapshotId) {
+          snapshotId = persistedSnapshotId;
+        }
+
+        toolLog.info({ elapsedMs: Date.now() - persistStartedAt }, 'persisted connector metrics');
 
         // Emit progress event: tool sync completed
         await eventStore.emitProgress({
@@ -156,6 +157,22 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
     // Determine overall status
     const status = failedTools.length === 0 ? 'success' : failedTools.length === completedTools.length ? 'failed' : 'partial';
+
+    // Calculate risk scores if at least one tool completed successfully
+    if (completedTools.length > 0 && snapshotId) {
+      try {
+        const riskStartedAt = Date.now();
+        log.info({ snapshotId }, 'starting risk score calculation');
+
+        await calculateAndSaveRiskScores(snapshotId);
+
+        log.info({ snapshotId, elapsedMs: Date.now() - riskStartedAt }, 'risk scores calculated successfully');
+      } catch (riskError) {
+        const message = riskError instanceof Error ? riskError.message : 'Unknown error';
+        log.error({ err: riskError, snapshotId }, 'failed to calculate risk scores');
+        // Don't fail the sync job if risk calculation fails - risk is supplementary
+      }
+    }
 
     // TODO: Update job status to completed in database
     // await db.updateSyncJob(jobId, {
