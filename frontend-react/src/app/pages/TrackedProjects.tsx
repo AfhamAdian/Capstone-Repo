@@ -110,7 +110,7 @@ export function TrackedProjects() {
   });
   const navigate = useNavigate();
   const env = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
-  const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "https://server-prod-addk.onrender.com";
+  const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "http://localhost:3000";
   const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
   const SYNC_TOOLS = ["jira", "github"] as const;
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -250,6 +250,7 @@ export function TrackedProjects() {
     showBanner("info", "Syncing project…", "Sync job queued. Waiting for connector updates.");
 
     try {
+      console.log("Calling API at:", `${API_BASE_URL}/sync`);
       const response = await fetch(`${API_BASE_URL}/sync`, {
         method: "POST",
         headers: {
@@ -269,7 +270,9 @@ export function TrackedProjects() {
 
       await response.json().catch(() => null);
 
-      const eventSource = new EventSource(`${API_BASE_URL}/progress/${sessionId}`);
+      const progressUrl = `${API_BASE_URL}/progress/${sessionId}`;
+      console.log("Opening EventSource at:", progressUrl);
+      const eventSource = new EventSource(progressUrl);
       eventSourceRef.current = eventSource;
 
       eventSource.onmessage = (event) => {
