@@ -111,7 +111,8 @@ export function TrackedProjects() {
   const navigate = useNavigate();
   const env = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
   const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "https://server-prod-addk.onrender.com";
-  const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
+  // const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
+  const API_BASE_URL = "https://server-try1.onrender.com/api/v1";
   const SYNC_TOOLS = ["jira", "github"] as const;
   const eventSourceRef = useRef<EventSource | null>(null);
   const bannerTimerRef = useRef<number | null>(null);
