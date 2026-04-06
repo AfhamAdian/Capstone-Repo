@@ -4,6 +4,7 @@
  */
 
 import dotenv from 'dotenv';
+import express from 'express';
 import { QueueManager } from '@libs/queue/index.js';
 import { processSyncJob } from './processors/sync-processor.js';
 import { logger } from '@libs/logger.js';
@@ -11,11 +12,28 @@ import { logger } from '@libs/logger.js';
 dotenv.config();
 
 const redisUrl = process.env.REDIS_URL;
+const port = process.env.PORT || 4000;
 
 if (!redisUrl) {
   console.error('REDIS_URL is required to start the worker');
   process.exit(1);
 }
+
+// Express server setup to fool Render into thinking this is a web service
+const app = express();
+
+app.get('/', (req, res) => {
+  res.send('Hello World!');
+});
+
+// BUG: Health endpoint returns undefined status code (will cause issues)
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+app.listen(port, () => {
+  console.log(`Express server listening on port ${port}`);
+});
 
 async function startWorker() {
   const queueManager = new QueueManager({ redisUrl });
