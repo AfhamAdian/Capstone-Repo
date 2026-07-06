@@ -19,16 +19,16 @@
 
 | Metric | Role | Short note |
 |---|---|---|
-| Vulnerabilities (count) | **Score** | Known security weaknesses. |
+| Vulnerabilities (count) | Context | Total known security weaknesses. |
 | Security rating (A–E) | Context | Derived from vulnerabilities — same signal; store for the headline. |
-| Security hotspots (count) | Context | Code needing manual security review. |
-| Security hotspots reviewed % | **Score** | Genuinely separate axis — process/review discipline, not code state. |
+| Critical vulnerabilities | **Score** | BLOCKER + CRITICAL severities (from issues facet). Drives the security score. |
+| High vulnerabilities | **Score** | MAJOR severity (from issues facet). |
 
 ## 4. Coverage (Code Quality risk)
 
 | Metric | Role | Short note |
 |---|---|---|
-| Test coverage | **Score** | Overall test safety net. |
+| Test coverage | **Score** | Overall test safety net. ⚠️ Returns null until coverage report upload is set up in the scan — SonarCloud doesn't compute it on its own. Keep null-safe. |
 
 ## 5. Size (normalizer)
 
@@ -65,8 +65,7 @@ Only these should drive the risk scores; the rest are context/normalizer:
 
 1. Technical debt ratio
 2. Bugs (reliability)
-3. Vulnerabilities (security)
-4. Test coverage
+3. Critical / high vulnerabilities (by severity)
+4. Test coverage (once coverage reporting is set up; null-safe until then)
 5. Duplicated code %
-6. Security hotspots reviewed %
-7. One new-code deterioration signal (e.g. new technical debt / new bugs)
+6. One new-code deterioration signal (e.g. new technical debt / new bugs)
