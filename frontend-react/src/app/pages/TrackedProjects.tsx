@@ -110,9 +110,9 @@ export function TrackedProjects() {
   });
   const navigate = useNavigate();
   const env = import.meta as ImportMeta & { env?: Record<string, string | undefined> };
-  const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "https://server-prod-addk.onrender.com";
-  // const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
-  const API_BASE_URL = "https://server-try1.onrender.com/api/v1";
+  const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "http://localhost:3000";
+  const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
+  // const API_BASE_URL = "https://localhost:3000/api/v1";
   const SYNC_TOOLS = ["jira", "github"] as const;
   const eventSourceRef = useRef<EventSource | null>(null);
   const bannerTimerRef = useRef<number | null>(null);
@@ -315,9 +315,8 @@ export function TrackedProjects() {
 
           if (eventData.tool && eventData.status === "failed") {
             const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
-            showBanner("error", "Sync failed", `${label} connector failed: ${eventData.error ?? "Unknown error"}`);
-            closeSyncStream();
-            finishSync(id);
+            showBanner("warning", "Connector failed", `${label} connector failed: ${eventData.error ?? "Unknown error"}`);
+            // Keep the stream open for other tools to finish syncing!
             return;
           }
 
