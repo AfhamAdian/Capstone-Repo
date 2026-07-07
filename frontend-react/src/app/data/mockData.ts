@@ -54,11 +54,11 @@ export interface Issue {
 export const mockProjects: Project[] = [
   {
     id: "1",
-    name: "Capstone-Repo",
-    group: "capstone",
+    name: "Discord-Messaging",
+    group: "Discord-Messaging",
     lastActivity: "5 hours ago",
     visibility: "Public",
-    members: 2,
+    members: 5,
     status: "Tracked",
     ciCdReliabilityRisk: 0,
     codeQualityRisk: 0,

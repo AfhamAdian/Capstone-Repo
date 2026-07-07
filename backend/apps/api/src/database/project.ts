@@ -31,12 +31,12 @@ export async function getProjectIntegrationsForTools(
 
   const integrations: Record<string, ToolIntegration> = {};
 
-  const jiraToken = data.jira_token ?? data.JIRA_TOKEN;
-  const jiraEmail = data.jira_email ?? data.JIRA_EMAIL;
-  const jiraBaseUrl = data.jira_base_url ?? data.JIRA_BASE_URL;
+  const jiraToken = process.env.JIRA_TOKEN ?? data.jira_token ?? data.JIRA_TOKEN;
+  const jiraEmail = process.env.JIRA_EMAIL ?? data.jira_email ?? data.JIRA_EMAIL;
+  const jiraBaseUrl = process.env.JIRA_BASE_URL ?? data.jira_base_url ?? data.JIRA_BASE_URL;
   const jiraProjectKey = data.jira_project_key ?? data.JIRA_PROJECT_KEY;
   const jiraBoardId = data.jira_board_id ?? data.JIRA_BOARD_ID;
-  const githubToken = data.github_token ?? data.GITHUB_TOKEN;
+  const githubToken = process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
 
   if (tools.includes('github')) {
     if (!data.owner || !data.repo || !githubToken) {
