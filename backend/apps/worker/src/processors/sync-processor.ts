@@ -89,6 +89,15 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           }
         }
 
+        if (tool === 'sonarqube') {
+          if (!integration.credentials?.token) {
+            throw new Error('Missing sonarqube.credentials.token');
+          }
+          if (!integration.project?.projectKey && !integration.project?.key) {
+            throw new Error('Missing sonarqube.project.projectKey (or sonarqube.project.key)');
+          }
+        }
+
         const connector = createConnector({
           tool,
           credentials: {

@@ -1,6 +1,7 @@
 import { assertSupabaseClient } from '../config/supabase.js';
 import type { GitHubMetricsResponse } from '../../../../libs/connectors/vcs/github-metrics.types.js';
 import type { JiraMetricsResponse } from '../../../../libs/connectors/pm/jira-metrics.types.js';
+import type { SonarQubeMetricsResponse } from '../../../../libs/connectors/quality/sonarqube-metrics.types.js';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -21,6 +22,10 @@ function isJiraMetricsResponse(data: unknown): data is JiraMetricsResponse {
   return typeof data.generatedAt === 'string' && typeof data.project.key === 'string';
 }
 
+function isSonarQubeMetricsResponse(data: unknown): data is SonarQubeMetricsResponse {
+  if (!isObject(data)) return false;
+  if (!isObject(data.project) || !isObject(data.metrics)) return false;
+  return typeof data.generatedAt === 'string' && typeof data.project.projectKey === 'string';
 function isGithubActionsMetricsResponse(data: unknown): boolean {
   if (!isObject(data)) return false;
   if (!isObject(data.repo) || !isObject(data.metrics)) return false;
@@ -174,11 +179,36 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
   }
 }
 
+async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
 async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
   const client = assertSupabaseClient();
   const { metrics } = data;
 
   const { error } = await client
+    .from('codequalitymetrics')
+    .insert([
+      {
+        snapshot_id: snapshotId,
+        technical_debt_ratio: metrics.technicalDebtRatio,
+        technical_debt_minutes: metrics.technicalDebtMinutes,
+        maintainability_rating: metrics.maintainabilityRating,
+        code_smells: metrics.codeSmells,
+        duplicated_lines_density: metrics.duplicatedLinesDensity,
+        bugs: metrics.bugs,
+        reliability_rating: metrics.reliabilityRating,
+        vulnerabilities: metrics.vulnerabilities,
+        security_rating: metrics.securityRating,
+        critical_vulnerabilities: metrics.criticalVulnerabilities,
+        high_vulnerabilities: metrics.highVulnerabilities,
+        coverage: metrics.coverage,
+        lines_of_code: metrics.linesOfCode,
+        quality_gate_status: metrics.qualityGateStatus,
+        new_bugs: metrics.newBugs,
+        new_vulnerabilities: metrics.newVulnerabilities,
+        new_code_smells: metrics.newCodeSmells,
+        new_coverage: metrics.newCoverage,
+        new_duplicated_lines_density: metrics.newDuplicatedLinesDensity,
+        new_technical_debt: metrics.newTechnicalDebt,
     .from('cicdmetrics')
     .insert([
       {
@@ -197,6 +227,7 @@ async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
     ]);
 
   if (error) {
+    throw new Error(`Failed to save code quality metrics: ${error.message}`);
     throw new Error(`Failed to save CI/CD metrics: ${error.message}`);
   }
 }
@@ -255,6 +286,12 @@ async function persistConnectorMetricsImpl(input: {
     return snapshotId;
   }
 
+  if (input.tool === 'sonarqube') {
+    if (!isSonarQubeMetricsResponse(input.data)) {
+      throw new Error('Invalid SonarQube metrics payload received from connector');
+    }
+
+    await insertCodeQualityMetrics(snapshotId, input.data);
   if (input.tool === 'github-actions') {
     if (!isGithubActionsMetricsResponse(input.data)) {
       throw new Error('Invalid GitHub Actions metrics payload received from connector');

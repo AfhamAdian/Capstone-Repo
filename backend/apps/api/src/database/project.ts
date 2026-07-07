@@ -38,6 +38,11 @@ export async function getProjectIntegrationsForTools(
   const jiraBoardId = data.jira_board_id ?? data.JIRA_BOARD_ID;
   const githubToken = process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
 
+  const sonarToken = data.sonar_token ?? data.SONAR_TOKEN;
+  const sonarOrganization = data.sonar_organization ?? data.SONAR_ORGANIZATION;
+  const sonarProjectKey = data.sonar_project_key ?? data.SONAR_PROJECT_KEY;
+  const sonarBaseUrl = data.sonar_base_url ?? data.SONAR_BASE_URL;
+
   if (tools.includes('github')) {
     if (!data.owner || !data.repo || !githubToken) {
       throw new Error('Missing GitHub integration fields in project table: owner/repo/github_token');
@@ -70,6 +75,25 @@ export async function getProjectIntegrationsForTools(
       project: {
         projectKey: jiraProjectKey,
         boardId: jiraBoardId ?? undefined,
+      },
+    };
+  }
+
+  if (tools.includes('sonarqube')) {
+    if (!sonarToken || !sonarProjectKey) {
+      throw new Error(
+        'Missing SonarQube integration fields in project table: sonar_token/sonar_project_key',
+      );
+    }
+
+    integrations.sonarqube = {
+      credentials: {
+        token: sonarToken,
+        baseUrl: sonarBaseUrl ?? undefined,
+      },
+      project: {
+        projectKey: sonarProjectKey,
+        organization: sonarOrganization ?? undefined,
       },
     };
   }

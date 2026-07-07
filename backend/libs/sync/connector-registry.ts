@@ -8,6 +8,7 @@ import type { IConnector, CreateConnectorInput } from './connector.interface.js'
 import { GitHubConnector } from '@libs/connectors/vcs/GithubConnector/github.connector.js';
 import { GitLabConnector } from '@libs/connectors/vcs/GitlabConnector/gitlab.connector.js';
 import { JiraConnector } from '@libs/connectors/pm/JiraConnector/jira.connector.js';
+import { SonarQubeConnector } from '@libs/connectors/quality/SonarQubeConnector/sonarqube.connector.js';
 import { GithubActionsConnector } from '@libs/connectors/cicd/GithubActionsConnector/github-actions.connector.js';
 
 /**
@@ -48,6 +49,16 @@ const connectorRegistry: Partial<Record<SupportedTool, (input: CreateConnectorIn
       boardId: input.project.boardId,
     },
   }),
+  // Code quality providers
+  sonarqube: (input) => new SonarQubeConnector({
+    provider: 'sonarqube',
+    credentials: {
+      token: input.credentials.token ?? '',
+      baseUrl: input.credentials.baseUrl,
+    },
+    project: {
+      projectKey: input.project.projectKey ?? input.project.key ?? '',
+      organization: input.project.organization,
   // CICD providers
   'github-actions': (input) => new GithubActionsConnector({
     tool: 'github-actions',
