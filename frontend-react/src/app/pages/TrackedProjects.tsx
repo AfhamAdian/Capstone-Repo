@@ -113,7 +113,7 @@ export function TrackedProjects() {
   const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "http://localhost:3000";
   const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
   // const API_BASE_URL = "https://localhost:3000/api/v1";
-  const SYNC_TOOLS = ["jira", "github"] as const;
+  const SYNC_TOOLS = ["jira", "github", "github-actions"] as const;
   const eventSourceRef = useRef<EventSource | null>(null);
   const bannerTimerRef = useRef<number | null>(null);
   const activeSyncRef = useRef<{ projectId: string; sessionId: string } | null>(null);
@@ -132,9 +132,15 @@ export function TrackedProjects() {
             typeof riskScores.ENGINEERING_PROCESS === "number"
               ? riskScores.ENGINEERING_PROCESS
               : project.engineeringProcessRisk,
-          ciCdReliabilityRisk: 0,
+          ciCdReliabilityRisk:
+            typeof riskScores.CICD_RELIABILITY === "number"
+              ? riskScores.CICD_RELIABILITY
+              : project.ciCdReliabilityRisk,
           teamHealthRisk: typeof riskScores.TEAM_HEALTH === "number" ? riskScores.TEAM_HEALTH : project.teamHealthRisk,
-          securityRisk: 0,
+          securityRisk:
+            typeof riskScores.SECURITY_RISK === "number"
+              ? riskScores.SECURITY_RISK
+              : project.securityRisk,
         }
       : null;
 
@@ -302,19 +308,19 @@ export function TrackedProjects() {
           }
 
           if (eventData.tool && eventData.status === "syncing") {
-            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool === "github-actions" ? "GitHub Actions" : eventData.tool;
             showBanner("info", "Syncing project…", `${label} connector is fetching data.`);
             return;
           }
 
           if (eventData.tool && eventData.status === "completed") {
-            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool === "github-actions" ? "GitHub Actions" : eventData.tool;
             showBanner("info", "Connector complete", `${label} data fetched successfully.`);
             return;
           }
 
           if (eventData.tool && eventData.status === "failed") {
-            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool;
+            const label = eventData.tool === "github" ? "GitHub" : eventData.tool === "jira" ? "Jira" : eventData.tool === "github-actions" ? "GitHub Actions" : eventData.tool;
             showBanner("warning", "Connector failed", `${label} connector failed: ${eventData.error ?? "Unknown error"}`);
             // Keep the stream open for other tools to finish syncing!
             return;

@@ -21,6 +21,12 @@ function isJiraMetricsResponse(data: unknown): data is JiraMetricsResponse {
   return typeof data.generatedAt === 'string' && typeof data.project.key === 'string';
 }
 
+function isGithubActionsMetricsResponse(data: unknown): boolean {
+  if (!isObject(data)) return false;
+  if (!isObject(data.repo) || !isObject(data.metrics)) return false;
+  return typeof data.generatedAt === 'string';
+}
+
 async function createProjectSnapshot(projectId: number, snapshotTime: string): Promise<number> {
   const client = assertSupabaseClient();
 
@@ -168,13 +174,66 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
   }
 }
 
+async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
+  const client = assertSupabaseClient();
+  const { metrics } = data;
+
+  const { error } = await client
+    .from('cicdmetrics')
+    .insert([
+      {
+        snapshot_id: snapshotId,
+        pipeline_success_rate_percent: metrics.pipelineSuccessRatePercent,
+        avg_pipeline_duration_minutes: metrics.avgPipelineDurationMinutes,
+        flaky_test_count: metrics.flakyTestCount,
+        test_coverage_percent: metrics.testCoveragePercent,
+        test_failure_rate_percent: metrics.testFailureRatePercent,
+        avg_pipeline_runs_per_pr: metrics.avgPipelineRunsPerPr,
+        deployments_per_week: metrics.deploymentsPerWeek,
+        deployment_failure_rate_percent: metrics.deploymentFailureRatePercent,
+        mttr_hours: metrics.mttrHours,
+        time_to_prod_hours: metrics.timeToProdHours,
+      },
+    ]);
+
+  if (error) {
+    throw new Error(`Failed to save CI/CD metrics: ${error.message}`);
+  }
+}
+
 export async function persistConnectorMetrics(input: {
   projectId: number;
   tool: string;
   data: unknown;
+  snapshotId?: number;
 }): Promise<number> {
-  const snapshotTime = new Date().toISOString();
-  const snapshotId = await createProjectSnapshot(input.projectId, snapshotTime);
+  let attempt = 0;
+  while (attempt < 3) {
+    try {
+      return await persistConnectorMetricsImpl(input);
+    } catch (error: any) {
+      attempt++;
+      if (attempt === 3 || !error.message?.includes('fetch failed')) {
+        throw error;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
+async function persistConnectorMetricsImpl(input: {
+  projectId: number;
+  tool: string;
+  data: unknown;
+  snapshotId?: number;
+}): Promise<number> {
+  let snapshotId = input.snapshotId;
+
+  if (!snapshotId) {
+    const snapshotTime = new Date().toISOString();
+    snapshotId = await createProjectSnapshot(input.projectId, snapshotTime);
+  }
 
   if (input.tool === 'github') {
     if (!isGitHubMetricsResponse(input.data)) {
@@ -193,6 +252,15 @@ export async function persistConnectorMetrics(input: {
 
     await insertProjectManagementMetrics(snapshotId, input.data);
     await insertLeadTimeTrend(snapshotId, input.data);
+    return snapshotId;
+  }
+
+  if (input.tool === 'github-actions') {
+    if (!isGithubActionsMetricsResponse(input.data)) {
+      throw new Error('Invalid GitHub Actions metrics payload received from connector');
+    }
+
+    await insertCicdMetrics(snapshotId, input.data);
     return snapshotId;
   }
 

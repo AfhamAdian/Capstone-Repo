@@ -38,11 +38,15 @@ export type EngineeringProcessMetrics = {
 
 export type CicdReliabilityMetrics = {
   pipelineSuccessRatePercent?: number;
-  pipelineDurationTrendDelta30d?: number;
-  deploymentFrequencyPerWeek?: number;
+  avgPipelineDurationMinutes?: number;
+  flakyTestCount?: number;
+  testCoveragePercent?: number;
+  testFailureRatePercent?: number;
+  avgPipelineRunsPerPr?: number;
+  deploymentsPerWeek?: number;
   deploymentFailureRatePercent?: number;
   mttrHours?: number;
-  flakyTestCount?: number;
+  timeToProdHours?: number;
 };
 
 export type TeamHealthMetrics = {
