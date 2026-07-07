@@ -60,7 +60,6 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       throughputPerWeek: getNumberMetric(metrics.projectManagement, 'throughput_per_week'),
       carryoverRate: getNumberMetric(metrics.projectManagement, 'carryover_rate'),
       scopeCreepRate: getNumberMetric(metrics.projectManagement, 'scope_creep_rate'),
-      estimationAccuracy: getNumberMetric(metrics.projectManagement, 'estimation_accuracy'),
     };
 
     if (Object.values(deliveryMetrics).some((v) => v !== undefined)) {

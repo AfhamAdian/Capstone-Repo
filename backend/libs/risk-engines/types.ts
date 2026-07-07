@@ -13,7 +13,6 @@ export type DeliveryMetrics = {
   throughputPerWeek?: number;
   carryoverRate?: number;
   scopeCreepRate?: number;
-  estimationAccuracy?: number;
   consecutiveLowSprintCompletionCount?: number;
 };
 

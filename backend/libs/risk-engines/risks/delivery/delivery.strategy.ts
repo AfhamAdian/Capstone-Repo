@@ -12,7 +12,6 @@ export class DeliveryStrategy implements DeliveryRiskCalculator {
     const throughputPerWeek = metrics.throughputPerWeek ?? 0;
     const carryoverRate = metrics.carryoverRate ?? 0;
     const scopeCreepRate = metrics.scopeCreepRate ?? 0;
-    const estimationAccuracy = metrics.estimationAccuracy ?? 0;
     const consecutiveLowSprintCompletionCount =
       metrics.consecutiveLowSprintCompletionCount ?? 0;
 
@@ -27,16 +26,15 @@ export class DeliveryStrategy implements DeliveryRiskCalculator {
       throughputScore,
       carryoverScore,
       scopeCreepScore,
-      estimationAccuracy,
     };
 
+    // Weights renormalized to sum to 1.0 after removing estimationAccuracy (placeholder metric)
     const weights = [
-      { key: "sprintCompletionRate", w: 0.25 },
+      { key: "sprintCompletionRate", w: 0.3 },
       { key: "issueCycleTimeScore", w: 0.2 },
       { key: "throughputScore", w: 0.2 },
       { key: "carryoverScore", w: 0.15 },
-      { key: "scopeCreepScore", w: 0.1 },
-      { key: "estimationAccuracy", w: 0.1 },
+      { key: "scopeCreepScore", w: 0.15 },
     ];
 
     let score = Math.min(
