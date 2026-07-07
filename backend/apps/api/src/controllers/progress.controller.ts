@@ -66,7 +66,8 @@ async function subscribeToSession(
   state.unsubscribe = await eventStore.subscribe(sessionId, (event: SyncStreamEvent) => {
     sendSseMessage(response, event);
 
-    if (isTerminalStatus(event.status)) {
+    // Only close connection on job-level terminal status, not individual tool failures
+    if (isTerminalStatus(event.status) && !('tool' in event)) {
       setTimeout(() => {
         void cleanupStream(response, state);
       }, 1000);
