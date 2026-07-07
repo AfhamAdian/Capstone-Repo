@@ -10,10 +10,11 @@ import type { RiskType } from '../risk-engines/types.js';
 export type ToolCategory = 'vcs' | 'projectManagement' | 'cicd' | 'codeQuality';
 export type VcsProvider = 'github' | 'gitlab' | 'bitbucket';
 export type ProjectManagementProvider = 'jira' | 'trello' | 'asana';
-export type CicdProvider = 'jenkins' | 'circleci' | 'travisci';
+export type CicdProvider = 'jenkins' | 'circleci' | 'travisci' | 'github-actions';
 export type CodeQualityProvider = 'sonarqube' | 'codeclimate' | 'codacy';
 
 export type SupportedTool = VcsProvider | ProjectManagementProvider | CodeQualityProvider;
+export type SupportedTool = VcsProvider | ProjectManagementProvider | CicdProvider;
 
 /**
  * Sync job request payload

@@ -28,6 +28,10 @@ function getNumberMetric(obj: MetricsRecord | null, key: string): number | undef
   if (!obj) return undefined;
   const value = obj[key];
   if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
   return undefined;
 }
 
@@ -60,7 +64,6 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       throughputPerWeek: getNumberMetric(metrics.projectManagement, 'throughput_per_week'),
       carryoverRate: getNumberMetric(metrics.projectManagement, 'carryover_rate'),
       scopeCreepRate: getNumberMetric(metrics.projectManagement, 'scope_creep_rate'),
-      estimationAccuracy: getNumberMetric(metrics.projectManagement, 'estimation_accuracy'),
     };
 
     if (Object.values(deliveryMetrics).some((v) => v !== undefined)) {
@@ -108,12 +111,18 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       'calculated engineering process risk'
     );
 
-    // 4. CI/CD Reliability Risk (would require CI/CD metrics)
+    // 4. CI/CD Reliability Risk
     const cicdReliabilityMetrics: CicdReliabilityMetrics = {
-      // CI/CD metrics would come from external sources like Jenkins, GitLab CI, etc.
-      pipelineSuccessRatePercent: undefined,
-      deploymentFailureRatePercent: undefined,
-      deploymentFrequencyPerWeek: undefined,
+      pipelineSuccessRatePercent: getNumberMetric(metrics.cicd, 'pipeline_success_rate_percent'),
+      avgPipelineDurationMinutes: getNumberMetric(metrics.cicd, 'avg_pipeline_duration_minutes'),
+      flakyTestCount: getNumberMetric(metrics.cicd, 'flaky_test_count'),
+      testCoveragePercent: getNumberMetric(metrics.cicd, 'test_coverage_percent'),
+      testFailureRatePercent: getNumberMetric(metrics.cicd, 'test_failure_rate_percent'),
+      avgPipelineRunsPerPr: getNumberMetric(metrics.cicd, 'avg_pipeline_runs_per_pr'),
+      deploymentsPerWeek: getNumberMetric(metrics.cicd, 'deployments_per_week'),
+      deploymentFailureRatePercent: getNumberMetric(metrics.cicd, 'deployment_failure_rate_percent'),
+      mttrHours: getNumberMetric(metrics.cicd, 'mttr_hours'),
+      timeToProdHours: getNumberMetric(metrics.cicd, 'time_to_prod_hours'),
     };
 
     const cicdReliabilityResult = riskEngine.calculateRisk(RiskType.CICD_RELIABILITY, cicdReliabilityMetrics);
@@ -174,6 +183,7 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
   projectManagement: MetricsRecord | null;
   codeOwnershipStats: MetricsRecord | null;
   codeQuality: MetricsRecord | null;
+  cicd: MetricsRecord | null;
 }> {
   const client = assertSupabaseClient();
 
@@ -204,6 +214,13 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
     .select('top_contributor_percent')
     .eq('snapshot_id', projectSnapshotId);
 
+  // Fetch CI/CD metrics
+  const { data: cicdMetrics, error: cicdError } = await client
+    .from('cicdmetrics')
+    .select('*')
+    .eq('snapshot_id', projectSnapshotId)
+    .single();
+
   // Calculate average code ownership concentration
   let codeOwnershipStats: MetricsRecord | null = null;
   if (codeOwnershipData && codeOwnershipData.length > 0) {
@@ -221,6 +238,7 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
     projectManagement: (pmMetrics ?? null) as MetricsRecord | null,
     codeOwnershipStats,
     codeQuality: (cqMetrics ?? null) as MetricsRecord | null,
+    cicd: (cicdMetrics ?? null) as MetricsRecord | null,
   };
 }
 

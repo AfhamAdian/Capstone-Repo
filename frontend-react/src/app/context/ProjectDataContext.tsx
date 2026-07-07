@@ -8,8 +8,8 @@ type UpdateProjectInput = Partial<Project> | ((project: Project) => Project);
 function normalizeProject(project: Project): Project {
   return {
     ...project,
-    securityRisk: 0,
-    ciCdReliabilityRisk: 0,
+    securityRisk: project.securityRisk ?? 0,
+    ciCdReliabilityRisk: project.ciCdReliabilityRisk ?? 0,
   };
 }
 
