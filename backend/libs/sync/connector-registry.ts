@@ -59,6 +59,8 @@ const connectorRegistry: Partial<Record<SupportedTool, (input: CreateConnectorIn
     project: {
       projectKey: input.project.projectKey ?? input.project.key ?? '',
       organization: input.project.organization,
+    },
+  }),
   // CICD providers
   'github-actions': (input) => new GithubActionsConnector({
     tool: 'github-actions',

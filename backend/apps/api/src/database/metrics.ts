@@ -26,6 +26,8 @@ function isSonarQubeMetricsResponse(data: unknown): data is SonarQubeMetricsResp
   if (!isObject(data)) return false;
   if (!isObject(data.project) || !isObject(data.metrics)) return false;
   return typeof data.generatedAt === 'string' && typeof data.project.projectKey === 'string';
+}
+
 function isGithubActionsMetricsResponse(data: unknown): boolean {
   if (!isObject(data)) return false;
   if (!isObject(data.repo) || !isObject(data.metrics)) return false;
@@ -180,7 +182,6 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
 }
 
 async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
-async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
   const client = assertSupabaseClient();
   const { metrics } = data;
 
@@ -209,6 +210,19 @@ async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
         new_coverage: metrics.newCoverage,
         new_duplicated_lines_density: metrics.newDuplicatedLinesDensity,
         new_technical_debt: metrics.newTechnicalDebt,
+      },
+    ]);
+
+  if (error) {
+    throw new Error(`Failed to save code quality metrics: ${error.message}`);
+  }
+}
+
+async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
+  const client = assertSupabaseClient();
+  const { metrics } = data;
+
+  const { error } = await client
     .from('cicdmetrics')
     .insert([
       {
@@ -227,7 +241,6 @@ async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
     ]);
 
   if (error) {
-    throw new Error(`Failed to save code quality metrics: ${error.message}`);
     throw new Error(`Failed to save CI/CD metrics: ${error.message}`);
   }
 }
@@ -292,6 +305,9 @@ async function persistConnectorMetricsImpl(input: {
     }
 
     await insertCodeQualityMetrics(snapshotId, input.data);
+    return snapshotId;
+  }
+
   if (input.tool === 'github-actions') {
     if (!isGithubActionsMetricsResponse(input.data)) {
       throw new Error('Invalid GitHub Actions metrics payload received from connector');
