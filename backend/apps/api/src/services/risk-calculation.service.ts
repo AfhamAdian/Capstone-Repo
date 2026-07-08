@@ -153,6 +153,8 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       openHighVulnerabilities: getNumberMetric(metrics.codeQuality, 'high_vulnerabilities'),
       dependencyUpdateLagDays: getNumberMetric(metrics.versionControl, 'dependency_update_lag_avg_days'),
       prRevertRatePercent: getNumberMetric(metrics.versionControl, 'pr_revert_rate_percent'),
+      incidentMttrHours: getNumberMetric(metrics.cicd, 'mttr_hours'),
+      longLivedUnmergedBranchesCount: getNumberMetric(metrics.versionControl, 'long_lived_branches_count'),
     };
 
     if (Object.values(securityRiskMetrics).some((v) => v !== undefined)) {
