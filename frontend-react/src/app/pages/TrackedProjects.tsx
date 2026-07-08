@@ -113,7 +113,7 @@ export function TrackedProjects() {
   const BACKEND_URL = env.env?.VITE_BACKEND_URL ?? "http://localhost:3000";
   const API_BASE_URL = env.env?.VITE_API_BASE_URL ?? `${BACKEND_URL}/api/v1`;
   // const API_BASE_URL = "https://localhost:3000/api/v1";
-  const SYNC_TOOLS = ["jira", "github", "github-actions"] as const;
+  const SYNC_TOOLS = ["jira", "github", "github-actions", "sonarqube"] as const;
   const eventSourceRef = useRef<EventSource | null>(null);
   const bannerTimerRef = useRef<number | null>(null);
   const activeSyncRef = useRef<{ projectId: string; sessionId: string } | null>(null);
