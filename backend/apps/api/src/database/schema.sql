@@ -83,6 +83,10 @@ CREATE TABLE public.project (
   JIRA_PROJECT_KEY text,
   JIRA_BOARD_ID text,
   GITHUB_TOKEN text,
+  sonar_token text,
+  sonar_organization text,
+  sonar_project_key text,
+  sonar_base_url text,
   CONSTRAINT project_pkey PRIMARY KEY (id),
   CONSTRAINT project_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.company(id)
 );

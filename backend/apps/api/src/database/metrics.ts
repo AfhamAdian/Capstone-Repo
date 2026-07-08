@@ -181,7 +181,19 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
   }
 }
 
-async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
+async function insertCodeQualityMetrics(...args: any[]): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await insertCodeQualityMetrics_impl(...args);
+    } catch (e: any) {
+      if (i === 2 || !e.message?.includes('fetch failed')) throw e;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw new Error("Unreachable");
+}
+
+async function insertCodeQualityMetrics_impl(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
   const { metrics } = data;
 

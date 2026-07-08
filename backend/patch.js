@@ -29,3 +29,4 @@ content = addRetry('insertLeadTimeTrend', 'void', 'async function insertLeadTime
 content = addRetry('insertCicdMetrics', 'void', 'async function insertCicdMetrics(snapshotId: number, data: any): Promise<void>');
 
 fs.writeFileSync(file, content);
+content = addRetry('insertCodeQualityMetrics', 'void', 'async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void>');
