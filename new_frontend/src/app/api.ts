@@ -27,7 +27,13 @@ export async function startSync(
   return response.json();
 }
 
-export type SyncRiskKey = "DELIVERY" | "CODE_QUALITY" | "ENGINEERING_PROCESS" | "TEAM_HEALTH";
+export type SyncRiskKey =
+  | "DELIVERY"
+  | "CODE_QUALITY"
+  | "ENGINEERING_PROCESS"
+  | "CICD_RELIABILITY"
+  | "TEAM_HEALTH"
+  | "SECURITY_RISK";
 
 export interface SyncProgressEvent {
   jobId: string;

@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
+import type { SyncRiskKey } from "./api";
 import { LoginView } from "./pages/LoginView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
@@ -23,6 +24,7 @@ import { DashboardSyncBar } from "./components/DashboardSyncBar";
 
 interface Project {
   id: string;
+  backendProjectId?: string;
   name: string;
   team: string;
   status: "active" | "maintenance";
@@ -86,8 +88,8 @@ const mkTS = (scores: number[]): { date: string; label: string; score: number }[
 
 const PROJECTS: Project[] = [
   {
-    id: "onyx-mobile", name: "Onyx Mobile", team: "Mobile Platform", status: "active", tracked: true,
-    score: 45, scoreTrend: -8, description: "Consumer-facing iOS & Android application",
+    id: "onyx-mobile", backendProjectId: "1", name: "Capstone-Repo", team: "mahmud1628/Discord-Messaging", status: "active", tracked: true,
+    score: 45, scoreTrend: -8, description: "Real backend project #1 — synced from GitHub repo mahmud1628/Discord-Messaging",
     sparkline: [62,60,58,55,53,52,54,50,48,47,49,46,44,46,45].map(v=>({v})),
     timeSeries: mkTS([62,61,60,59,57,55,54,52,53,52,51,50,50,52,49,48,47,46,49,47,45,46,45,44,46,45,44,43,45,45]),
     subscores: { delivery: 38, codeQuality: 52, cicd: 42, teamHealth: 65, blockers: 25 },
@@ -110,8 +112,8 @@ const PROJECTS: Project[] = [
     pendingSurvey: true, pendingReview: 2, lastUpdated: "2h ago",
   },
   {
-    id: "meridian-api", name: "Meridian API", team: "Backend Services", status: "active", tracked: true,
-    score: 62, scoreTrend: -5, description: "Core REST & GraphQL API gateway layer",
+    id: "meridian-api", backendProjectId: "2", name: "NiramoyAI", team: "AfhamAdian/NiramoyAI", status: "active", tracked: true,
+    score: 62, scoreTrend: -5, description: "Real backend project #2 — synced from GitHub repo AfhamAdian/NiramoyAI",
     sparkline: [75,74,72,70,69,68,67,66,65,64,64,63,63,62,62].map(v=>({v})),
     timeSeries: mkTS([75,74,73,72,71,70,70,69,68,67,66,65,65,64,64,63,63,62,62,62,63,62,61,62,62,61,62,62,62,62]),
     subscores: { delivery: 68, codeQuality: 72, cicd: 58, teamHealth: 63, blockers: 45 },
@@ -1030,7 +1032,7 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
-function Dashboard({project,actions,surveys,onNavigate}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;}) {
+function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
   const [reviewOpen,setReviewOpen]=useState(false);
   const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:project.subscores[k]}));
@@ -1041,7 +1043,7 @@ function Dashboard({project,actions,surveys,onNavigate}:{project:Project;actions
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
-        <DashboardSyncBar project={project}/>
+        <DashboardSyncBar project={project} onSyncComplete={onSyncComplete}/>
         {pending.length>0&&(
           <button onClick={()=>setReviewOpen(true)}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
@@ -2501,24 +2503,39 @@ export default function App() {
   const [activeId,setActiveId]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
+  const [projects,setProjects]=useState<Project[]>(PROJECTS);
   const [trackedIds,setTrackedIds]=useState<Set<string>>(
     ()=>new Set(PROJECTS.filter(p=>p.tracked).map(p=>p.id))
   );
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
-  const active=useMemo(()=>PROJECTS.find(p=>p.id===activeId)??null,[activeId]);
+  const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
+  const updateProjectRisk=(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
+    setProjects(prev=>prev.map(p=>{
+      if(p.id!==projectId) return p;
+      const subscores={...p.subscores};
+      if(riskScores){
+        if(typeof riskScores.DELIVERY==="number") subscores.delivery=riskScores.DELIVERY;
+        if(typeof riskScores.CODE_QUALITY==="number") subscores.codeQuality=riskScores.CODE_QUALITY;
+        if(typeof riskScores.CICD_RELIABILITY==="number") subscores.cicd=riskScores.CICD_RELIABILITY;
+        if(typeof riskScores.TEAM_HEALTH==="number") subscores.teamHealth=riskScores.TEAM_HEALTH;
+      }
+      if(typeof riskScore!=="number") return {...p,subscores};
+      return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
+    }));
+  };
   const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
   const [ratingOpen,setRatingOpen]=useState(false);
   const sel=(id:string)=>{setActiveId(id);setScreen("dashboard");};
   const home=()=>{setActiveId(null);setScreen("portfolio");};
   const renderContent=()=>{
     if(screen==="global-actions")
-      return <GlobalActionsView actions={ACTIONS} projects={PROJECTS} onBack={home} onLogAction={()=>setLogOpen(true)}/>;
+      return <GlobalActionsView actions={ACTIONS} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)}/>;
     if(screen==="global-surveys")
-      return <GlobalSurveysView surveys={SURVEYS} projects={PROJECTS} onBack={home}/>;
+      return <GlobalSurveysView surveys={SURVEYS} projects={projects} onBack={home}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
-        projects={PROJECTS} actions={ACTIONS} surveys={SURVEYS}
+        projects={projects} actions={ACTIONS} surveys={SURVEYS}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>setScreen("global-actions")}
         onViewSurveys={()=>setScreen("global-surveys")}
@@ -2526,7 +2543,7 @@ export default function App() {
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
       />;
     const view=()=>{switch(screen){
-      case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={SURVEYS} onNavigate={setScreen}/>;
+      case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk}/>;
       case"actions-timeline": return <ActionsTimeline project={active} actions={ACTIONS}/>;
       case"actions-library": return <ActionsLibrary actions={ACTIONS}/>;
       case"surveys": return <SurveysView project={active} surveys={SURVEYS}/>;
@@ -2557,7 +2574,7 @@ export default function App() {
   }
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-      <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={PROJECTS} activeId={activeId} onSelect={sel} onHome={home}
+      <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={projects} activeId={activeId} onSelect={sel} onHome={home}
         pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>setScreen("workspaces")}/>
       <div className="flex-1 flex min-h-0">{renderContent()}</div>
       {(screen==="portfolio"||screen==="global-actions"||screen==="global-surveys")&&(
@@ -2568,7 +2585,7 @@ export default function App() {
         </div>
       )}
       <AnimatePresence>
-        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={PROJECTS} actions={ACTIONS}/>}
+        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={projects} actions={ACTIONS}/>}
       </AnimatePresence>
       <AnimatePresence>
         {surveyDemo&&<SurveyFlow key="sf" onClose={()=>setSurveyDemo(false)}/>}
@@ -2590,7 +2607,7 @@ export default function App() {
               </div>
               <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
                 {pendingRatings.map(a=>{
-                  const projs=PROJECTS.filter(p=>a.projectIds.includes(p.id));
+                  const projs=projects.filter(p=>a.projectIds.includes(p.id));
                   return (
                     <div key={a.id} className="border border-border p-4">
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
