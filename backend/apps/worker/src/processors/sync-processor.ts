@@ -52,19 +52,24 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
         toolLog.info('tool sync started');
 
-        const integration = integrations?.[tool];
+        let integration = integrations?.[tool];
+
+        // Reuse github credentials for github-actions if they exist
+        if (!integration && tool === 'github-actions' && integrations?.['github']) {
+          integration = integrations['github'];
+        }
 
         //FIXME: Better Design for many tools
         if (!integration) {
           throw new Error(`Missing integration payload for tool: ${tool}`);
         }
 
-        if (tool === 'github') {
+        if (tool === 'github' || tool === 'github-actions') {
           if (!integration.credentials?.token) {
-            throw new Error('Missing github.credentials.token');
+            throw new Error(`Missing ${tool}.credentials.token`);
           }
           if (!integration.project?.owner || !integration.project?.repo) {
-            throw new Error('Missing github.project.owner or github.project.repo');
+            throw new Error(`Missing ${tool}.project.owner or ${tool}.project.repo`);
           }
         }
 
@@ -81,6 +86,15 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           }
           if (!integration.project?.projectKey && !integration.project?.key) {
             throw new Error('Missing jira.project.projectKey (or jira.project.key)');
+          }
+        }
+
+        if (tool === 'sonarqube') {
+          if (!integration.credentials?.token) {
+            throw new Error('Missing sonarqube.credentials.token');
+          }
+          if (!integration.project?.projectKey && !integration.project?.key) {
+            throw new Error('Missing sonarqube.project.projectKey (or sonarqube.project.key)');
           }
         }
 
@@ -119,6 +133,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           projectId: numericProjectId,
           tool,
           data: connectorOutput.data,
+          snapshotId: snapshotId ?? undefined,
         });
 
         // Store snapshot ID for risk calculation

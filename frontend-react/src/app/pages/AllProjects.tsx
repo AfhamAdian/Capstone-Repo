@@ -24,7 +24,7 @@ import {
 } from "../components/ui/dialog";
 
 const allProjects = [
-  { id: "1", name: "Capstone-Repo", lastActivity: "5 hours ago", visibility: "Public", members: 5, status: "Untracked", repoUrl: "https://github.com/AfhamAdian/Capstone-Repo" },
+  { id: "1", name: "Discord-Messaging", lastActivity: "5 hours ago", visibility: "Public", members: 5, status: "Untracked", repoUrl: "https://github.com/mahmud1628/Discord-Messaging" },
   { id: "2", name: "NiramoyAI", lastActivity: "yesterday", visibility: "Public", members: 2, status: "Untracked" },
   { id: "3", name: "CSE-208-Data-Structure-and-Algorithms-2", lastActivity: "2 days ago", visibility: "Public", members: 1, status: "Untracked" },
   { id: "4", name: "CSE-214-Software-Engineering", lastActivity: "4 days ago", visibility: "Public", members: 1, status: "Untracked" },

@@ -16,7 +16,6 @@ export interface JiraMetricsResponse {
     throughputPerWeek: number;
     carryoverRate: number | null; // Percentage
     scopeCreepRate: number | null; // Percentage
-    estimationAccuracy: number | null; // Percentage
     blockedItemsCount: number;
     blockedItemsAvgAgeDays: number | null;
     overdueItemsCount: number;
@@ -33,7 +32,6 @@ export interface JiraMetricsResponse {
     // Sprint Spillover
     spillover: {
       spilloverRatio: number | null; // Percentage
-      storyPointSpillover: number | null;
       consecutiveSpilloverCount: number;
       carryoverAvgAgeDays: number | null;
     };
@@ -51,7 +49,6 @@ export interface JiraMetricsResponse {
       midSprintAdditions: number;
       scopeChurnRatio: number | null; // Percentage
       priorityChangeCount: number;
-      removedScopeRatio: number | null; // Percentage
     };
 
     // Stale Tickets

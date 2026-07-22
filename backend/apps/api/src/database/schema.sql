@@ -20,6 +20,32 @@ CREATE TABLE public.codeownershipconcentration (
   CONSTRAINT codeownershipconcentration_pkey PRIMARY KEY (id),
   CONSTRAINT codeownershipconcentration_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.projectsnapshot(id)
 );
+CREATE TABLE public.codequalitymetrics (
+  id integer NOT NULL DEFAULT nextval('codequalitymetrics_id_seq'::regclass),
+  snapshot_id integer NOT NULL UNIQUE,
+  technical_debt_ratio numeric,
+  technical_debt_minutes numeric,
+  maintainability_rating numeric,
+  code_smells integer,
+  duplicated_lines_density numeric,
+  bugs integer,
+  reliability_rating numeric,
+  vulnerabilities integer,
+  security_rating numeric,
+  critical_vulnerabilities integer,
+  high_vulnerabilities integer,
+  coverage numeric,
+  lines_of_code integer,
+  quality_gate_status character varying,
+  new_bugs integer,
+  new_vulnerabilities integer,
+  new_code_smells integer,
+  new_coverage numeric,
+  new_duplicated_lines_density numeric,
+  new_technical_debt numeric,
+  CONSTRAINT codequalitymetrics_pkey PRIMARY KEY (id),
+  CONSTRAINT codequalitymetrics_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.projectsnapshot(id)
+);
 CREATE TABLE public.company (
   id integer NOT NULL DEFAULT nextval('company_id_seq'::regclass),
   name character varying NOT NULL,
@@ -57,6 +83,10 @@ CREATE TABLE public.project (
   JIRA_PROJECT_KEY text,
   JIRA_BOARD_ID text,
   GITHUB_TOKEN text,
+  sonar_token text,
+  sonar_organization text,
+  sonar_project_key text,
+  sonar_base_url text,
   CONSTRAINT project_pkey PRIMARY KEY (id),
   CONSTRAINT project_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.company(id)
 );
@@ -68,7 +98,6 @@ CREATE TABLE public.projectmanagementmetrics (
   throughput_per_week integer,
   carryover_rate numeric,
   scope_creep_rate numeric,
-  estimation_accuracy numeric,
   blocked_items_count integer,
   blocked_items_avg_age_days numeric,
   overdue_items_count integer,
@@ -77,7 +106,6 @@ CREATE TABLE public.projectmanagementmetrics (
   lead_time_p95_days numeric,
   lead_time_variance numeric,
   spillover_ratio numeric,
-  story_point_spillover numeric,
   consecutive_spillover_count integer,
   carryover_avg_age_days numeric,
   blocked_ticket_percent numeric,
@@ -87,7 +115,6 @@ CREATE TABLE public.projectmanagementmetrics (
   mid_sprint_additions integer,
   scope_churn_ratio numeric,
   priority_change_count integer,
-  removed_scope_ratio numeric,
   in_progress_avg_age_days numeric,
   stale_ticket_ratio numeric,
   state_movement_count integer,

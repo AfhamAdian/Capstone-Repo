@@ -1,5 +1,12 @@
 import { RiskResult, RiskType, SecurityRiskMetrics } from "../../types.js";
 import { SecurityRiskRiskCalculator } from "./security-risk-risk-calculator.interface.js";
+import {
+  clamp,
+  renormalizedWeightedScore,
+  riskLevel,
+  toScore,
+  type WeightedSignal,
+} from "../../scoring.js";
 
 export class SecurityRiskStrategy implements SecurityRiskRiskCalculator {
   getType(): RiskType {
@@ -7,59 +14,58 @@ export class SecurityRiskStrategy implements SecurityRiskRiskCalculator {
   }
 
   calculate(metrics: SecurityRiskMetrics): RiskResult {
-    const openCriticalVulnerabilities = metrics.openCriticalVulnerabilities ?? 0;
-    const openHighVulnerabilities = metrics.openHighVulnerabilities ?? 0;
-    const dependencyUpdateLagDays = metrics.dependencyUpdateLagDays ?? 0;
-    const prRevertRatePercent = metrics.prRevertRatePercent ?? 0;
-    const incidentMttrHours = metrics.incidentMttrHours ?? 0;
-    const longLivedUnmergedBranchesCount =
-      metrics.longLivedUnmergedBranchesCount ?? 0;
-
-    const criticalVulnScore = openCriticalVulnerabilities > 0 ? 0 : 100;
-    const highVulnScore = Math.max(100 - openHighVulnerabilities * 5, 0);
-    const dependencyLagScore = Math.max(100 - dependencyUpdateLagDays * 2, 0);
-    const revertRateScore = Math.max(100 - prRevertRatePercent, 0);
-    const incidentMttrScore = Math.max(100 - incidentMttrHours * 4, 0);
-    const branchRiskScore = Math.max(100 - longLivedUnmergedBranchesCount * 4, 0);
-
-    const metricScores: Record<string, number> = {
-      criticalVulnScore,
-      highVulnScore,
-      revertRateScore,
-      dependencyLagScore,
-      incidentMttrScore,
-      branchRiskScore,
-    };
-
-    const weights = [
-      { key: "criticalVulnScore", w: 0.3 },
-      { key: "highVulnScore", w: 0.15 },
-      { key: "revertRateScore", w: 0.2 },
-      { key: "dependencyLagScore", w: 0.15 },
-      { key: "incidentMttrScore", w: 0.1 },
-      { key: "branchRiskScore", w: 0.1 },
+    // Vulnerability severity counts come from SonarQube; dependency lag and PR
+    // revert rate come from the VCS connector. Absent signals are dropped and
+    // the remaining weights renormalized (see scoring.ts).
+    const signals: WeightedSignal[] = [
+      {
+        key: "criticalVulnerabilities",
+        weight: 0.3,
+        score: toScore(metrics.openCriticalVulnerabilities, (value) => (value > 0 ? 0 : 100)),
+      },
+      {
+        key: "highVulnerabilities",
+        weight: 0.15,
+        score: toScore(metrics.openHighVulnerabilities, (value) => clamp(100 - value * 5)),
+      },
+      {
+        key: "revertRate",
+        weight: 0.2,
+        score: toScore(metrics.prRevertRatePercent, (value) => clamp(100 - value)),
+      },
+      {
+        key: "dependencyLag",
+        weight: 0.15,
+        score: toScore(metrics.dependencyUpdateLagDays, (value) => clamp(100 - value * 2)),
+      },
+      {
+        key: "incidentMttr",
+        weight: 0.1,
+        score: toScore(metrics.incidentMttrHours, (value) => clamp(100 - value * 4)),
+      },
+      {
+        key: "branchRisk",
+        weight: 0.1,
+        score: toScore(metrics.longLivedUnmergedBranchesCount, (value) => clamp(100 - value * 4)),
+      },
     ];
 
-    let score = Math.min(
-      weights.reduce((sum, item) => sum + (metricScores[item.key] ?? 0) * item.w, 0),
-      100
-    );
+    const result = renormalizedWeightedScore(signals);
+    let score = result?.score ?? 0;
 
-    if (openCriticalVulnerabilities > 0) {
+    // Any open critical vulnerability caps the score, when that count is known.
+    if (
+      typeof metrics.openCriticalVulnerabilities === "number" &&
+      metrics.openCriticalVulnerabilities > 0
+    ) {
       score = Math.min(score, 60);
     }
 
     return {
       type: RiskType.SECURITY_RISK,
       score,
-      level: this.getLevel(score),
-      weights,
+      level: riskLevel(score),
+      weights: result?.weights ?? [],
     };
-  }
-
-  private getLevel(score: number): "LOW" | "MEDIUM" | "HIGH" {
-    if (score >= 70) return "HIGH";
-    if (score >= 40) return "MEDIUM";
-    return "LOW";
   }
 }
