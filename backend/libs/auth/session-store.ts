@@ -1,4 +1,4 @@
-/** Redis-backed session store. Session id lives in an httpOnly cookie; deleting the key revokes it. */
+// Redis-backed session store. Session id lives in an httpOnly cookie; deleting the key revokes it.
 
 import { randomBytes } from 'node:crypto';
 import { Redis } from 'ioredis';
@@ -30,7 +30,7 @@ class SessionStore {
     return `${SESSION_KEY_PREFIX}${sessionId}`;
   }
 
-  /** Create a session; returns the id to store in the cookie. */
+  // Create a session; returns the id to store in the cookie.
   async create(data: SessionData): Promise<string> {
     const sessionId = randomBytes(32).toString('hex');
 
@@ -44,7 +44,7 @@ class SessionStore {
     return sessionId;
   }
 
-  /** Look up a session and refresh its TTL (rolling expiry). */
+  // Look up a session and refresh its TTL (rolling expiry).
   async get(sessionId: string): Promise<SessionData | null> {
     const key = this.getKey(sessionId);
     const raw = await this.getClient().get(key);
@@ -63,12 +63,12 @@ class SessionStore {
     }
   }
 
-  /** Revoke a session (logout). */
+  // Revoke a session (logout).
   async destroy(sessionId: string): Promise<void> {
     await this.getClient().del(this.getKey(sessionId));
   }
 
-  /** Cookie max-age should match the session TTL. */
+  // Cookie max-age should match the session TTL.
   get maxAgeMs(): number {
     return SESSION_TTL_SECONDS * 1000;
   }

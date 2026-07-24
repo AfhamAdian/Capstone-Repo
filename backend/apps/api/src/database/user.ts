@@ -1,10 +1,10 @@
-/** User and company persistence for auth. */
+// User and company persistence for auth.
 
 import { assertSupabaseClient } from '../config/supabase.js';
 
 const USER_TABLE = 'User';
 
-/** Raw DB row, including the password hash. */
+// Raw DB row, including the password hash.
 export interface UserRecord {
   id: number;
   company_id: number;
@@ -14,7 +14,7 @@ export interface UserRecord {
   created_at: string | null;
 }
 
-/** Safe shape returned to callers — never carries the password hash. */
+// Safe shape returned to callers — never carries the password hash.
 export interface PublicUser {
   id: number;
   companyId: number;
@@ -31,7 +31,7 @@ export function toPublicUser(user: UserRecord): PublicUser {
   };
 }
 
-/** Emails are stored and compared lowercased so logins are case-insensitive. */
+// Emails are stored and compared lowercased so logins are case-insensitive.
 export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   const client = assertSupabaseClient();
 
@@ -80,7 +80,7 @@ export async function createCompany(name: string): Promise<number> {
   return data.id as number;
 }
 
-/** Compensating delete: the Supabase client has no transactions, so register rolls back manually. */
+// Compensating delete: the Supabase client has no transactions, so register rolls back manually.
 export async function deleteCompany(id: number): Promise<void> {
   const client = assertSupabaseClient();
   await client.from('company').delete().eq('id', id);
