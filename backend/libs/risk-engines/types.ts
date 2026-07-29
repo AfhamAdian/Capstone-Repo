@@ -5,6 +5,9 @@ export enum RiskType {
   CICD_RELIABILITY = "CICD_RELIABILITY",
   TEAM_HEALTH = "TEAM_HEALTH",
   SECURITY_RISK = "SECURITY_RISK",
+  // Added for the survey feature's rubric (delivery/codeQuality/cicd/teamHealth/blockers),
+  // which doesn't map 1:1 onto the 6 categories above - see backend/db/migrations/002_survey.sql.
+  BLOCKERS = "BLOCKERS",
 }
 
 export type DeliveryMetrics = {
@@ -69,6 +72,12 @@ export type SecurityRiskMetrics = {
   longLivedUnmergedBranchesCount?: number;
 };
 
+export type BlockersMetrics = {
+  blockedItemsCount?: number;
+  blockedItemsAvgAgeDays?: number;
+  overdueItemsCount?: number;
+};
+
 export type RiskMetricsByType = {
   [RiskType.DELIVERY]: DeliveryMetrics;
   [RiskType.CODE_QUALITY]: CodeQualityMetrics;
@@ -76,6 +85,7 @@ export type RiskMetricsByType = {
   [RiskType.CICD_RELIABILITY]: CicdReliabilityMetrics;
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
   [RiskType.SECURITY_RISK]: SecurityRiskMetrics;
+  [RiskType.BLOCKERS]: BlockersMetrics;
 };
 
 export type RiskWeight = {

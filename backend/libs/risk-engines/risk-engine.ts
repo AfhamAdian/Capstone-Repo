@@ -8,6 +8,7 @@ import {
   RiskType,
   SecurityRiskMetrics,
   TeamHealthMetrics,
+  BlockersMetrics,
 } from "./types.js";
 import { DeliveryStrategy } from "./risks/delivery/delivery.strategy.js";
 import { CodeQualityStrategy } from "./risks/code-quality/code-quality.strategy.js";
@@ -15,7 +16,8 @@ import { EngineeringProcessStrategy } from "./risks/engineering-process/engineer
 import { CicdReliabilityStrategy } from "./risks/cicd-reliability/cicd-reliability.strategy.js";
 import { TeamHealthStrategy } from "./risks/team-health/team-health.strategy.js";
 import { SecurityRiskStrategy } from "./risks/security-risk/security-risk.strategy.js";
-import { saveRiskScore } from "../../apps/api/src/database/risk-score.js";
+import { BlockersStrategy } from "./risks/blockers/blockers.strategy.js";
+import { saveRiskScore } from "../../apps/api/database/risk-score.js";
 
 export class RiskEngine {
   public calculateRisk<TType extends RiskType>(
@@ -48,6 +50,10 @@ export class RiskEngine {
 
     if (type === RiskType.SECURITY_RISK) {
       return new SecurityRiskStrategy().calculate(metrics as SecurityRiskMetrics);
+    }
+
+    if (type === RiskType.BLOCKERS) {
+      return new BlockersStrategy().calculate(metrics as BlockersMetrics);
     }
 
     throw new Error(`Strategy for risk type ${type} not implemented.`);
