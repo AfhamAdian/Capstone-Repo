@@ -28,6 +28,10 @@ function getNumberMetric(obj: MetricsRecord | null, key: string): number | undef
   if (!obj) return undefined;
   const value = obj[key];
   if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
   return undefined;
 }
 
@@ -60,7 +64,6 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       throughputPerWeek: getNumberMetric(metrics.projectManagement, 'throughput_per_week'),
       carryoverRate: getNumberMetric(metrics.projectManagement, 'carryover_rate'),
       scopeCreepRate: getNumberMetric(metrics.projectManagement, 'scope_creep_rate'),
-      estimationAccuracy: getNumberMetric(metrics.projectManagement, 'estimation_accuracy'),
     };
 
     if (Object.values(deliveryMetrics).some((v) => v !== undefined)) {
@@ -71,17 +74,20 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       scores[RiskType.DELIVERY] = null;
     }
 
-    // 2. Code Quality Risk (requires VCS metrics - may not have all data)
+    // 2. Code Quality Risk (from SonarQube metrics)
     const codeQualityMetrics: CodeQualityMetrics = {
-      // Code quality metrics would typically come from code analysis tools
-      // For now, we use available VCS metrics as proxies
-      codeDuplicationPercent: undefined,
-      technicalDebtRatioPercent: undefined,
+      codeCoveragePercent: getNumberMetric(metrics.codeQuality, 'coverage'),
+      codeDuplicationPercent: getNumberMetric(metrics.codeQuality, 'duplicated_lines_density'),
+      technicalDebtRatioPercent: getNumberMetric(metrics.codeQuality, 'technical_debt_ratio'),
     };
 
-    const codeQualityResult = riskEngine.calculateRisk(RiskType.CODE_QUALITY, codeQualityMetrics);
-    scores[RiskType.CODE_QUALITY] = roundRiskScore(codeQualityResult.score);
-    log.info({ score: codeQualityResult.score, level: codeQualityResult.level }, 'calculated code quality risk');
+    if (Object.values(codeQualityMetrics).some((v) => v !== undefined)) {
+      const codeQualityResult = riskEngine.calculateRisk(RiskType.CODE_QUALITY, codeQualityMetrics);
+      scores[RiskType.CODE_QUALITY] = roundRiskScore(codeQualityResult.score);
+      log.info({ score: codeQualityResult.score, level: codeQualityResult.level }, 'calculated code quality risk');
+    } else {
+      scores[RiskType.CODE_QUALITY] = null;
+    }
 
     // 3. Engineering Process Risk
     const commitBodyPercent = getNumberMetric(metrics.versionControl, 'commit_with_body_percent') ?? 0;
@@ -105,12 +111,18 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       'calculated engineering process risk'
     );
 
-    // 4. CI/CD Reliability Risk (would require CI/CD metrics)
+    // 4. CI/CD Reliability Risk
     const cicdReliabilityMetrics: CicdReliabilityMetrics = {
-      // CI/CD metrics would come from external sources like Jenkins, GitLab CI, etc.
-      pipelineSuccessRatePercent: undefined,
-      deploymentFailureRatePercent: undefined,
-      deploymentFrequencyPerWeek: undefined,
+      pipelineSuccessRatePercent: getNumberMetric(metrics.cicd, 'pipeline_success_rate_percent'),
+      avgPipelineDurationMinutes: getNumberMetric(metrics.cicd, 'avg_pipeline_duration_minutes'),
+      flakyTestCount: getNumberMetric(metrics.cicd, 'flaky_test_count'),
+      testCoveragePercent: getNumberMetric(metrics.cicd, 'test_coverage_percent'),
+      testFailureRatePercent: getNumberMetric(metrics.cicd, 'test_failure_rate_percent'),
+      avgPipelineRunsPerPr: getNumberMetric(metrics.cicd, 'avg_pipeline_runs_per_pr'),
+      deploymentsPerWeek: getNumberMetric(metrics.cicd, 'deployments_per_week'),
+      deploymentFailureRatePercent: getNumberMetric(metrics.cicd, 'deployment_failure_rate_percent'),
+      mttrHours: getNumberMetric(metrics.cicd, 'mttr_hours'),
+      timeToProdHours: getNumberMetric(metrics.cicd, 'time_to_prod_hours'),
     };
 
     const cicdReliabilityResult = riskEngine.calculateRisk(RiskType.CICD_RELIABILITY, cicdReliabilityMetrics);
@@ -135,18 +147,23 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
     scores[RiskType.TEAM_HEALTH] = roundRiskScore(teamHealthResult.score);
     log.info({ score: teamHealthResult.score, level: teamHealthResult.level }, 'calculated team health risk');
 
-    // 6. Security Risk
+    // 6. Security Risk (vulnerability severities from SonarQube; lag/revert from VCS)
     const securityRiskMetrics: SecurityRiskMetrics = {
-      // Security metrics would come from security scanning tools
-      openCriticalVulnerabilities: undefined,
-      openHighVulnerabilities: undefined,
+      openCriticalVulnerabilities: getNumberMetric(metrics.codeQuality, 'critical_vulnerabilities'),
+      openHighVulnerabilities: getNumberMetric(metrics.codeQuality, 'high_vulnerabilities'),
       dependencyUpdateLagDays: getNumberMetric(metrics.versionControl, 'dependency_update_lag_avg_days'),
       prRevertRatePercent: getNumberMetric(metrics.versionControl, 'pr_revert_rate_percent'),
+      incidentMttrHours: getNumberMetric(metrics.cicd, 'mttr_hours'),
+      longLivedUnmergedBranchesCount: getNumberMetric(metrics.versionControl, 'long_lived_branches_count'),
     };
 
-    const securityRiskResult = riskEngine.calculateRisk(RiskType.SECURITY_RISK, securityRiskMetrics);
-    scores[RiskType.SECURITY_RISK] = roundRiskScore(securityRiskResult.score);
-    log.info({ score: securityRiskResult.score, level: securityRiskResult.level }, 'calculated security risk');
+    if (Object.values(securityRiskMetrics).some((v) => v !== undefined)) {
+      const securityRiskResult = riskEngine.calculateRisk(RiskType.SECURITY_RISK, securityRiskMetrics);
+      scores[RiskType.SECURITY_RISK] = roundRiskScore(securityRiskResult.score);
+      log.info({ score: securityRiskResult.score, level: securityRiskResult.level }, 'calculated security risk');
+    } else {
+      scores[RiskType.SECURITY_RISK] = null;
+    }
 
     // Save all risk scores to database
     await saveAllRiskScores(projectSnapshotId, scores);
@@ -167,6 +184,8 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
   versionControl: MetricsRecord | null;
   projectManagement: MetricsRecord | null;
   codeOwnershipStats: MetricsRecord | null;
+  codeQuality: MetricsRecord | null;
+  cicd: MetricsRecord | null;
 }> {
   const client = assertSupabaseClient();
 
@@ -184,11 +203,25 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
     .eq('snapshot_id', projectSnapshotId)
     .single();
 
+  // Fetch code quality metrics (SonarQube)
+  const { data: cqMetrics, error: cqError } = await client
+    .from('codequalitymetrics')
+    .select('*')
+    .eq('snapshot_id', projectSnapshotId)
+    .single();
+
   // Fetch code ownership concentration
   const { data: codeOwnershipData, error: coError } = await client
     .from('codeownershipconcentration')
     .select('top_contributor_percent')
     .eq('snapshot_id', projectSnapshotId);
+
+  // Fetch CI/CD metrics
+  const { data: cicdMetrics, error: cicdError } = await client
+    .from('cicdmetrics')
+    .select('*')
+    .eq('snapshot_id', projectSnapshotId)
+    .single();
 
   // Calculate average code ownership concentration
   let codeOwnershipStats: MetricsRecord | null = null;
@@ -206,6 +239,8 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
     versionControl: (vcMetrics ?? null) as MetricsRecord | null,
     projectManagement: (pmMetrics ?? null) as MetricsRecord | null,
     codeOwnershipStats,
+    codeQuality: (cqMetrics ?? null) as MetricsRecord | null,
+    cicd: (cicdMetrics ?? null) as MetricsRecord | null,
   };
 }
 

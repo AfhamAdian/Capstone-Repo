@@ -97,7 +97,6 @@ export class JiraConnector implements IPmConnector, IConnector {
     const throughputPerWeek = this.calculateThroughput(issues);
     const carryoverRate = this.calculateCarryoverRate(sprints, issues);
     const scopeCreepRate = this.calculateScopeCreepRate(sprints, issues);
-    const estimationAccuracy = this.calculateEstimationAccuracy(issues);
     const blockedMetrics = this.calculateBlockedMetrics(issues);
     const overdueItemsCount = this.calculateOverdueItems(issues);
 
@@ -120,7 +119,6 @@ export class JiraConnector implements IPmConnector, IConnector {
         throughputPerWeek,
         carryoverRate,
         scopeCreepRate,
-        estimationAccuracy,
         blockedItemsCount: blockedMetrics.count,
         blockedItemsAvgAgeDays: blockedMetrics.avgAgeDays,
         overdueItemsCount,
@@ -317,12 +315,6 @@ export class JiraConnector implements IPmConnector, IConnector {
     return totalCommitted > 0 ? Math.round((totalAdded / totalCommitted) * 100) : null;
   }
 
-  private calculateEstimationAccuracy(issues: JiraIssue[]): number | null {
-    // Placeholder: requires time tracking data
-    // Would compare original estimate vs actual time spent
-    return null;
-  }
-
   private calculateBlockedMetrics(issues: JiraIssue[]): { count: number; avgAgeDays: number | null } {
     const blockedIssues = issues.filter((issue) =>
       BLOCKED_STATUS_KEYWORDS.some((keyword) => issue.fields.status.name.toLowerCase().includes(keyword)),
@@ -426,14 +418,12 @@ export class JiraConnector implements IPmConnector, IConnector {
     issues: JiraIssue[],
   ): {
     spilloverRatio: number | null;
-    storyPointSpillover: number | null;
     consecutiveSpilloverCount: number;
     carryoverAvgAgeDays: number | null;
   } {
     if (sprints.length < 2) {
       return {
         spilloverRatio: null,
-        storyPointSpillover: null,
         consecutiveSpilloverCount: 0,
         carryoverAvgAgeDays: null,
       };
@@ -477,7 +467,6 @@ export class JiraConnector implements IPmConnector, IConnector {
 
     return {
       spilloverRatio,
-      storyPointSpillover: null, // Requires story point data
       consecutiveSpilloverCount: consecutiveCount,
       carryoverAvgAgeDays,
     };
@@ -547,20 +536,17 @@ export class JiraConnector implements IPmConnector, IConnector {
     midSprintAdditions: number;
     scopeChurnRatio: number | null;
     priorityChangeCount: number;
-    removedScopeRatio: number | null;
   } {
     if (sprints.length === 0) {
       return {
         midSprintAdditions: 0,
         scopeChurnRatio: null,
         priorityChangeCount: 0,
-        removedScopeRatio: null,
       };
     }
 
     const recentSprints = sprints.slice(-3);
     let totalAdded = 0;
-    let totalRemoved = 0;
     let totalCommitted = 0;
     let priorityChanges = 0;
 
@@ -596,13 +582,11 @@ export class JiraConnector implements IPmConnector, IConnector {
     }
 
     const scopeChurnRatio = totalCommitted > 0 ? Math.round((totalAdded / totalCommitted) * 100) : null;
-    const removedScopeRatio = totalCommitted > 0 ? Math.round((totalRemoved / totalCommitted) * 100) : null;
 
     return {
       midSprintAdditions: totalAdded,
       scopeChurnRatio,
       priorityChangeCount: priorityChanges,
-      removedScopeRatio,
     };
   }
 

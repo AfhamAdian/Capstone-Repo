@@ -1,6 +1,7 @@
 import { assertSupabaseClient } from '../config/supabase.js';
 import type { GitHubMetricsResponse } from '../../../../libs/connectors/vcs/github-metrics.types.js';
 import type { JiraMetricsResponse } from '../../../../libs/connectors/pm/jira-metrics.types.js';
+import type { SonarQubeMetricsResponse } from '../../../../libs/connectors/quality/sonarqube-metrics.types.js';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -19,6 +20,18 @@ function isJiraMetricsResponse(data: unknown): data is JiraMetricsResponse {
   if (!isObject(data)) return false;
   if (!isObject(data.project) || !isObject(data.metrics)) return false;
   return typeof data.generatedAt === 'string' && typeof data.project.key === 'string';
+}
+
+function isSonarQubeMetricsResponse(data: unknown): data is SonarQubeMetricsResponse {
+  if (!isObject(data)) return false;
+  if (!isObject(data.project) || !isObject(data.metrics)) return false;
+  return typeof data.generatedAt === 'string' && typeof data.project.projectKey === 'string';
+}
+
+function isGithubActionsMetricsResponse(data: unknown): boolean {
+  if (!isObject(data)) return false;
+  if (!isObject(data.repo) || !isObject(data.metrics)) return false;
+  return typeof data.generatedAt === 'string';
 }
 
 async function createProjectSnapshot(projectId: number, snapshotTime: string): Promise<number> {
@@ -117,7 +130,6 @@ async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetr
         throughput_per_week: metrics.throughputPerWeek,
         carryover_rate: metrics.carryoverRate,
         scope_creep_rate: metrics.scopeCreepRate,
-        estimation_accuracy: metrics.estimationAccuracy,
         blocked_items_count: metrics.blockedItemsCount,
         blocked_items_avg_age_days: metrics.blockedItemsAvgAgeDays,
         overdue_items_count: metrics.overdueItemsCount,
@@ -126,7 +138,6 @@ async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetr
         lead_time_p95_days: metrics.leadTime.p95Days,
         lead_time_variance: metrics.leadTime.variance,
         spillover_ratio: metrics.spillover.spilloverRatio,
-        story_point_spillover: metrics.spillover.storyPointSpillover,
         consecutive_spillover_count: metrics.spillover.consecutiveSpilloverCount,
         carryover_avg_age_days: metrics.spillover.carryoverAvgAgeDays,
         blocked_ticket_percent: metrics.blockedWork.blockedTicketPercent,
@@ -136,7 +147,6 @@ async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetr
         mid_sprint_additions: metrics.scopeChurn.midSprintAdditions,
         scope_churn_ratio: metrics.scopeChurn.scopeChurnRatio,
         priority_change_count: metrics.scopeChurn.priorityChangeCount,
-        removed_scope_ratio: metrics.scopeChurn.removedScopeRatio,
         in_progress_avg_age_days: metrics.staleTickets.inProgressAvgAgeDays,
         stale_ticket_ratio: metrics.staleTickets.staleTicketRatio,
         state_movement_count: metrics.staleTickets.stateMovementCount,
@@ -171,13 +181,115 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
   }
 }
 
+async function insertCodeQualityMetrics(...args: any[]): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    try {
+      return await insertCodeQualityMetrics_impl(...args);
+    } catch (e: any) {
+      if (i === 2 || !e.message?.includes('fetch failed')) throw e;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw new Error("Unreachable");
+}
+
+async function insertCodeQualityMetrics_impl(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
+  const client = assertSupabaseClient();
+  const { metrics } = data;
+
+  const { error } = await client
+    .from('codequalitymetrics')
+    .insert([
+      {
+        snapshot_id: snapshotId,
+        technical_debt_ratio: metrics.technicalDebtRatio,
+        technical_debt_minutes: metrics.technicalDebtMinutes,
+        maintainability_rating: metrics.maintainabilityRating,
+        code_smells: metrics.codeSmells,
+        duplicated_lines_density: metrics.duplicatedLinesDensity,
+        bugs: metrics.bugs,
+        reliability_rating: metrics.reliabilityRating,
+        vulnerabilities: metrics.vulnerabilities,
+        security_rating: metrics.securityRating,
+        critical_vulnerabilities: metrics.criticalVulnerabilities,
+        high_vulnerabilities: metrics.highVulnerabilities,
+        coverage: metrics.coverage,
+        lines_of_code: metrics.linesOfCode,
+        quality_gate_status: metrics.qualityGateStatus,
+        new_bugs: metrics.newBugs,
+        new_vulnerabilities: metrics.newVulnerabilities,
+        new_code_smells: metrics.newCodeSmells,
+        new_coverage: metrics.newCoverage,
+        new_duplicated_lines_density: metrics.newDuplicatedLinesDensity,
+        new_technical_debt: metrics.newTechnicalDebt,
+      },
+    ]);
+
+  if (error) {
+    throw new Error(`Failed to save code quality metrics: ${error.message}`);
+  }
+}
+
+async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
+  const client = assertSupabaseClient();
+  const { metrics } = data;
+
+  const { error } = await client
+    .from('cicdmetrics')
+    .insert([
+      {
+        snapshot_id: snapshotId,
+        pipeline_success_rate_percent: metrics.pipelineSuccessRatePercent,
+        avg_pipeline_duration_minutes: metrics.avgPipelineDurationMinutes,
+        flaky_test_count: metrics.flakyTestCount,
+        test_coverage_percent: metrics.testCoveragePercent,
+        test_failure_rate_percent: metrics.testFailureRatePercent,
+        avg_pipeline_runs_per_pr: metrics.avgPipelineRunsPerPr,
+        deployments_per_week: metrics.deploymentsPerWeek,
+        deployment_failure_rate_percent: metrics.deploymentFailureRatePercent,
+        mttr_hours: metrics.mttrHours,
+        time_to_prod_hours: metrics.timeToProdHours,
+      },
+    ]);
+
+  if (error) {
+    throw new Error(`Failed to save CI/CD metrics: ${error.message}`);
+  }
+}
+
 export async function persistConnectorMetrics(input: {
   projectId: number;
   tool: string;
   data: unknown;
+  snapshotId?: number;
 }): Promise<number> {
-  const snapshotTime = new Date().toISOString();
-  const snapshotId = await createProjectSnapshot(input.projectId, snapshotTime);
+  let attempt = 0;
+  while (attempt < 3) {
+    try {
+      return await persistConnectorMetricsImpl(input);
+    } catch (error: any) {
+      attempt++;
+      if (attempt === 3 || !error.message?.includes('fetch failed')) {
+        throw error;
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  throw new Error('Unreachable');
+}
+
+async function persistConnectorMetricsImpl(input: {
+  projectId: number;
+  tool: string;
+  data: unknown;
+  snapshotId?: number;
+}): Promise<number> {
+  let snapshotId = input.snapshotId;
+
+  if (!snapshotId) {
+    const snapshotTime = new Date().toISOString();
+    snapshotId = await createProjectSnapshot(input.projectId, snapshotTime);
+  }
 
   if (input.tool === 'github') {
     if (!isGitHubMetricsResponse(input.data)) {
@@ -196,6 +308,24 @@ export async function persistConnectorMetrics(input: {
 
     await insertProjectManagementMetrics(snapshotId, input.data);
     await insertLeadTimeTrend(snapshotId, input.data);
+    return snapshotId;
+  }
+
+  if (input.tool === 'sonarqube') {
+    if (!isSonarQubeMetricsResponse(input.data)) {
+      throw new Error('Invalid SonarQube metrics payload received from connector');
+    }
+
+    await insertCodeQualityMetrics(snapshotId, input.data);
+    return snapshotId;
+  }
+
+  if (input.tool === 'github-actions') {
+    if (!isGithubActionsMetricsResponse(input.data)) {
+      throw new Error('Invalid GitHub Actions metrics payload received from connector');
+    }
+
+    await insertCicdMetrics(snapshotId, input.data);
     return snapshotId;
   }
 
