@@ -257,6 +257,7 @@ export function TrackedProjects() {
     showBanner("info", "Syncing project…", "Sync job queued. Waiting for connector updates.");
 
     try {
+      console.log("Calling API at:", `${API_BASE_URL}/sync`);
       const response = await fetch(`${API_BASE_URL}/sync`, {
         method: "POST",
         headers: {
@@ -276,7 +277,9 @@ export function TrackedProjects() {
 
       await response.json().catch(() => null);
 
-      const eventSource = new EventSource(`${API_BASE_URL}/progress/${sessionId}`);
+      const progressUrl = `${API_BASE_URL}/progress/${sessionId}`;
+      console.log("Opening EventSource at:", progressUrl);
+      const eventSource = new EventSource(progressUrl);
       eventSourceRef.current = eventSource;
 
       eventSource.onmessage = (event) => {
