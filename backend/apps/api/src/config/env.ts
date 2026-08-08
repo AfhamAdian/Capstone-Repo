@@ -32,6 +32,9 @@ if (hasAnySupabaseValue && !hasBothSupabaseValues) {
 const redisUrl = process.env.REDIS_URL;
 const databaseUrl = process.env.DATABASE_URL;
 
+// Frontend origin allowed to send credentialed (cookie) requests
+const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
+
 // Connector credentials (may be provided per-project in DB, but these can be defaults)
 const githubToken = process.env.GITHUB_TOKEN;
 const jiraBaseUrl = process.env.JIRA_BASE_URL;
@@ -46,6 +49,7 @@ export const env = {
   isSupabaseConfigured: hasBothSupabaseValues && hasValidSupabaseUrl,
   redisUrl,
   databaseUrl,
+  frontendOrigin,
   githubToken,
   jiraBaseUrl,
   jiraToken,
