@@ -2,14 +2,20 @@ import { useState } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
 
-export function LoginView({ onSuccess }: { onSuccess: () => void }) {
+export function LoginView({
+  onSuccess,
+  onNavigateToRegister,
+}: {
+  onSuccess: () => void;
+  onNavigateToRegister?: () => void;
+}) {
   const { login } = useWorkspace();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const newErrors: Record<string, string> = {};
@@ -23,10 +29,15 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      login(email);
+    setErrors({});
+    try {
+      await login(email, password);
       onSuccess();
-    }, 1300);
+    } catch (err) {
+      setErrors({ form: err instanceof Error ? err.message : "Sign in failed" });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -93,6 +104,13 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
             )}
           </div>
 
+          {errors.form && (
+            <p className="text-sm text-red-500 flex items-center gap-1">
+              <AlertCircle size={13} />
+              {errors.form}
+            </p>
+          )}
+
           <button
             type="submit"
             disabled={isLoading}
@@ -102,6 +120,19 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
             {isLoading ? "Signing In…" : "Sign In"}
           </button>
         </form>
+
+        {onNavigateToRegister && (
+          <p className="text-sm text-muted-foreground text-center mt-6">
+            Don't have an account?{" "}
+            <button
+              type="button"
+              onClick={onNavigateToRegister}
+              className="text-primary font-semibold hover:underline"
+            >
+              Create one
+            </button>
+          </p>
+        )}
       </div>
     </div>
   );
