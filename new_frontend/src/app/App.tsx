@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
 import type { SyncRiskKey } from "./api";
 import { LoginView } from "./pages/LoginView";
+import { RegisterView } from "./pages/RegisterView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
@@ -68,7 +69,7 @@ interface Survey {
   rawResponses: { question: string; answers: string[] }[];
 }
 
-type Screen = "login" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+type Screen = "login" | "register" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
@@ -2493,13 +2494,23 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const {isAuthenticated,activeWorkspace,logout}=useWorkspace();
+  const {isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const [dark,setDark]=useState(false);
   const [screen,setScreen]=useState<Screen>(()=>{
     if(!isAuthenticated) return "login";
     if(!activeWorkspace) return "workspaces";
     return "portfolio";
   });
+  // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
+  useEffect(()=>{
+    if(isAuthLoading) return;
+    if(isAuthenticated && screen==="login"){
+      setScreen(activeWorkspace ? "portfolio" : "workspaces");
+    } else if(!isAuthenticated && screen!=="login" && screen!=="register"){
+      setScreen("login");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[isAuthLoading,isAuthenticated]);
   const [activeId,setActiveId]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
@@ -2552,8 +2563,14 @@ export default function App() {
     }};
     return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={setScreen} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
   };
+  if(isAuthLoading){
+    return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
+  }
   if(screen==="login"){
-    return <LoginView onSuccess={()=>setScreen("workspaces")}/>;
+    return <LoginView onSuccess={()=>setScreen("workspaces")} onNavigateToRegister={()=>setScreen("register")}/>;
+  }
+  if(screen==="register"){
+    return <RegisterView onSuccess={()=>setScreen("workspaces")} onNavigateToLogin={()=>setScreen("login")}/>;
   }
   if(screen==="workspaces"){
     return (
