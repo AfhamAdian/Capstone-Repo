@@ -2504,7 +2504,7 @@ export default function App() {
   // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
   useEffect(()=>{
     if(isAuthLoading) return;
-    if(isAuthenticated && screen==="login"){
+    if(isAuthenticated && (screen==="login" || screen==="register")){
       setScreen(activeWorkspace ? "portfolio" : "workspaces");
     } else if(!isAuthenticated && screen!=="login" && screen!=="register"){
       setScreen("login");
@@ -2563,7 +2563,7 @@ export default function App() {
     }};
     return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={setScreen} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
   };
-  if(isAuthLoading){
+  if(isAuthLoading || (isAuthenticated && (screen==="login" || screen==="register"))){
     return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
   if(screen==="login"){
