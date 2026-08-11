@@ -7,7 +7,12 @@
 import type { SurveyInsightJobData } from '@libs/queue/index.js';
 import { createAiClient, type SurveyQuestionCategory } from '@libs/ai/index.js';
 import { logger } from '@libs/logger.js';
-import { getSurveyById, getRawResponsesForSurvey } from '../../api/database/survey.js';
+import {
+  getSurveyById,
+  getRawResponsesForSurvey,
+  getDerivedCounts,
+  updateSurveyStatus,
+} from '../../api/database/survey.js';
 import { getProjectName } from '../../api/database/project.js';
 import { getRubricCategoryMap } from '../../api/database/survey-category.js';
 import { saveInsight } from '../../api/database/survey-insight.js';
@@ -26,13 +31,27 @@ export async function processSurveyInsightJob(jobData: SurveyInsightJobData): Pr
     return;
   }
 
-  const [projectName, rawResponses] = await Promise.all([
+  await updateSurveyStatus(surveyId, 'analyzing', { analysisError: null });
+
+  const [projectName, rawResponses, counts] = await Promise.all([
     getProjectName(survey.project_id),
     getRawResponsesForSurvey(surveyId),
+    getDerivedCounts(surveyId),
   ]);
 
-  if (rawResponses.length === 0 || rawResponses.every((r) => r.answers.length === 0)) {
-    log.warn('no answered questions for this survey, skipping AI analysis');
+  if (
+    counts.responseCount < env.surveyMinAnonymousResponses
+    || rawResponses.length === 0
+    || rawResponses.every((r) => r.answers.length === 0)
+  ) {
+    await updateSurveyStatus(surveyId, 'completed', {
+      completedAt: new Date(),
+      analysisError: `insufficient_responses:${counts.responseCount}/${env.surveyMinAnonymousResponses}`,
+    });
+    log.warn(
+      { responseCount: counts.responseCount, minimum: env.surveyMinAnonymousResponses },
+      'insufficient anonymous responses; skipping AI analysis',
+    );
     return;
   }
 
@@ -44,6 +63,7 @@ export async function processSurveyInsightJob(jobData: SurveyInsightJobData): Pr
   const rubricByKey = await getRubricCategoryMap();
   const analysis = await aiClient.analyzeSurveyResponses({
     projectName,
+    healthContext: survey.health_context_snapshot ?? undefined,
     rawResponses: rawResponses.map((r) => ({
       question: r.question,
       category: (rubricByKey.get(r.category) ?? (r.category as SurveyQuestionCategory)),
@@ -59,7 +79,11 @@ export async function processSurveyInsightJob(jobData: SurveyInsightJobData): Pr
     aiModel: env.geminiApiKey ? env.geminiModel : 'stub',
   });
 
-  await blendAndSaveProjectHealthScore(survey.project_id);
+  await blendAndSaveProjectHealthScore(survey.project_id, surveyId);
+  await updateSurveyStatus(surveyId, 'completed', {
+    completedAt: new Date(),
+    analysisError: null,
+  });
 
   log.info('survey insight generated and health score blended');
 }

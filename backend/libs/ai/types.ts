@@ -8,6 +8,26 @@
 export type SurveyQuestionCategory = 'delivery' | 'codeQuality' | 'cicd' | 'teamHealth' | 'blockers';
 export type SurveyQuestionType = 'text' | 'scale';
 
+/**
+ * Immutable project-health snapshot captured when a survey draft is generated.
+ * Gemini receives this as context, while survey sentiment is still scored from
+ * response evidence independently to avoid circular health calculations.
+ */
+export interface SurveyHealthContext {
+  capturedAt: string;
+  overallScore: number | null;
+  scores: {
+    delivery: number | null;
+    codeQuality: number | null;
+    cicd: number | null;
+    teamHealth: number | null;
+    blockers: number | null;
+  };
+  trendDelta: number | null;
+  metricsSnapshotId: number | null;
+  source: 'project_health_score' | 'unavailable';
+}
+
 export interface GeneratedSurveyQuestion {
   /** A category KEY (data-driven - may be a custom category, not necessarily one of the 5 rubric buckets). Translated to a SurveyQuestionCategory before analysis. */
   category: string;
@@ -21,6 +41,7 @@ export interface GenerateSurveyQuestionsInput {
   projectName: string;
   /** Valid category keys (data-driven via custom categories). Defaults to the five built-ins when omitted. */
   categories?: string[];
+  healthContext?: SurveyHealthContext;
 }
 
 /**
@@ -46,6 +67,7 @@ export interface ScoreSurveyQuestionsInput {
   projectName: string;
   trigger: string;
   questions: GeneratedSurveyQuestion[];
+  healthContext?: SurveyHealthContext;
 }
 
 export interface RawSurveyResponseForAnalysis {
@@ -65,6 +87,7 @@ export interface SurveyCategoryScores {
 export interface AnalyzeSurveyResponsesInput {
   projectName: string;
   rawResponses: RawSurveyResponseForAnalysis[];
+  healthContext?: SurveyHealthContext;
 }
 
 export interface AnalyzeSurveyResponsesOutput {

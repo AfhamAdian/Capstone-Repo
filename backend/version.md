@@ -7,6 +7,34 @@ See `survey.md` for the living design doc these versions implement.
 
 ---
 
+## [1.1.0] - 2026-08-11
+
+### Changed
+- Standardized the system on one anonymous shared broadcast link and one
+  monthly project pulse. Removed the unusable 50/50 member targeting model.
+- Added persisted review deadlines, pause/resume/cancel/close lifecycle
+  actions, deadline closing, and privacy-threshold analysis.
+- Captured immutable project-health context for Gemini generation, quality
+  scoring, and response interpretation; added strict JSON output validation.
+- Made anonymous submissions transactional and retry-idempotent.
+- Added survey/metrics provenance to blended project-health rows.
+- Completed scheduled-review and respondent UX in the existing frontend.
+
+### Removed
+- Discord user identity migration/column, per-recipient email delivery,
+  SendGrid dependency/configuration, direct-notification wrappers, single-use
+  link mode, bundle user/member fields, and the bundle/survey join table.
+- Per-member survey-delivery timestamps and round-selection code.
+
+### Documentation
+- Replaced `survey.md` with the post-implementation architecture, privacy,
+  lifecycle, data-flow, operations, and extension-point reference.
+- Simplified numbered migrations and the current-state schema; added
+  `005_survey_shared_lifecycle.sql` for safe legacy cleanup and lifecycle
+  upgrades.
+
+---
+
 ## [1.0.0] - 2026-07-29
 
 Baseline release. Full backend implementation of the AI-assisted developer
@@ -364,3 +392,75 @@ loose ends surfaced while testing the survey UI live.
   backend source and stay frontend-only/mock.
 - `GET /projects` has no pagination and no auth scoping - fine at current
   scale (a handful of projects), flagged for later.
+
+---
+
+## [1.0.5] - 2026-08-06
+
+Simplifies survey link delivery from "message every recipient individually
+on Slack/Discord" to "broadcast the link once to a shared Slack channel /
+Discord server", disables email sending for now, and makes the response
+deadline configurable instead of a hardcoded 7 days.
+
+### Changed
+- **Slack**: `slack.client.ts::sendSurveyLinkSlackMessage` (per-recipient
+  DM via `users.lookupByEmail` + `conversations.open` + `chat.postMessage`)
+  replaced with `sendSurveyLinkSlackBroadcast` — posts the shared link
+  **once** to a configured channel (`SLACK_CHANNEL_ID`) via
+  `chat.postMessage`, the same broadcast tier as Telegram/Discord. Moved
+  from `notify-survey-recipient.ts` into `broadcast-survey-link.ts`.
+- **Discord**: removed `discord.client.ts::sendSurveyLinkDiscordDM` (the
+  bot-based per-recipient DM added in 1.0.3 - `POST /users/@me/channels`
+  then `POST /channels/{id}/messages`). Only the incoming-webhook broadcast
+  (`sendSurveyLinkDiscord`) remains. `DISCORD_BOT_TOKEN` is no longer read
+  anywhere and was dropped from `.env`/`.env.example`; `User.discord_user_id`
+  (migration `005_discord_user_id.sql`) is now unused by the notification
+  pipeline but the column/migration is left in place.
+- **Response deadline**: `SURVEY_RESPONSE_DEADLINE_DAYS` (new env var,
+  default `7`, clamped server-side to a **7-15 day** range in
+  `config/env.ts::surveyResponseDeadlineDays`) replaces the previously
+  hardcoded `LINK_EXPIRY_DAYS = 7` in `survey-send-processor.ts` and the
+  hardcoded `+ 7` in `survey-distribution-processor.ts`'s
+  `dispatchScheduleRound`. Both now read `env.surveyResponseDeadlineDays`.
+- `notify-survey-recipient.ts` now only calls `sendSurveyLinkEmail` (Slack/
+  Discord DM calls removed) and its return type shrank to
+  `{ emailSent: boolean }`. `broadcast-survey-link.ts` now fans out three
+  channels (Slack + Telegram + Discord) instead of two, returning
+  `{ telegramSent, discordSent, slackSent }`.
+- `SurveyLinkNotification` (per-recipient type) dropped the
+  `recipientDiscordUserId` field - no longer meaningful once Discord DM was
+  removed. Call sites in both processors stopped passing
+  `member.discordUserId` through.
+
+### Disabled
+- `email.client.ts::sendSurveyLinkEmail` — the actual `sgMail.send` call is
+  commented out (not deleted); the function now short-circuits to `false`
+  immediately. Per-recipient email delivery is off for now; re-enabling is
+  a matter of un-commenting the block. `SENDGRID_API_KEY`/
+  `SENDGRID_FROM_EMAIL` stay in `.env`/`.env.example` for when it's turned
+  back on.
+
+### Added
+- `SLACK_CHANNEL_ID` env var (`config/env.ts`, `.env`, `.env.example`) -
+  the channel the Slack bot broadcasts the shared survey link to.
+- `SURVEY_RESPONSE_DEADLINE_DAYS` env var - customizable survey response
+  window, 7-15 days, default 7.
+
+### Removed
+- `DISCORD_BOT_TOKEN` env var (no longer read anywhere - dropped from
+  `.env`/`.env.example`).
+
+### Docs
+- `survey.md` §1/§5 and the top revision note updated to describe the
+  broadcast-only delivery model, disabled email, and the customizable
+  deadline; stale "email + Slack DM + Discord DM" language replaced
+  throughout.
+
+### Known gaps carried over from 1.0.4 (unchanged)
+- No deadline-driven forced aggregation: a survey whose bundle `expires_at`
+  passes without reaching `target_count` (and is never manually completed)
+  stays unaggregated forever - nothing sweeps expired-but-incomplete
+  surveys into `survey-insight`. More relevant now that shared-mode links
+  aren't nudged out per-recipient, so completion rates may run lower.
+- Delivery tracking (`surveybundle.notified_at`, per-channel success) is
+  captured internally but never exposed via any API/admin view.

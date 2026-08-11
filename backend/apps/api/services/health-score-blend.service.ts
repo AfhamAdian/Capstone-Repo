@@ -9,7 +9,7 @@
 
 import { logger } from '@libs/logger.js';
 import { getLatestRiskScoreForProject } from '../database/risk-score.js';
-import { getLatestInsightForProject } from '../database/survey-insight.js';
+import { getInsight, getLatestInsightForProject } from '../database/survey-insight.js';
 import { saveProjectHealthScore } from '../database/project-health-score.js';
 
 const log = logger.child({ component: 'health-score-blend-service' });
@@ -33,11 +33,11 @@ function blend(metricsScore: number | null, surveyScore: number | null): number 
   return metricsScore * METRICS_WEIGHT + surveyScore * SURVEY_WEIGHT;
 }
 
-export async function blendAndSaveProjectHealthScore(projectId: number): Promise<void> {
+export async function blendAndSaveProjectHealthScore(projectId: number, surveyId: number | null = null): Promise<void> {
   try {
     const [riskScore, insight] = await Promise.all([
       getLatestRiskScoreForProject(projectId),
-      getLatestInsightForProject(projectId),
+      surveyId === null ? getLatestInsightForProject(projectId) : getInsight(surveyId),
     ]);
 
     const deliveryScore = blend(riskScore?.delivery_score ?? null, insight?.delivery_score ?? null);
@@ -63,7 +63,7 @@ export async function blendAndSaveProjectHealthScore(projectId: number): Promise
     await saveProjectHealthScore({
       projectId,
       projectSnapshotId: riskScore?.project_snapshot_id ?? null,
-      surveyId: null, // set by the caller-specific insight processor when blending off a specific survey; not tracked here since this reads "latest" of each side independently
+      surveyId: insight ? (surveyId ?? insight.survey_id) : null,
       deliveryScore,
       codeQualityScore,
       cicdScore,

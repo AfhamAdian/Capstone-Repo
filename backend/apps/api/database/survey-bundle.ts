@@ -1,25 +1,28 @@
 import { assertSupabaseClient } from '../config/supabase.js';
-import type { SurveyLinkMode } from '@libs/security/survey-link.js';
 
-export type SurveyBundleStatus = 'pending' | 'used' | 'expired';
+export type SurveyBundleStatus = 'pending' | 'closed' | 'expired';
+
+export interface SurveyDeliveryResults {
+  slackSent: boolean;
+  telegramSent: boolean;
+  discordSent: boolean;
+}
 
 export interface SurveyBundleRow {
   id: number;
-  user_id: number | null;
+  survey_id: number;
   cycle_id: string;
   status: SurveyBundleStatus;
-  mode: SurveyLinkMode;
   scheduled_send_at: string;
   notified_at: string | null;
   expires_at: string;
-  used_at: string | null;
+  delivery_results: Partial<SurveyDeliveryResults>;
 }
 
 export interface CreateBundleInput {
-  userId: number | null; // null for shared cohort bundles
+  surveyId: number;
   cycleId: string;
   expiresAt: Date;
-  mode: SurveyLinkMode;
 }
 
 export async function createBundle(input: CreateBundleInput): Promise<number> {
@@ -27,7 +30,7 @@ export async function createBundle(input: CreateBundleInput): Promise<number> {
 
   const { data, error } = await client
     .from('surveybundle')
-    .insert([{ user_id: input.userId, cycle_id: input.cycleId, expires_at: input.expiresAt.toISOString(), mode: input.mode }])
+    .insert([{ survey_id: input.surveyId, cycle_id: input.cycleId, expires_at: input.expiresAt.toISOString() }])
     .select('id')
     .single();
 
@@ -37,14 +40,13 @@ export async function createBundle(input: CreateBundleInput): Promise<number> {
   return data.id as number;
 }
 
-/** The one shared, pending, unexpired bundle for a cycle (e.g. a project's monthly pulse), if it exists. */
-export async function findSharedBundleByCycle(cycleId: string): Promise<SurveyBundleRow | null> {
+/** The one pending, unexpired shared link for a distribution cycle, if it exists. */
+export async function findBundleByCycle(cycleId: string): Promise<SurveyBundleRow | null> {
   const client = assertSupabaseClient();
   const { data, error } = await client
     .from('surveybundle')
     .select('*')
     .eq('cycle_id', cycleId)
-    .eq('mode', 'shared')
     .eq('status', 'pending')
     .gt('expires_at', new Date().toISOString())
     .order('scheduled_send_at', { ascending: false })
@@ -57,37 +59,12 @@ export async function findSharedBundleByCycle(cycleId: string): Promise<SurveyBu
   return (data as SurveyBundleRow) ?? null;
 }
 
-/** Idempotently links a survey to a bundle (ignores the duplicate on the unique (bundle_id, survey_id) constraint). */
-export async function linkSurveyToBundleIfAbsent(bundleId: number, surveyId: number, projectMemberId: number | null): Promise<void> {
+export async function markBundleNotified(bundleId: number, results: SurveyDeliveryResults): Promise<void> {
   const client = assertSupabaseClient();
-  const { data: existing, error: findError } = await client
-    .from('surveybundlesurvey')
-    .select('id')
-    .eq('bundle_id', bundleId)
-    .eq('survey_id', surveyId)
-    .maybeSingle();
-  if (findError) {
-    throw new Error(`Failed to check bundle/survey link: ${findError.message}`);
-  }
-  if (existing) return;
-  await linkSurveyToBundle(bundleId, surveyId, projectMemberId);
-}
-
-export async function linkSurveyToBundle(bundleId: number, surveyId: number, projectMemberId: number | null): Promise<void> {
-  const client = assertSupabaseClient();
-
   const { error } = await client
-    .from('surveybundlesurvey')
-    .insert([{ bundle_id: bundleId, survey_id: surveyId, project_member_id: projectMemberId }]);
-
-  if (error) {
-    throw new Error(`Failed to link survey ${surveyId} to bundle ${bundleId}: ${error.message}`);
-  }
-}
-
-export async function markBundleNotified(bundleId: number): Promise<void> {
-  const client = assertSupabaseClient();
-  const { error } = await client.from('surveybundle').update({ notified_at: new Date().toISOString() }).eq('id', bundleId);
+    .from('surveybundle')
+    .update({ notified_at: new Date().toISOString(), delivery_results: results })
+    .eq('id', bundleId);
   if (error) {
     throw new Error(`Failed to mark bundle ${bundleId} notified: ${error.message}`);
   }
@@ -102,42 +79,54 @@ export async function getBundleById(bundleId: number): Promise<SurveyBundleRow |
   return (data as SurveyBundleRow) ?? null;
 }
 
-/** For reusing an in-flight bundle within the same send event instead of minting a second link for the same developer. */
-export async function findPendingBundleForUser(userId: number, cyclePrefix: string): Promise<SurveyBundleRow | null> {
+export async function getLatestBundleForSurvey(surveyId: number): Promise<SurveyBundleRow | null> {
   const client = assertSupabaseClient();
   const { data, error } = await client
     .from('surveybundle')
     .select('*')
-    .eq('user_id', userId)
-    .eq('status', 'pending')
-    .like('cycle_id', `${cyclePrefix}%`)
-    .gt('expires_at', new Date().toISOString())
+    .eq('survey_id', surveyId)
     .order('scheduled_send_at', { ascending: false })
     .limit(1)
     .maybeSingle();
-
   if (error) {
-    throw new Error(`Failed to look up pending bundle for user ${userId}: ${error.message}`);
+    throw new Error(`Failed to load latest link for survey ${surveyId}: ${error.message}`);
   }
   return (data as SurveyBundleRow) ?? null;
 }
 
-/** Atomic single-use consumption. Returns false (never throws) if the bundle was already used/expired or doesn't exist. */
-export async function consumeBundle(bundleId: number): Promise<boolean> {
+export async function updateBundleStatus(bundleId: number, status: SurveyBundleStatus): Promise<void> {
   const client = assertSupabaseClient();
+  const { error } = await client.from('surveybundle').update({ status }).eq('id', bundleId);
+  if (error) {
+    throw new Error(`Failed to mark bundle ${bundleId} ${status}: ${error.message}`);
+  }
+}
 
+export async function closeBundlesForSurvey(surveyId: number): Promise<void> {
+  const client = assertSupabaseClient();
+  const { error } = await client
+    .from('surveybundle')
+    .update({ status: 'closed' })
+    .eq('survey_id', surveyId)
+    .eq('status', 'pending');
+  if (error) {
+    throw new Error(`Failed to close links for survey ${surveyId}: ${error.message}`);
+  }
+}
+
+/** Expires every open link whose response deadline has passed. */
+export async function expireDueBundles(now: Date): Promise<number[]> {
+  const client = assertSupabaseClient();
   const { data, error } = await client
     .from('surveybundle')
-    .update({ status: 'used', used_at: new Date().toISOString() })
-    .eq('id', bundleId)
+    .update({ status: 'expired' })
     .eq('status', 'pending')
-    .gt('expires_at', new Date().toISOString())
-    .select('id');
-
+    .lte('expires_at', now.toISOString())
+    .select('survey_id');
   if (error) {
-    throw new Error(`Failed to consume bundle ${bundleId}: ${error.message}`);
+    throw new Error(`Failed to expire due survey links: ${error.message}`);
   }
-  return (data?.length ?? 0) > 0;
+  return [...new Set((data ?? []).map((row) => row.survey_id as number))];
 }
 
 export interface BundleSurveyEntry {
@@ -146,38 +135,40 @@ export interface BundleSurveyEntry {
   projectName: string;
 }
 
-/** The set of per-project surveys bundled into one link, for rendering the combined form grouped by project. */
-export async function getSurveysForBundle(bundleId: number): Promise<BundleSurveyEntry[]> {
+/** The survey represented by one anonymous shared link. */
+export async function getSurveyForBundle(bundleId: number): Promise<BundleSurveyEntry | null> {
   const client = assertSupabaseClient();
-
-  const { data: links, error: linkError } = await client
-    .from('surveybundlesurvey')
+  const { data: bundle, error: bundleError } = await client
+    .from('surveybundle')
     .select('survey_id')
-    .eq('bundle_id', bundleId);
-  if (linkError) {
-    throw new Error(`Failed to load survey links for bundle ${bundleId}: ${linkError.message}`);
+    .eq('id', bundleId)
+    .maybeSingle();
+  if (bundleError) {
+    throw new Error(`Failed to load survey link ${bundleId}: ${bundleError.message}`);
   }
-  const surveyIds = (links ?? []).map((l) => l.survey_id as number);
-  if (surveyIds.length === 0) return [];
+  if (!bundle) return null;
 
-  const { data: surveys, error: surveyError } = await client
+  const { data: survey, error: surveyError } = await client
     .from('survey')
     .select('id, project_id')
-    .in('id', surveyIds);
+    .eq('id', bundle.survey_id)
+    .maybeSingle();
   if (surveyError) {
-    throw new Error(`Failed to load surveys for bundle ${bundleId}: ${surveyError.message}`);
+    throw new Error(`Failed to load survey for link ${bundleId}: ${surveyError.message}`);
   }
+  if (!survey) return null;
 
-  const projectIds = [...new Set((surveys ?? []).map((s) => s.project_id as number))];
-  const { data: projects, error: projectError } = await client.from('project').select('id, name').in('id', projectIds);
+  const { data: project, error: projectError } = await client
+    .from('project')
+    .select('id, name')
+    .eq('id', survey.project_id)
+    .maybeSingle();
   if (projectError) {
-    throw new Error(`Failed to load projects for bundle ${bundleId}: ${projectError.message}`);
+    throw new Error(`Failed to load project for survey link ${bundleId}: ${projectError.message}`);
   }
-  const projectNameById = new Map((projects ?? []).map((p) => [p.id as number, p.name as string]));
-
-  return (surveys ?? []).map((s) => ({
-    surveyId: s.id as number,
-    projectId: s.project_id as number,
-    projectName: projectNameById.get(s.project_id as number) ?? `Project ${s.project_id}`,
-  }));
+  return {
+    surveyId: survey.id as number,
+    projectId: survey.project_id as number,
+    projectName: (project?.name as string) ?? `Project ${survey.project_id}`,
+  };
 }

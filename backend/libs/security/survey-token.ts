@@ -57,9 +57,13 @@ export function decodeToken(token: string): SurveyTokenPayload | null {
 
     const parsed = JSON.parse(plaintext.toString('utf8'));
     if (
-      typeof parsed?.bundleId !== 'number' ||
+      !Number.isInteger(parsed?.bundleId) ||
+      parsed.bundleId <= 0 ||
       typeof parsed?.cycleId !== 'string' ||
-      typeof parsed?.deadline !== 'string'
+      parsed.cycleId.length === 0 ||
+      parsed.cycleId.length > 200 ||
+      typeof parsed?.deadline !== 'string' ||
+      !Number.isFinite(new Date(parsed.deadline).getTime())
     ) {
       return null;
     }

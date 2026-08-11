@@ -2,7 +2,18 @@ import { API_BASE_URL } from "./api";
 
 // ─── Shared shapes (mirror backend/apps/api/src/services/survey.service.ts) ──
 
-export type SurveyStatus = "active" | "sent" | "completed";
+export type SurveyStatus =
+  | "draft"
+  | "in_review"
+  | "scheduled"
+  | "sending"
+  | "active"
+  | "paused"
+  | "closed"
+  | "analyzing"
+  | "completed"
+  | "cancelled"
+  | "failed";
 
 export interface SurveyScores {
   delivery: number;
@@ -18,12 +29,22 @@ export interface SurveyListItem {
   projectName: string;
   status: SurveyStatus;
   trigger: string;
-  sentDate: string;
+  sentDate: string | null;
   responseCount: number;
   targetCount: number;
-  firstSentAt: string | null;
-  questionsModifiedAt: string | null;
+  reviewDeadlineAt: string | null;
+  scheduledSendAt: string | null;
+  closedAt: string | null;
+  questionVersion: number;
   questionsLocked: boolean;
+}
+
+export interface SurveyHealthContext {
+  capturedAt: string;
+  overallScore: number | null;
+  scores: Record<"delivery" | "codeQuality" | "cicd" | "teamHealth" | "blockers", number | null>;
+  trendDelta: number | null;
+  source: "project_health_score" | "unavailable";
 }
 
 export interface SurveyDetail extends SurveyListItem {
@@ -31,6 +52,14 @@ export interface SurveyDetail extends SurveyListItem {
   themes: string[];
   aiInsight: string | null;
   rawResponses: { question: string; answers: string[] }[];
+  questions: Array<{ id: number; category: string; questionText: string; questionType: "text" | "scale" }>;
+  healthContext: SurveyHealthContext | null;
+  analysisError: string | null;
+  delivery: {
+    notifiedAt: string | null;
+    expiresAt: string;
+    channels: { slackSent?: boolean; telegramSent?: boolean; discordSent?: boolean };
+  } | null;
 }
 
 export interface QuestionScore {
@@ -58,8 +87,7 @@ export interface SurveyQuota {
   remaining: number;
 }
 
-export interface SurveyScheduleRound {
-  round: 1 | 2;
+export interface SurveySchedule {
   scheduledSendAt: string;
   status: "pending" | "questions_ready" | "sent";
   surveyId: number | null;
@@ -86,7 +114,6 @@ export interface PublicSurveyProject {
 }
 
 export interface PublicSurveyForm {
-  bundleId: number;
   projects: PublicSurveyProject[];
 }
 
@@ -199,13 +226,25 @@ export async function getSurveyQuota(projectId: string): Promise<SurveyQuota> {
   return request(`/projects/${projectId}/surveys/quota`);
 }
 
-export async function getSurveySchedule(projectId: string): Promise<SurveyScheduleRound[]> {
-  const data = await request<{ schedule: SurveyScheduleRound[] }>(`/projects/${projectId}/surveys/schedule`);
+export async function getSurveySchedule(projectId: string): Promise<SurveySchedule[]> {
+  const data = await request<{ schedule: SurveySchedule[] }>(`/projects/${projectId}/surveys/schedule`);
   return data.schedule;
 }
 
 export async function getPendingSurvey(projectId: string): Promise<PendingSurveySignal> {
   return request(`/projects/${projectId}/pending-survey`);
+}
+
+export async function changeSurveyLifecycle(
+  surveyId: number,
+  action: "pause" | "resume" | "retry" | "cancel" | "close",
+  ctx?: RequesterContext,
+): Promise<void> {
+  await request(`/surveys/${surveyId}/lifecycle`, {
+    method: "PATCH",
+    headers: requesterHeaders(ctx),
+    body: JSON.stringify({ action }),
+  });
 }
 
 // ─── Public (anonymous, token-driven) endpoints ───────────────────────────
@@ -214,6 +253,13 @@ export async function getPublicSurvey(token: string): Promise<PublicSurveyForm> 
   return request(`/public/surveys/${token}`);
 }
 
-export async function submitPublicSurveyResponse(token: string, answers: SubmittedAnswer[]): Promise<void> {
-  await request(`/public/surveys/${token}/responses`, { method: "POST", body: JSON.stringify({ answers }) });
+export async function submitPublicSurveyResponse(
+  token: string,
+  submissionId: string,
+  answers: SubmittedAnswer[],
+): Promise<void> {
+  await request(`/public/surveys/${token}/responses`, {
+    method: "POST",
+    body: JSON.stringify({ submissionId, answers }),
+  });
 }

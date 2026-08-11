@@ -1,7 +1,7 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Current-state reference for the survey feature: the merged result of
--- db/migrations/002_survey.sql + 003_survey_categories_and_link_mode.sql +
--- 004_survey_scheduling_and_editing.sql, the same way schema.sql documents
+-- db/migrations/002_survey.sql through 005_survey_shared_lifecycle.sql,
+-- the same way schema.sql documents
 -- "current shape" rather than history for the base tables. To actually apply
 -- these changes to a live database, run db/migration.sql (or the individual
 -- numbered files in db/migrations/), not this file.
@@ -10,17 +10,22 @@
 CREATE TABLE public.survey (
   id integer NOT NULL DEFAULT nextval('survey_id_seq'::regclass),
   project_id integer NOT NULL,
-  status character varying NOT NULL DEFAULT 'sent', -- 'active' | 'sent' | 'completed'
+  status character varying NOT NULL DEFAULT 'draft',
   source character varying NOT NULL,                 -- 'manual' | 'auto_pulse'
   trigger character varying NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
   custom_guidance text,
-  target_count integer NOT NULL DEFAULT 0,
-  response_count integer NOT NULL DEFAULT 0,
-  sent_at timestamp with time zone NOT NULL DEFAULT now(),
+  target_count integer NOT NULL DEFAULT 0,           -- expected audience size
+  sent_at timestamp with time zone,
   completed_at timestamp with time zone,
   period_month date,
-  first_sent_at timestamp with time zone,           -- added in 004: set once, first real dispatch
-  questions_modified_at timestamp with time zone,    -- added in 004: "modified since sent" tag
+  review_deadline_at timestamp with time zone,
+  scheduled_send_at timestamp with time zone,
+  closed_at timestamp with time zone,
+  close_reason character varying,
+  health_context_snapshot jsonb,
+  question_version integer NOT NULL DEFAULT 1,
+  analysis_error text,
   CONSTRAINT survey_pkey PRIMARY KEY (id),
   CONSTRAINT survey_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id)
 );
@@ -52,43 +57,34 @@ CREATE TABLE public.surveycategory (
   CONSTRAINT surveycategory_pkey PRIMARY KEY (id)
 );
 
--- One link/token per DEVELOPER (single_use mode) or per COHORT (shared mode,
--- user_id NULL) per distribution event/round. No token/hash column: the link
--- is an encrypted payload derived from this row's own id/cycle_id/expires_at
--- (see backend/libs/security/survey-token.ts), regenerated on demand.
+-- One anonymous shared link per survey distribution event/round. No user or
+-- project-member identity is stored. The encrypted token is derived from this
+-- row's id/cycle_id/expires_at and can be regenerated on demand.
 CREATE TABLE public.surveybundle (
   id integer NOT NULL DEFAULT nextval('surveybundle_id_seq'::regclass),
-  user_id integer,                                    -- nullable since 003: NULL for shared cohort bundles
+  survey_id integer NOT NULL,
   cycle_id character varying NOT NULL,
-  status character varying NOT NULL DEFAULT 'pending', -- 'pending' | 'used' | 'expired'
-  mode character varying NOT NULL DEFAULT 'shared',     -- added in 003: 'shared' | 'single_use'
+  status character varying NOT NULL DEFAULT 'pending', -- 'pending' | 'closed' | 'expired'
   scheduled_send_at timestamp with time zone NOT NULL DEFAULT now(),
   notified_at timestamp with time zone,
   expires_at timestamp with time zone NOT NULL,
-  used_at timestamp with time zone,
+  delivery_results jsonb NOT NULL DEFAULT '{}'::jsonb,
   CONSTRAINT surveybundle_pkey PRIMARY KEY (id),
-  CONSTRAINT surveybundle_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."User"(id)
-);
-
-CREATE TABLE public.surveybundlesurvey (
-  id integer NOT NULL DEFAULT nextval('surveybundlesurvey_id_seq'::regclass),
-  bundle_id integer NOT NULL,
-  survey_id integer NOT NULL,
-  project_member_id integer,                          -- nullable since 003 (shared bundles have no single membership row)
-  CONSTRAINT surveybundlesurvey_pkey PRIMARY KEY (id),
-  CONSTRAINT surveybundlesurvey_bundle_id_fkey FOREIGN KEY (bundle_id) REFERENCES public.surveybundle(id),
-  CONSTRAINT surveybundlesurvey_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.survey(id),
-  CONSTRAINT surveybundlesurvey_project_member_id_fkey FOREIGN KEY (project_member_id) REFERENCES public.projectmember(id),
-  CONSTRAINT surveybundlesurvey_bundle_survey_unique UNIQUE (bundle_id, survey_id)
+  CONSTRAINT surveybundle_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.survey(id),
+  CONSTRAINT surveybundle_cycle_id_unique UNIQUE (cycle_id)
 );
 
 CREATE TABLE public.surveyresponse (
   id integer NOT NULL DEFAULT nextval('surveyresponse_id_seq'::regclass),
   bundle_id integer NOT NULL,
+  submission_key character varying,                  -- client-generated retry key; not a user identity
   submitted_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT surveyresponse_pkey PRIMARY KEY (id),
   CONSTRAINT surveyresponse_bundle_id_fkey FOREIGN KEY (bundle_id) REFERENCES public.surveybundle(id)
 );
+CREATE UNIQUE INDEX surveyresponse_submission_key_idx
+  ON public.surveyresponse (bundle_id, submission_key)
+  WHERE submission_key IS NOT NULL;
 
 CREATE TABLE public.surveyanswer (
   id integer NOT NULL DEFAULT nextval('surveyanswer_id_seq'::regclass),
@@ -98,7 +94,12 @@ CREATE TABLE public.surveyanswer (
   answer_scale integer,
   CONSTRAINT surveyanswer_pkey PRIMARY KEY (id),
   CONSTRAINT surveyanswer_response_id_fkey FOREIGN KEY (response_id) REFERENCES public.surveyresponse(id),
-  CONSTRAINT surveyanswer_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.surveyquestion(id)
+  CONSTRAINT surveyanswer_question_id_fkey FOREIGN KEY (question_id) REFERENCES public.surveyquestion(id),
+  CONSTRAINT surveyanswer_response_question_unique UNIQUE (response_id, question_id),
+  CONSTRAINT surveyanswer_value_check CHECK (
+    (answer_text IS NOT NULL AND answer_scale IS NULL)
+    OR (answer_text IS NULL AND answer_scale BETWEEN 1 AND 5)
+  )
 );
 
 CREATE TABLE public.surveyinsight (
@@ -135,14 +136,12 @@ CREATE TABLE public.projecthealthscore (
   CONSTRAINT projecthealthscore_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.survey(id)
 );
 
--- Per-project, per-round auto-pulse scheduling (added in 004). One row per
--- (project, month, round); scheduled_send_at is a randomized timestamp within
--- that round's window, decided once when the window opens.
+-- One monthly auto-pulse schedule per project. scheduled_send_at is randomized
+-- inside the configured monthly window and assigned before the review period.
 CREATE TABLE public.surveyschedule (
   id integer NOT NULL DEFAULT nextval('surveyschedule_id_seq'::regclass),
   project_id integer NOT NULL,
   period_month date NOT NULL,
-  round smallint NOT NULL, -- 1 | 2
   scheduled_send_at timestamp with time zone NOT NULL,
   survey_id integer,
   questions_generated_at timestamp with time zone,
@@ -151,11 +150,18 @@ CREATE TABLE public.surveyschedule (
   CONSTRAINT surveyschedule_pkey PRIMARY KEY (id),
   CONSTRAINT surveyschedule_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id),
   CONSTRAINT surveyschedule_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.survey(id),
-  CONSTRAINT surveyschedule_unique UNIQUE (project_id, period_month, round)
+  CONSTRAINT surveyschedule_project_month_unique UNIQUE (project_id, period_month)
 );
+
+-- Transactional public submission boundary. The implementation also locks and
+-- verifies the pending bundle/active survey before inserting.
+CREATE FUNCTION public.submit_survey_response(
+  p_bundle_id integer,
+  p_submission_key character varying,
+  p_answers jsonb
+) RETURNS integer;
 
 -- Columns added to existing (non-survey-owned) tables:
 --   project.pending_survey boolean NOT NULL DEFAULT false            (002)
 --   project.pending_survey_trigger character varying                 (002)
---   projectmember.last_survey_sent_at timestamp with time zone        (002)
 --   riskscore.blockers_score double precision                        (002)

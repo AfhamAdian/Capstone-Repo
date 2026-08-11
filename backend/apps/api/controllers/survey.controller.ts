@@ -5,10 +5,17 @@
 import type { Request, Response } from 'express';
 import { createAiClient, type GeneratedSurveyQuestion } from '@libs/ai/index.js';
 import { SurveyQueueManager } from '@libs/queue/index.js';
-import { SurveyService, ForbiddenError, SurveyNotFoundError, SurveyLockedError } from '../services/survey.service.js';
+import {
+  SurveyService,
+  ForbiddenError,
+  SurveyNotFoundError,
+  SurveyLockedError,
+  SurveyValidationError,
+  type SurveyLifecycleAction,
+} from '../services/survey.service.js';
 import { assertProjectAccess } from '../services/authorization.service.js';
-import { getRequesterRole } from '../utils/requester-role.js';
-import { getSurveyById } from '../database/survey.js';
+import { getRequesterRole, isLevel1 } from '../utils/requester-role.js';
+import { getSurveyById, type SurveyStatus } from '../database/survey.js';
 import { env } from '../config/env.js';
 
 if (!env.redisUrl) {
@@ -44,6 +51,10 @@ export async function generateSurveyQuestions(request: Request, response: Respon
     const questions = await surveyService.generateQuestions(projectId, trigger, customGuidance);
     response.status(200).json({ questions });
   } catch (error) {
+    if (error instanceof SurveyValidationError) {
+      response.status(400).json({ message: error.message });
+      return;
+    }
     if (error instanceof ForbiddenError) {
       response.status(403).json({ message: error.message });
       return;
@@ -81,6 +92,10 @@ export async function sendSurvey(request: Request, response: Response): Promise<
     });
     response.status(202).json({ message: 'Survey queued for sending', surveyId: result.surveyId });
   } catch (error) {
+    if (error instanceof SurveyValidationError) {
+      response.status(400).json({ message: error.message });
+      return;
+    }
     if (error instanceof ForbiddenError) {
       response.status(403).json({ message: error.message });
       return;
@@ -97,9 +112,14 @@ export async function listProjectSurveys(request: Request, response: Response): 
   if (projectId === null) return;
 
   try {
+    await assertProjectAccess(projectId, request);
     const surveys = await surveyService.listForProject(projectId);
     response.status(200).json({ surveys });
   } catch (error) {
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Failed to list surveys';
     response.status(500).json({ message });
   }
@@ -108,10 +128,14 @@ export async function listProjectSurveys(request: Request, response: Response): 
 /** GET /api/v1/surveys?projectId=&status=&q= */
 export async function listGlobalSurveys(request: Request, response: Response): Promise<void> {
   try {
+    if (!isLevel1(getRequesterRole(request))) {
+      response.status(403).json({ message: 'Level-1 access is required to list organization surveys' });
+      return;
+    }
     const { projectId, status, q } = request.query as { projectId?: string; status?: string; q?: string };
     const surveys = await surveyService.listGlobal({
       projectId: projectId ? Number(projectId) : undefined,
-      status: status as 'active' | 'sent' | 'completed' | undefined,
+      status: status as SurveyStatus | undefined,
       search: q,
     });
     response.status(200).json({ surveys });
@@ -130,6 +154,12 @@ export async function getSurveyDetail(request: Request, response: Response): Pro
   }
 
   try {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) {
+      response.status(404).json({ message: 'Survey not found' });
+      return;
+    }
+    await assertProjectAccess(survey.project_id, request);
     const detail = await surveyService.getDetail(surveyId);
     if (!detail) {
       response.status(404).json({ message: 'Survey not found' });
@@ -137,6 +167,10 @@ export async function getSurveyDetail(request: Request, response: Response): Pro
     }
     response.status(200).json(detail);
   } catch (error) {
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Failed to load survey';
     response.status(500).json({ message });
   }
@@ -186,6 +220,10 @@ export async function updateSurveyQuestions(request: Request, response: Response
       response.status(409).json({ message: error.message });
       return;
     }
+    if (error instanceof SurveyValidationError) {
+      response.status(400).json({ message: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Failed to update survey questions';
     response.status(500).json({ message });
   }
@@ -215,6 +253,42 @@ export async function completeSurvey(request: Request, response: Response): Prom
       return;
     }
     const message = error instanceof Error ? error.message : 'Failed to complete survey';
+    response.status(500).json({ message });
+  }
+}
+
+/** PATCH /api/v1/surveys/:surveyId/lifecycle */
+export async function changeSurveyLifecycle(request: Request, response: Response): Promise<void> {
+  const surveyId = Number(request.params.surveyId);
+  const action = (request.body as { action?: SurveyLifecycleAction }).action;
+  if (!Number.isInteger(surveyId) || surveyId <= 0) {
+    response.status(400).json({ message: 'surveyId must be a positive number' });
+    return;
+  }
+  if (!action || !['pause', 'resume', 'retry', 'cancel', 'close'].includes(action)) {
+    response.status(400).json({ message: 'action must be pause, resume, retry, cancel, or close' });
+    return;
+  }
+
+  try {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) {
+      response.status(404).json({ message: `Survey ${surveyId} not found` });
+      return;
+    }
+    await assertProjectAccess(survey.project_id, request);
+    await surveyService.changeLifecycle(surveyId, action);
+    response.status(200).json({ message: `Survey ${action} applied` });
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyLockedError) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Failed to update survey lifecycle';
     response.status(500).json({ message });
   }
 }

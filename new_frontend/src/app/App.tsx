@@ -20,8 +20,10 @@ import { useProjectHealthSync } from "./hooks/useProjectHealth";
 import { PublicSurveyPage } from "./pages/PublicSurveyPage";
 import { SurveyFlow } from "./components/SurveyFlow";
 import {
-  generateSurveyQuestions, sendSurvey, getSurveyQuota,
-  type SurveyQuota, type QuestionScore,
+  changeSurveyLifecycle, generateSurveyQuestions, sendSurvey, getSurveyQuota,
+  updateSurveyQuestions,
+  type GeneratedSurveyQuestion, type SurveyHealthContext, type SurveyQuota,
+  type QuestionScore, type SurveyStatus,
 } from "./api-survey";
 import { LoginView } from "./pages/LoginView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
@@ -65,7 +67,7 @@ interface Action {
 interface Survey {
   id: string;
   projectId: string;
-  status: "active" | "sent" | "completed";
+  status: SurveyStatus;
   trigger: string;
   sentDate: string;
   responseCount: number;
@@ -74,7 +76,37 @@ interface Survey {
   themes: string[];
   aiInsight: string;
   rawResponses: { question: string; answers: string[] }[];
+  questions?: GeneratedSurveyQuestion[];
+  reviewDeadlineAt?: string | null;
+  scheduledSendAt?: string | null;
+  closedAt?: string | null;
+  questionsLocked?: boolean;
+  healthContext?: SurveyHealthContext | null;
+  analysisError?: string | null;
+  delivery?: {
+    notifiedAt: string | null;
+    expiresAt: string;
+    channels: { slackSent?: boolean; telegramSent?: boolean; discordSent?: boolean };
+  } | null;
 }
+
+const SURVEY_STATUS_CONFIG:Record<SurveyStatus,{c:string;l:string}>={
+  draft:{c:"text-slate-500",l:"Draft"},
+  in_review:{c:"text-violet-600 dark:text-violet-400",l:"In review"},
+  scheduled:{c:"text-blue-500",l:"Scheduled"},
+  sending:{c:"text-blue-600 dark:text-blue-400",l:"Sending"},
+  active:{c:"text-amber-500",l:"Active"},
+  paused:{c:"text-orange-500",l:"Paused"},
+  closed:{c:"text-slate-500",l:"Closed"},
+  analyzing:{c:"text-violet-500",l:"Analyzing"},
+  completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"},
+  cancelled:{c:"text-slate-400",l:"Cancelled"},
+  failed:{c:"text-red-500",l:"Failed"},
+};
+const surveyResponseRate=(survey:Pick<Survey,"responseCount"|"targetCount">)=>
+  survey.targetCount>0?Math.min(100,Math.round((survey.responseCount/survey.targetCount)*100)):0;
+const surveyDeliveryChannels=(survey:Survey)=>
+  Object.entries(survey.delivery?.channels??{}).filter(([,sent])=>sent).map(([channel])=>channel.replace("Sent","")).join(", ");
 
 type Screen = "login" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
 
@@ -311,7 +343,7 @@ const SURVEYS: Survey[] = [
     ],
   },
   {
-    id:"s5", projectId:"helix-platform", status:"sent",
+    id:"s5", projectId:"helix-platform", status:"scheduled",
     trigger:"Quarterly pulse (manual)", sentDate:"2025-11-17",
     responseCount:4, targetCount:10, aiInsight:"", themes:[], rawResponses:[],
   },
@@ -619,7 +651,7 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
   const [exId,setExId]=useState<string|null>(null);
   const [rawId,setRawId]=useState<string|null>(null);
 
-  const scfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
+  const scfg=SURVEY_STATUS_CONFIG;
 
   const filtered=useMemo(()=>{
     let list=[...surveys];
@@ -657,9 +689,15 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
           <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
             className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
             <option value="all">All Statuses</option>
+            <option value="in_review">In review</option>
+            <option value="paused">Paused</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="sending">Sending</option>
             <option value="active">Active</option>
-            <option value="sent">Sent</option>
+            <option value="analyzing">Analyzing</option>
             <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="failed">Failed</option>
           </select>
           <div className="flex border border-border">
             {(["newest","oldest"] as const).map(o=>(
@@ -682,7 +720,7 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
           {filtered.map(s=>{
             const proj=projects.find(p=>p.id===s.projectId);
             const cfg=scfg[s.status];
-            const pct=Math.round((s.responseCount/s.targetCount)*100);
+            const pct=surveyResponseRate(s);
             const isEx=exId===s.id;
             const avgScore=s.scores?Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5):null;
             const sTag=proj?projectTagStyle(proj.score):{bg:"bg-muted",text:"text-foreground"};
@@ -715,14 +753,18 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                       <div className="border-t border-border px-5 py-4">
                         <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                        <div className="border border-border divide-y divide-border mb-4">
+                        {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                        {s.analysisError?.startsWith("insufficient_responses")
+                          ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because the anonymous response minimum was not reached.</div>
+                          :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                        {s.themes.length>0&&<div className="border border-border divide-y divide-border mb-4">
                           {s.themes.map((t,i)=>(
                             <div key={i} className="flex gap-3 px-4 py-3 items-start">
                               <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
                               <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
                             </div>
                           ))}
-                        </div>
+                        </div>}
                         {s.rawResponses.length>0&&(
                           <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
                             className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity">
@@ -1263,9 +1305,8 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
             </div>
             <div className="divide-y divide-border">
               {surveys.filter(s=>s.projectId===project.id).slice(0,4).map(s=>{
-                const pct=Math.round((s.responseCount/s.targetCount)*100);
-                const stCfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
-                const cfg=stCfg[s.status];
+                const pct=surveyResponseRate(s);
+                const cfg=SURVEY_STATUS_CONFIG[s.status];
                 return (
                   <div key={s.id} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -1430,7 +1471,9 @@ function ActionsTimeline({project,actions}:{project:Project;actions:Action[];}) 
 // ─── ACTIONS LIBRARY ─────────────────────────────────────────────────────────
 
 function fmtDate(d:string){
-  const dt=new Date(d+"T00:00:00");
+  if(!d) return "Not sent";
+  const dt=new Date(d.length===10?`${d}T00:00:00`:d);
+  if(Number.isNaN(dt.getTime())) return "Not scheduled";
   return dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 }
 
@@ -1687,6 +1730,103 @@ interface EditableQuestion {
   score?:QuestionScore;
 }
 
+function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
+  survey:Survey;onClose:()=>void;onChanged?:()=>void;
+}) {
+  const [questions,setQuestions]=useState<EditableQuestion[]>(
+    (survey.questions??[]).map((question,index)=>({
+      id:String(index),
+      text:question.questionText,
+      category:question.category,
+      questionType:question.questionType,
+    })),
+  );
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  const surveyId=Number(survey.id);
+  const canEdit=!survey.questionsLocked&&survey.status!=="cancelled";
+
+  const save=async()=>{
+    setSaving(true);setError(null);
+    try{
+      await updateSurveyQuestions(surveyId,questions.filter(q=>q.text.trim()).map(q=>({
+        category:q.category||"delivery",questionText:q.text.trim(),questionType:q.questionType,
+      })));
+      onChanged?.();onClose();
+    }catch(err){setError(err instanceof Error?err.message:"Failed to save questions");}
+    finally{setSaving(false);}
+  };
+  const transition=async(action:"pause"|"resume"|"retry"|"cancel")=>{
+    setSaving(true);setError(null);
+    try{await changeSurveyLifecycle(surveyId,action);onChanged?.();onClose();}
+    catch(err){setError(err instanceof Error?err.message:`Failed to ${action} survey`);}
+    finally{setSaving(false);}
+  };
+  const health=survey.healthContext;
+
+  return (
+    <motion.div role="dialog" aria-modal="true" aria-labelledby="review-survey-title" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <motion.div initial={{scale:0.97,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.97,opacity:0}}
+        onClick={event=>event.stopPropagation()} className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-card border border-border shadow-2xl">
+        <div className="flex items-start justify-between px-6 py-5 border-b border-border">
+          <div>
+            <h2 id="review-survey-title" className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Review Scheduled Survey</h2>
+            <p className="text-sm text-muted-foreground mt-1">Auto-sends {fmtDate(survey.reviewDeadlineAt||survey.scheduledSendAt||"")} unless paused.</p>
+          </div>
+          <button aria-label="Close review" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
+        </div>
+        <div className="overflow-y-auto p-6 space-y-5">
+          {health&&(
+            <div className="border border-border bg-muted/30 p-4">
+              <div className="text-sm font-bold mb-1">AI health context</div>
+              <p className="text-sm text-muted-foreground">
+                Captured {fmtDate(health.capturedAt)} · Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
+                {health.trendDelta==null?"":` · Trend ${health.trendDelta>0?"+":""}${health.trendDelta.toFixed(1)}`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">Gemini uses this snapshot to focus questions, but scores responses independently.</p>
+            </div>
+          )}
+          {error&&<div className="border border-red-400/50 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-600">{error}</div>}
+          <div className="space-y-3">
+            {questions.map((question,index)=>(
+              <div key={question.id} className="border border-border p-3">
+                <div className="flex gap-2 mb-2">
+                  <select aria-label={`Category for question ${index+1}`} disabled={!canEdit} value={question.category||"delivery"}
+                    onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,category:e.target.value}:q))}
+                    className="bg-card border border-border px-2 py-1.5 text-sm">
+                    {["delivery","codeQuality","cicd","teamHealth","blockers"].map(category=><option key={category} value={category}>{category}</option>)}
+                  </select>
+                  <select aria-label={`Type for question ${index+1}`} disabled={!canEdit} value={question.questionType}
+                    onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,questionType:e.target.value as "text"|"scale"}:q))}
+                    className="bg-card border border-border px-2 py-1.5 text-sm">
+                    <option value="text">Text</option><option value="scale">Scale 1–5</option>
+                  </select>
+                </div>
+                <textarea aria-label={`Question ${index+1}`} disabled={!canEdit} rows={2} value={question.text}
+                  onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,text:e.target.value}:q))}
+                  className="w-full bg-card border border-border px-3 py-2 text-sm resize-none disabled:opacity-60"/>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-border p-4 flex items-center justify-between gap-3">
+          <div className="flex gap-2">
+            {survey.status==="failed"
+              ?<button disabled={saving} onClick={()=>void transition("retry")} className="border border-border px-3 py-2 text-sm font-semibold">{survey.questionsLocked?"Retry analysis":"Retry delivery"}</button>
+              :survey.status==="paused"
+              ?<button disabled={saving} onClick={()=>void transition("resume")} className="border border-border px-3 py-2 text-sm font-semibold">Resume</button>
+              :<button disabled={saving||!canEdit} onClick={()=>void transition("pause")} className="border border-border px-3 py-2 text-sm font-semibold">Pause</button>}
+            <button disabled={saving||!canEdit} onClick={()=>void transition("cancel")} className="border border-red-400/50 text-red-600 px-3 py-2 text-sm font-semibold">Cancel</button>
+          </div>
+          <button disabled={saving||!canEdit||questions.every(q=>!q.text.trim())} onClick={()=>void save()}
+            className="bg-primary text-primary-foreground px-5 py-2 text-sm font-semibold disabled:opacity-40">{saving?"Saving…":"Save questions"}</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;}) {
   const backendProjectId=project.backendProjectId;
   const isReal=Boolean(backendProjectId);
@@ -1792,7 +1932,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
                 <div key={q.id} className="border border-border bg-muted/20 p-5">
                   <div className="text-sm font-bold text-muted-foreground mb-2">Q{i+1}</div>
                   <div className="text-[15px] font-semibold text-foreground">{q.text}</div>
-                  {q.text.toLowerCase().includes("1–5")||q.text.toLowerCase().includes("1-5")?(
+                  {q.questionType==="scale"?(
                     <div className="flex gap-2 mt-3">{[1,2,3,4,5].map(n=>(
                       <div key={n} className="w-10 h-10 border-2 border-border flex items-center justify-center text-sm font-bold text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{n}</div>
                     ))}</div>
@@ -1851,7 +1991,11 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
                     {q.category&&(
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold uppercase text-muted-foreground tracking-wide">{q.category}</span>
-                        <span className="text-xs text-muted-foreground">· {q.questionType}</span>
+                        <select aria-label={`Type for question ${i+1}`} value={q.questionType}
+                          onChange={e=>setQuestions(prev=>prev.map(item=>item.id===q.id?{...item,questionType:e.target.value as "text"|"scale"}:item))}
+                          className="text-xs bg-card border border-border px-1.5 py-1">
+                          <option value="text">Text</option><option value="scale">Scale 1–5</option>
+                        </select>
                         {q.score&&<span className="text-xs font-semibold text-primary" title="AI quality score">score {Math.round(q.score.overall)}</span>}
                       </div>
                     )}
@@ -1962,6 +2106,7 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
   const [rawId,setRawId]=useState<string|null>(null);
   const [showRubric,setShowRubric]=useState(false);
   const [showSend,setShowSend]=useState(false);
+  const [reviewSurvey,setReviewSurvey]=useState<Survey|null>(null);
   const [showGuidance,setShowGuidance]=useState(false);
   const [surveySearch,setSurveySearch]=useState("");
   const [surveySort,setSurveySort]=useState<"newest"|"oldest">("newest");
@@ -1979,8 +2124,9 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
     return ()=>{cancelled=true;};
   },[project.backendProjectId,ps.length]);
   const latest=completed[0];
+  const upcoming=ps.find(s=>["draft","in_review","scheduled","paused","failed"].includes(s.status));
   const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
-  const scfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
+  const scfg=SURVEY_STATUS_CONFIG;
   const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
   const quotaLimit=quota?quota.limit:2;
 
@@ -2026,6 +2172,31 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
             <Send size={14}/> Send Survey Now
           </button>
         </div>
+
+        {upcoming&&project.backendProjectId&&Number.isFinite(Number(upcoming.id))&&(
+          <div className="bg-card border border-violet-400/40">
+            <div className="flex items-center justify-between gap-4 px-5 py-4 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-bold ${SURVEY_STATUS_CONFIG[upcoming.status].c}`}>{SURVEY_STATUS_CONFIG[upcoming.status].l}</span>
+                  <span className="text-base font-bold" style={{fontFamily:"var(--font-display)"}}>{upcoming.status==="failed"?"Survey needs attention":"Monthly survey review"}</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {upcoming.status==="paused"
+                    ?"Auto-send is paused."
+                    :upcoming.status==="failed"
+                      ?`Delivery failed: ${upcoming.analysisError||"retry available"}.`
+                      :`Auto-sends ${fmtDate(upcoming.reviewDeadlineAt||upcoming.scheduledSendAt||"")}.`}
+                  {" "}{upcoming.questions?.length??0} questions · health context captured
+                </p>
+              </div>
+              <button onClick={()=>setReviewSurvey(upcoming)}
+                className="bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90">
+                Review survey
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Score summary ── */}
         {latest?.scores&&(
@@ -2088,9 +2259,9 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
                   {/* Response % bar inline */}
                   <div className="flex items-center gap-1.5">
                     <div className="w-20 h-2 bg-muted">
-                      <div className="h-full bg-primary" style={{width:`${Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100)}%`}}/>
+                      <div className="h-full bg-primary" style={{width:`${surveyResponseRate(completed[iIdx])}%`}}/>
                     </div>
-                    <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100))}}>{Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100)}%</span>
+                    <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:hColor(surveyResponseRate(completed[iIdx]))}}>{surveyResponseRate(completed[iIdx])}%</span>
                   </div>
                 </div>
 
@@ -2218,7 +2389,7 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
 
             {filteredPs.map(s=>{
               const cfg=scfg[s.status];
-              const pct=Math.round((s.responseCount/s.targetCount)*100);
+              const pct=surveyResponseRate(s);
               const isEx=exId===s.id;
               const sTag=projectTagStyle(project.score);
               return (
@@ -2245,7 +2416,7 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
                       <div className="flex items-center gap-1.5">
                         <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</span>
                         <span className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount}</span>
-                        {s.status==="sent"&&<span className="text-xs text-amber-500 flex items-center gap-0.5"><Clock size={10}/>waiting</span>}
+                        {s.status==="active"&&<span className="text-xs text-amber-500 flex items-center gap-0.5"><Clock size={10}/>collecting</span>}
                       </div>
                     </div>
 
@@ -2272,14 +2443,18 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
                           {/* AI Summary */}
                           <div className="px-5 py-4 border-b border-border">
                             <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                            <div className="border border-border divide-y divide-border">
+                            {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                            {s.analysisError?.startsWith("insufficient_responses")
+                              ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because the anonymous response minimum was not reached.</div>
+                              :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                            {s.themes.length>0&&<div className="border border-border divide-y divide-border">
                               {s.themes.map((t,i)=>(
                                 <div key={i} className="flex gap-3 px-4 py-3 items-start">
                                   <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
                                   <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
                                 </div>
                               ))}
-                            </div>
+                            </div>}
                           </div>
                           {/* Raw responses */}
                           {s.rawResponses.length>0&&(
@@ -2334,6 +2509,10 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
         {showSend&&<SendSurveyModal key="send" onClose={()=>setShowSend(false)} project={project}
           customGuidance={guidance.map(g=>g.text.trim()).filter(Boolean).join("\n")}
           onSent={onSurveySent}/>}
+      </AnimatePresence>
+      <AnimatePresence>
+        {reviewSurvey&&<ReviewScheduledSurveyModal key="review" survey={reviewSurvey}
+          onClose={()=>setReviewSurvey(null)} onChanged={onSurveySent}/>}
       </AnimatePresence>
     </div>
   );

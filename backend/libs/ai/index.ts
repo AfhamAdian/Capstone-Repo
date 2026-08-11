@@ -6,6 +6,7 @@ export type {
   AiClient,
   SurveyQuestionCategory,
   SurveyQuestionType,
+  SurveyHealthContext,
   GeneratedSurveyQuestion,
   GenerateSurveyQuestionsInput,
   QuestionScore,

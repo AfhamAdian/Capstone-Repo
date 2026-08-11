@@ -1,4 +1,5 @@
 import { assertSupabaseClient } from '../config/supabase.js';
+import type { SurveyHealthContext } from '@libs/ai/index.js';
 
 export interface SaveProjectHealthScoreInput {
   projectId: number;
@@ -85,4 +86,40 @@ export async function listProjectHealthScoreHistory(projectId: number, limit = 6
     throw new Error(`Failed to load health score history for project ${projectId}: ${error.message}`);
   }
   return ((data as ProjectHealthScoreRow[]) ?? []).reverse();
+}
+
+/** Captures the exact project-health context supplied to Gemini for a survey. */
+export async function captureSurveyHealthContext(projectId: number): Promise<SurveyHealthContext> {
+  const history = await listProjectHealthScoreHistory(projectId, 2);
+  const latest = history.at(-1);
+  const previous = history.at(-2);
+
+  if (!latest) {
+    return {
+      capturedAt: new Date().toISOString(),
+      overallScore: null,
+      scores: { delivery: null, codeQuality: null, cicd: null, teamHealth: null, blockers: null },
+      trendDelta: null,
+      metricsSnapshotId: null,
+      source: 'unavailable',
+    };
+  }
+
+  return {
+    capturedAt: latest.computed_at,
+    overallScore: latest.overall_score,
+    scores: {
+      delivery: latest.delivery_score,
+      codeQuality: latest.code_quality_score,
+      cicd: latest.cicd_score,
+      teamHealth: latest.team_health_score,
+      blockers: latest.blockers_score,
+    },
+    trendDelta:
+      latest.overall_score !== null && previous?.overall_score !== null && previous?.overall_score !== undefined
+        ? latest.overall_score - previous.overall_score
+        : null,
+    metricsSnapshotId: latest.project_snapshot_id,
+    source: 'project_health_score',
+  };
 }

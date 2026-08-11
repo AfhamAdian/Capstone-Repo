@@ -55,7 +55,7 @@ describe('generateQualityQuestions', () => {
     expect(scoredCount).toBe(1);
   });
 
-  it('falls back to the deduped set (unscored) if scoring throws, rather than failing the caller', async () => {
+  it('fails closed when question scoring fails', async () => {
     const questions = [question('A distinct question about delivery risk')];
     const client = fakeAiClient({
       generateSurveyQuestions: async () => questions,
@@ -64,22 +64,19 @@ describe('generateQualityQuestions', () => {
       },
     });
 
-    const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
-    expect(result).toHaveLength(1);
-    expect(result[0]!.score.overall).toBe(0);
+    await expect(generateQualityQuestions({ aiClient: client, ...baseInput })).rejects.toThrow('AI provider down');
   });
 
-  it('never returns an empty set purely because every question failed the gate - falls back to the top few', async () => {
+  it('rejects a set when every question fails the quality gate', async () => {
     const questions = [question('Question one about delivery'), question('Question two about something else entirely')];
     const client = fakeAiClient({
       generateSurveyQuestions: async () => questions,
       scoreSurveyQuestions: async () => [score(10), score(20)],
     });
 
-    const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
-    expect(result.length).toBeGreaterThan(0);
-    // Best-scoring question should be first.
-    expect(result[0]!.score.overall).toBe(20);
+    await expect(generateQualityQuestions({ aiClient: client, ...baseInput })).rejects.toThrow(
+      'No generated question met the minimum quality score',
+    );
   });
 
   it('caps the result at SURVEY_QUESTION_MAX_COUNT (default 6), highest score first', async () => {
@@ -105,5 +102,32 @@ describe('generateQualityQuestions', () => {
     const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
     expect(result).toHaveLength(6);
     expect(result[0]!.score.overall).toBe(70); // highest score (61+9) sorted first
+  });
+
+  it('forwards the same immutable health context to generation and scoring', async () => {
+    const healthContext = {
+      capturedAt: '2026-08-11T00:00:00.000Z',
+      overallScore: 42,
+      scores: { delivery: 30, codeQuality: 50, cicd: 40, teamHealth: 60, blockers: 25 },
+      trendDelta: -8,
+      metricsSnapshotId: 12,
+      source: 'project_health_score' as const,
+    };
+    let generationContext: unknown;
+    let scoringContext: unknown;
+    const client = fakeAiClient({
+      generateSurveyQuestions: async (input) => {
+        generationContext = input.healthContext;
+        return [question('How confident are you in the current delivery plan?')];
+      },
+      scoreSurveyQuestions: async (input) => {
+        scoringContext = input.healthContext;
+        return [score(90)];
+      },
+    });
+
+    await generateQualityQuestions({ aiClient: client, ...baseInput, healthContext });
+    expect(generationContext).toBe(healthContext);
+    expect(scoringContext).toBe(healthContext);
   });
 });

@@ -207,7 +207,7 @@ export class GithubActionsConnector implements IConnector {
         });
 
         if (statuses.length > 0) {
-          const latestState = statuses[0].state;
+          const latestState = statuses[0]!.state;
           if (latestState === 'failure' || latestState === 'error') {
             failureCount++;
           }

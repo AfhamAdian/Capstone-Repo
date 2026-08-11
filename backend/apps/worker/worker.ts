@@ -11,6 +11,7 @@ import { processSurveySendJob } from './processors/survey-send-processor.js';
 import { processSurveyInsightJob } from './processors/survey-insight-processor.js';
 import { processSurveyDistributionJob } from './processors/survey-distribution-processor.js';
 import { logger } from '@libs/logger.js';
+import { updateSurveyStatus } from '../api/database/survey.js';
 
 dotenv.config();
 
@@ -77,13 +78,25 @@ async function startWorker() {
     });
     surveySendWorker.on('failed', (job, error) => {
       surveyLog.error({ surveyId: job?.data.surveyId, err: error }, 'survey-send job failed');
+      if (job?.data.surveyId) {
+        void updateSurveyStatus(job.data.surveyId, 'failed', { analysisError: error.message }).catch((statusError) => {
+          surveyLog.error({ surveyId: job.data.surveyId, err: statusError }, 'failed to persist survey delivery error');
+        });
+      }
     });
     surveyLog.info('survey-send worker is running');
 
     const insightLog = logger.child({ component: 'survey-insight-worker' });
     const surveyInsightWorker = surveyQueueManager.createSurveyInsightWorker(async (job) => {
       insightLog.info({ surveyId: job.data.surveyId }, 'processing survey-insight job');
-      await processSurveyInsightJob(job.data);
+      try {
+        await processSurveyInsightJob(job.data);
+      } catch (error) {
+        await updateSurveyStatus(job.data.surveyId, 'failed', {
+          analysisError: error instanceof Error ? error.message : 'Survey analysis failed',
+        });
+        throw error;
+      }
       insightLog.info({ surveyId: job.data.surveyId }, 'completed survey-insight job');
     });
     surveyInsightWorker.on('failed', (job, error) => {
@@ -94,16 +107,17 @@ async function startWorker() {
     const distributionLog = logger.child({ component: 'survey-distribution-worker' });
     const surveyDistributionWorker = surveyQueueManager.createSurveyDistributionWorker(async () => {
       distributionLog.info('processing survey-distribution job');
-      await processSurveyDistributionJob();
+      const closedSurveyIds = await processSurveyDistributionJob();
+      await Promise.all(closedSurveyIds.map((surveyId) => surveyQueueManager.enqueueSurveyInsight(surveyId)));
       distributionLog.info('completed survey-distribution job');
     });
     surveyDistributionWorker.on('failed', (job, error) => {
       distributionLog.error({ jobId: job?.id, err: error }, 'survey-distribution job failed');
     });
-    // Hourly tick: assigns each project's randomized per-round send moment when its
-    // window opens (day SURVEY_ROUND1_START_DAY / ROUND2_START_DAY), generates
+    // Hourly tick: assigns each project's randomized monthly send moment,
+    // generates
     // questions SURVEY_QUESTION_GEN_LEAD_DAYS before that moment, and auto-sends
-    // (no approval gate) once it arrives. Idempotent - safe to call on every boot.
+    // after its review window unless paused. Idempotent - safe on every boot.
     await surveyQueueManager.scheduleSurveyDistribution('0 * * * *');
     distributionLog.info('survey-distribution worker is running (hourly tick, staggered per-project send)');
 

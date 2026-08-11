@@ -4,6 +4,7 @@
  */
 
 import type { AiClient, GeneratedSurveyQuestion, ScoredSurveyQuestion } from '@libs/ai/index.js';
+import { dedupeQuestions } from '@libs/ai/index.js';
 import type { SurveyQueueManager } from '@libs/queue/index.js';
 import { logger } from '@libs/logger.js';
 import {
@@ -15,16 +16,19 @@ import {
   listSurveysGlobal,
   countManualSurveysThisMonth,
   updateSurveyStatus,
-  markQuestionsModified,
+  transitionUnsentSurveyStatus,
   getDerivedCounts,
   getRawResponsesForSurvey,
+  getQuestionsForSurveys,
   type SurveyStatus,
   type SurveyRow,
 } from '../database/survey.js';
 import { getInsight } from '../database/survey-insight.js';
 import { getProjectName, getPendingSurvey as getPendingSurveyFromDb } from '../database/project.js';
+import { captureSurveyHealthContext } from '../database/project-health-score.js';
 import { listCategoryKeys } from '../database/survey-category.js';
 import { listSchedulesForProject } from '../database/survey-schedule.js';
+import { closeBundlesForSurvey, getLatestBundleForSurvey } from '../database/survey-bundle.js';
 import { generateQualityQuestions } from './survey-question-generation.service.js';
 import { isLevel1 } from '../utils/requester-role.js';
 import { ForbiddenError } from '../utils/errors.js';
@@ -34,6 +38,45 @@ import { env } from '../config/env.js';
 export { ForbiddenError };
 export class SurveyNotFoundError extends Error {}
 export class SurveyLockedError extends Error {}
+export class SurveyValidationError extends Error {}
+export type SurveyLifecycleAction = 'pause' | 'resume' | 'retry' | 'cancel' | 'close';
+
+async function validateSurveyQuestions(questions: GeneratedSurveyQuestion[]): Promise<GeneratedSurveyQuestion[]> {
+  if (questions.length === 0 || questions.length > 20) {
+    throw new SurveyValidationError('A survey must contain between 1 and 20 questions');
+  }
+  const categoryKeys = new Set(await listCategoryKeys());
+  const normalized = questions.map((question) => ({
+    category: typeof question.category === 'string' ? question.category.trim() : '',
+    questionText: typeof question.questionText === 'string' ? question.questionText.trim() : '',
+    questionType: question.questionType,
+  }));
+  for (const question of normalized) {
+    if (!categoryKeys.has(question.category)) throw new SurveyValidationError(`Unknown survey category: ${question.category}`);
+    if (question.questionText.length < 10 || question.questionText.length > 500) {
+      throw new SurveyValidationError('Question text must contain between 10 and 500 characters');
+    }
+    if (question.questionType !== 'text' && question.questionType !== 'scale') {
+      throw new SurveyValidationError('Question type must be text or scale');
+    }
+  }
+  if (dedupeQuestions(normalized).length !== normalized.length) {
+    throw new SurveyValidationError('Survey questions must not contain duplicates');
+  }
+  return normalized;
+}
+
+function normalizeSurveyText(trigger: string, customGuidance?: string): { trigger: string; customGuidance?: string } {
+  const normalizedTrigger = trigger.trim();
+  const normalizedGuidance = customGuidance?.trim();
+  if (normalizedTrigger.length < 3 || normalizedTrigger.length > 500) {
+    throw new SurveyValidationError('Survey trigger must contain between 3 and 500 characters');
+  }
+  if (normalizedGuidance && normalizedGuidance.length > 2000) {
+    throw new SurveyValidationError('Custom guidance must not exceed 2000 characters');
+  }
+  return { trigger: normalizedTrigger, ...(normalizedGuidance ? { customGuidance: normalizedGuidance } : {}) };
+}
 
 interface SurveyServiceDependencies {
   aiClient: AiClient;
@@ -46,14 +89,14 @@ export interface SurveyListItem {
   projectName: string;
   status: SurveyStatus;
   trigger: string;
-  sentDate: string;
+  sentDate: string | null;
   responseCount: number;
   targetCount: number;
-  /** Null until the survey has actually been dispatched at least once. */
-  firstSentAt: string | null;
-  /** Set when questions were edited after first_sent_at - "modified" badge for the UI. */
-  questionsModifiedAt: string | null;
-  /** Questions can no longer be edited once >=1 response has been submitted. */
+  reviewDeadlineAt: string | null;
+  scheduledSendAt: string | null;
+  closedAt: string | null;
+  questionVersion: number;
+  /** Questions are immutable once their shared link has been broadcast. */
   questionsLocked: boolean;
 }
 
@@ -62,10 +105,17 @@ export interface SurveyDetail extends SurveyListItem {
   themes: string[];
   aiInsight: string | null;
   rawResponses: { question: string; answers: string[] }[];
+  questions: { id: number; category: string; questionText: string; questionType: 'text' | 'scale' }[];
+  healthContext: SurveyRow['health_context_snapshot'];
+  analysisError: string | null;
+  delivery: {
+    notifiedAt: string | null;
+    expiresAt: string;
+    channels: { slackSent?: boolean; telegramSent?: boolean; discordSent?: boolean };
+  } | null;
 }
 
 export interface SurveyScheduleSummary {
-  round: 1 | 2;
   scheduledSendAt: string;
   status: 'pending' | 'questions_ready' | 'sent';
   surveyId: number | null;
@@ -84,43 +134,43 @@ export class SurveyService {
    * best `SURVEY_QUESTION_MAX_COUNT` are returned (with scores, for the modal).
    */
   async generateQuestions(projectId: number, trigger: string, customGuidance?: string): Promise<ScoredSurveyQuestion[]> {
-    const [projectName, categories] = await Promise.all([getProjectName(projectId), listCategoryKeys()]);
-    return generateQualityQuestions({ aiClient: this.deps.aiClient, projectName, trigger, customGuidance, categories });
+    const normalized = normalizeSurveyText(trigger, customGuidance);
+    const [projectName, categories, healthContext] = await Promise.all([
+      getProjectName(projectId),
+      listCategoryKeys(),
+      captureSurveyHealthContext(projectId),
+    ]);
+    return generateQualityQuestions({
+      aiClient: this.deps.aiClient,
+      projectName,
+      trigger: normalized.trigger,
+      customGuidance: normalized.customGuidance,
+      categories,
+      healthContext,
+    });
   }
 
   /**
-   * Level-1 (CEO/CTO) question editing. No approval gate exists - editing IS
-   * the review step, available any time up until someone has answered.
-   * - Blocked once >=1 response has been submitted (editing a live form out
-   *   from under a respondent would corrupt already-collected answers).
-   * - If the survey has already been dispatched at least once (`first_sent_at`
-   *   set), the edit is tagged via `questions_modified_at` instead of silently
-   *   rewriting a form recipients may already be looking at.
+   * Level-1 (CEO/CTO) question editing during the review window.
+   * Questions freeze at dispatch. A respondent may have loaded the shared form
+   * before any answer exists, so response count is not a safe editing lock.
    */
   async editQuestions(surveyId: number, questions: GeneratedSurveyQuestion[], requesterRole: string | null): Promise<void> {
     if (!isLevel1(requesterRole)) {
       throw new ForbiddenError('Only level-1 users (CEO/CTO) can edit survey questions');
     }
-    if (questions.length === 0) {
-      throw new Error('questions must be a non-empty array');
-    }
-
     const survey = await getSurveyById(surveyId);
     if (!survey) {
       throw new SurveyNotFoundError(`Survey ${surveyId} not found`);
     }
 
-    const derived = await getDerivedCounts(surveyId);
-    if (derived.responseCount > 0) {
-      throw new SurveyLockedError('This survey already has responses and its questions can no longer be edited');
+    if (survey.sent_at) {
+      throw new SurveyLockedError('This survey has been sent and its questions can no longer be edited');
     }
 
+    const validatedQuestions = await validateSurveyQuestions(questions);
     await deleteQuestionsForSurvey(surveyId);
-    await addSurveyQuestions(surveyId, questions);
-
-    if (survey.first_sent_at) {
-      await markQuestionsModified(surveyId);
-    }
+    await addSurveyQuestions(surveyId, validatedQuestions);
   }
 
   async createAndSendSurvey(
@@ -132,13 +182,19 @@ export class SurveyService {
       throw new Error(`Monthly manual survey limit reached (${env.manualSurveyMonthlyLimit}/month)`);
     }
 
+    const normalized = normalizeSurveyText(input.trigger, input.customGuidance);
+    const validatedQuestions = await validateSurveyQuestions(input.questions);
+    const healthContext = await captureSurveyHealthContext(projectId);
     const surveyId = await createSurvey({
       projectId,
       source: 'manual',
-      trigger: input.trigger,
-      customGuidance: input.customGuidance,
+      trigger: normalized.trigger,
+      customGuidance: normalized.customGuidance,
+      status: 'scheduled',
+      scheduledSendAt: new Date(),
+      healthContext,
     });
-    await addSurveyQuestions(surveyId, input.questions);
+    await addSurveyQuestions(surveyId, validatedQuestions);
 
     await this.deps.surveyQueueManager.enqueueSurveySend(surveyId);
     this.log.info({ surveyId, projectId }, 'manual survey created and send job enqueued');
@@ -169,12 +225,17 @@ export class SurveyService {
     const survey = await getSurveyById(surveyId);
     if (!survey) return null;
 
-    const [projectName, insight, rawResponses] = await Promise.all([
+    const [projectName, insight, questions, bundle] = await Promise.all([
       getProjectName(survey.project_id),
       getInsight(surveyId),
-      getRawResponsesForSurvey(surveyId),
+      getQuestionsForSurveys([surveyId]),
+      getLatestBundleForSurvey(surveyId),
     ]);
     const listItem = await this.toListItem(survey, projectName);
+    const rawResponses =
+      listItem.responseCount >= env.surveyMinAnonymousResponses
+        ? await getRawResponsesForSurvey(surveyId)
+        : [];
 
     return {
       ...listItem,
@@ -190,12 +251,90 @@ export class SurveyService {
       themes: insight?.themes ?? [],
       aiInsight: insight?.ai_insight ?? null,
       rawResponses: rawResponses.map((r) => ({ question: r.question, answers: r.answers })),
+      questions: questions.map((question) => ({
+        id: question.id,
+        category: question.category,
+        questionText: question.question_text,
+        questionType: question.question_type,
+      })),
+      healthContext: survey.health_context_snapshot,
+      analysisError: survey.analysis_error,
+      delivery: bundle
+        ? {
+            notifiedAt: bundle.notified_at,
+            expiresAt: bundle.expires_at,
+            channels: bundle.delivery_results,
+          }
+        : null,
     };
   }
 
   async completeSurvey(surveyId: number): Promise<void> {
-    await updateSurveyStatus(surveyId, 'completed', new Date());
+    await updateSurveyStatus(surveyId, 'closed', {
+      closedAt: new Date(),
+      closeReason: 'manual',
+    });
+    await closeBundlesForSurvey(surveyId);
     await this.deps.surveyQueueManager.enqueueSurveyInsight(surveyId);
+  }
+
+  async changeLifecycle(surveyId: number, action: SurveyLifecycleAction): Promise<void> {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) throw new SurveyNotFoundError(`Survey ${surveyId} not found`);
+
+    if (action === 'close') {
+      if (survey.status !== 'active') throw new SurveyLockedError('Only an active survey can be closed');
+      await this.completeSurvey(surveyId);
+      return;
+    }
+
+    if (action === 'retry') {
+      if (survey.status !== 'failed') {
+        throw new SurveyLockedError('Only a failed survey can be retried');
+      }
+      if (survey.sent_at) {
+        await updateSurveyStatus(surveyId, 'closed', { analysisError: null });
+        await this.deps.surveyQueueManager.enqueueSurveyInsight(surveyId);
+        return;
+      }
+      const retried = await transitionUnsentSurveyStatus(
+        surveyId,
+        ['failed'],
+        survey.source === 'manual' ? 'scheduled' : 'in_review',
+        null,
+      );
+      if (!retried) throw new SurveyLockedError('Survey state changed before retry');
+      if (survey.source === 'manual') await this.deps.surveyQueueManager.enqueueSurveySend(surveyId);
+      return;
+    }
+
+    if (survey.sent_at) {
+      throw new SurveyLockedError('A survey cannot be paused, resumed, or cancelled after dispatch');
+    }
+
+    if (action === 'pause') {
+      if (!['draft', 'in_review', 'scheduled'].includes(survey.status)) {
+        throw new SurveyLockedError(`Survey cannot be paused from ${survey.status}`);
+      }
+      const paused = await transitionUnsentSurveyStatus(surveyId, ['draft', 'in_review', 'scheduled'], 'paused');
+      if (!paused) throw new SurveyLockedError('Survey state changed before it could be paused');
+      return;
+    }
+
+    if (action === 'resume') {
+      if (survey.status !== 'paused') throw new SurveyLockedError('Only a paused survey can be resumed');
+      const resumed = await transitionUnsentSurveyStatus(surveyId, ['paused'], 'in_review');
+      if (!resumed) throw new SurveyLockedError('Survey state changed before it could be resumed');
+      return;
+    }
+
+    if (survey.status === 'cancelled') return;
+    const cancelled = await transitionUnsentSurveyStatus(
+      surveyId,
+      ['draft', 'in_review', 'scheduled', 'paused', 'failed'],
+      'cancelled',
+    );
+    if (!cancelled) throw new SurveyLockedError('Survey state changed before it could be cancelled');
   }
 
   async getQuota(projectId: number): Promise<{ used: number; limit: number; remaining: number }> {
@@ -218,7 +357,6 @@ export class SurveyService {
     const periodMonth = periodMonthString(new Date());
     const rows = await listSchedulesForProject(projectId, periodMonth);
     return rows.map((row) => ({
-      round: row.round,
       scheduledSendAt: row.scheduled_send_at,
       status: row.sent_at ? 'sent' : row.questions_generated_at ? 'questions_ready' : 'pending',
       surveyId: row.survey_id,
@@ -236,9 +374,11 @@ export class SurveyService {
       sentDate: survey.sent_at,
       responseCount: derived.responseCount,
       targetCount: derived.targetCount || survey.target_count,
-      firstSentAt: survey.first_sent_at,
-      questionsModifiedAt: survey.questions_modified_at,
-      questionsLocked: derived.responseCount > 0,
+      reviewDeadlineAt: survey.review_deadline_at,
+      scheduledSendAt: survey.scheduled_send_at,
+      closedAt: survey.closed_at,
+      questionVersion: survey.question_version,
+      questionsLocked: survey.sent_at !== null,
     };
   }
 }

@@ -1,7 +1,18 @@
 import { assertSupabaseClient } from '../config/supabase.js';
-import type { GeneratedSurveyQuestion } from '@libs/ai/index.js';
+import type { GeneratedSurveyQuestion, SurveyHealthContext } from '@libs/ai/index.js';
 
-export type SurveyStatus = 'active' | 'sent' | 'completed';
+export type SurveyStatus =
+  | 'draft'
+  | 'in_review'
+  | 'scheduled'
+  | 'sending'
+  | 'active'
+  | 'paused'
+  | 'closed'
+  | 'analyzing'
+  | 'completed'
+  | 'cancelled'
+  | 'failed';
 export type SurveySource = 'manual' | 'auto_pulse';
 
 export interface CreateSurveyInput {
@@ -10,6 +21,10 @@ export interface CreateSurveyInput {
   trigger: string;
   customGuidance?: string;
   periodMonth?: string; // 'YYYY-MM-01', only meaningful for auto_pulse
+  status?: SurveyStatus;
+  reviewDeadlineAt?: Date;
+  scheduledSendAt?: Date;
+  healthContext?: SurveyHealthContext;
 }
 
 export interface SurveyRow {
@@ -20,12 +35,16 @@ export interface SurveyRow {
   trigger: string;
   custom_guidance: string | null;
   target_count: number;
-  response_count: number;
-  sent_at: string;
+  sent_at: string | null;
   completed_at: string | null;
   period_month: string | null;
-  first_sent_at: string | null;
-  questions_modified_at: string | null;
+  review_deadline_at: string | null;
+  scheduled_send_at: string | null;
+  closed_at: string | null;
+  close_reason: string | null;
+  health_context_snapshot: SurveyHealthContext | null;
+  question_version: number;
+  analysis_error: string | null;
 }
 
 export async function createSurvey(input: CreateSurveyInput): Promise<number> {
@@ -37,10 +56,13 @@ export async function createSurvey(input: CreateSurveyInput): Promise<number> {
       {
         project_id: input.projectId,
         source: input.source,
-        status: 'sent',
+        status: input.status ?? 'draft',
         trigger: input.trigger,
         custom_guidance: input.customGuidance ?? null,
         period_month: input.periodMonth ?? null,
+        review_deadline_at: input.reviewDeadlineAt?.toISOString() ?? null,
+        scheduled_send_at: input.scheduledSendAt?.toISOString() ?? null,
+        health_context_snapshot: input.healthContext ?? null,
       },
     ])
     .select('id')
@@ -54,7 +76,12 @@ export async function createSurvey(input: CreateSurveyInput): Promise<number> {
 }
 
 /** Finds this month's auto-pulse survey for a project, creating it if it doesn't exist yet. */
-export async function findOrCreateAutoPulseSurvey(projectId: number, periodMonth: string, trigger: string): Promise<number> {
+export async function findOrCreateAutoPulseSurvey(
+  projectId: number,
+  periodMonth: string,
+  trigger: string,
+  healthContext?: SurveyHealthContext,
+): Promise<number> {
   const client = assertSupabaseClient();
 
   const { data: existing, error: findError } = await client
@@ -72,7 +99,14 @@ export async function findOrCreateAutoPulseSurvey(projectId: number, periodMonth
     return existing.id as number;
   }
 
-  return createSurvey({ projectId, source: 'auto_pulse', trigger, periodMonth });
+  return createSurvey({
+    projectId,
+    source: 'auto_pulse',
+    trigger,
+    periodMonth,
+    status: 'draft',
+    healthContext,
+  });
 }
 
 export async function addSurveyQuestions(surveyId: number, questions: GeneratedSurveyQuestion[]): Promise<void> {
@@ -102,24 +136,46 @@ export async function deleteQuestionsForSurvey(surveyId: number): Promise<void> 
   }
 }
 
-export async function markQuestionsModified(surveyId: number): Promise<void> {
-  const client = assertSupabaseClient();
-  const { error } = await client.from('survey').update({ questions_modified_at: new Date().toISOString() }).eq('id', surveyId);
-  if (error) {
-    throw new Error(`Failed to mark survey ${surveyId} questions modified: ${error.message}`);
-  }
-}
-
-/** Set once, the first time this survey is actually dispatched (manual or auto). No-op if already set. */
-export async function markFirstSentAtIfAbsent(surveyId: number): Promise<void> {
+/** Atomically opens a survey the first time its shared link is broadcast. */
+export async function markSurveySent(surveyId: number, sentAt: Date = new Date()): Promise<void> {
   const client = assertSupabaseClient();
   const { error } = await client
     .from('survey')
-    .update({ first_sent_at: new Date().toISOString() })
+    .update({ status: 'active', sent_at: sentAt.toISOString(), analysis_error: null })
     .eq('id', surveyId)
-    .is('first_sent_at', null);
+    .is('sent_at', null);
   if (error) {
-    throw new Error(`Failed to mark survey ${surveyId} first sent: ${error.message}`);
+    throw new Error(`Failed to mark survey ${surveyId} sent: ${error.message}`);
+  }
+}
+
+/** Claims an unsent survey so lifecycle actions cannot race its broadcast. */
+export async function claimSurveyForSend(surveyId: number): Promise<boolean> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('survey')
+    .update({ status: 'sending', analysis_error: null })
+    .eq('id', surveyId)
+    .is('sent_at', null)
+    .in('status', ['draft', 'in_review', 'scheduled', 'sending', 'failed'])
+    .select('id');
+  if (error) {
+    throw new Error(`Failed to claim survey ${surveyId} for delivery: ${error.message}`);
+  }
+  return (data?.length ?? 0) > 0;
+}
+
+export async function setSurveyReviewWindow(surveyId: number, scheduledSendAt: Date): Promise<void> {
+  const client = assertSupabaseClient();
+  const iso = scheduledSendAt.toISOString();
+  const { error } = await client
+    .from('survey')
+    .update({ status: 'in_review', review_deadline_at: iso, scheduled_send_at: iso, analysis_error: null })
+    .eq('id', surveyId)
+    .is('sent_at', null)
+    .in('status', ['draft', 'in_review', 'failed']);
+  if (error) {
+    throw new Error(`Failed to set review window for survey ${surveyId}: ${error.message}`);
   }
 }
 
@@ -163,7 +219,7 @@ export async function listSurveysForProject(projectId: number): Promise<SurveyRo
     .from('survey')
     .select('*')
     .eq('project_id', projectId)
-    .order('sent_at', { ascending: false });
+    .order('created_at', { ascending: false });
 
   if (error) {
     throw new Error(`Failed to list surveys for project ${projectId}: ${error.message}`);
@@ -180,7 +236,7 @@ export interface ListSurveysGlobalFilters {
 export async function listSurveysGlobal(filters: ListSurveysGlobalFilters): Promise<SurveyRow[]> {
   const client = assertSupabaseClient();
 
-  let query = client.from('survey').select('*').order('sent_at', { ascending: false });
+  let query = client.from('survey').select('*').order('created_at', { ascending: false });
   if (filters.projectId) query = query.eq('project_id', filters.projectId);
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.search) query = query.ilike('trigger', `%${filters.search}%`);
@@ -204,7 +260,7 @@ export async function countManualSurveysThisMonth(projectId: number): Promise<nu
     .select('id', { count: 'exact', head: true })
     .eq('project_id', projectId)
     .eq('source', 'manual')
-    .gte('sent_at', startOfMonth.toISOString());
+    .gte('created_at', startOfMonth.toISOString());
 
   if (error) {
     throw new Error(`Failed to count manual surveys for project ${projectId}: ${error.message}`);
@@ -212,17 +268,47 @@ export async function countManualSurveysThisMonth(projectId: number): Promise<nu
   return count ?? 0;
 }
 
-export async function updateSurveyStatus(surveyId: number, status: SurveyStatus, completedAt?: Date): Promise<void> {
+export async function updateSurveyStatus(
+  surveyId: number,
+  status: SurveyStatus,
+  options?: { completedAt?: Date; closedAt?: Date; closeReason?: string; analysisError?: string | null },
+): Promise<void> {
   const client = assertSupabaseClient();
 
   const { error } = await client
     .from('survey')
-    .update({ status, ...(completedAt ? { completed_at: completedAt.toISOString() } : {}) })
+    .update({
+      status,
+      ...(options?.completedAt ? { completed_at: options.completedAt.toISOString() } : {}),
+      ...(options?.closedAt ? { closed_at: options.closedAt.toISOString() } : {}),
+      ...(options?.closeReason ? { close_reason: options.closeReason } : {}),
+      ...(options?.analysisError !== undefined ? { analysis_error: options.analysisError } : {}),
+    })
     .eq('id', surveyId);
 
   if (error) {
     throw new Error(`Failed to update survey ${surveyId} status: ${error.message}`);
   }
+}
+
+export async function transitionUnsentSurveyStatus(
+  surveyId: number,
+  from: SurveyStatus[],
+  to: SurveyStatus,
+  analysisError?: string | null,
+): Promise<boolean> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('survey')
+    .update({ status: to, ...(analysisError !== undefined ? { analysis_error: analysisError } : {}) })
+    .eq('id', surveyId)
+    .is('sent_at', null)
+    .in('status', from)
+    .select('id');
+  if (error) {
+    throw new Error(`Failed to transition survey ${surveyId} to ${to}: ${error.message}`);
+  }
+  return (data?.length ?? 0) > 0;
 }
 
 /**
@@ -245,44 +331,55 @@ export async function incrementSurveyTargetCount(surveyId: number, by: number): 
   }
 }
 
+export async function setSurveyTargetCount(surveyId: number, targetCount: number): Promise<void> {
+  const client = assertSupabaseClient();
+  const { error } = await client
+    .from('survey')
+    .update({ target_count: Math.max(0, targetCount) })
+    .eq('id', surveyId);
+  if (error) {
+    throw new Error(`Failed to set survey ${surveyId} target_count: ${error.message}`);
+  }
+}
+
 /**
- * Source-of-truth per-project target/response counts, computed via the
- * bundle/response join since one response can span multiple projects'
- * surveys (see backend/db/migrations/002_survey.sql).
+ * The audience target is stored on the survey. Anonymous response count is
+ * derived directly from responses submitted through that survey's shared
+ * links; no user or project-member identity is involved.
  */
 export async function getDerivedCounts(surveyId: number): Promise<{ targetCount: number; responseCount: number }> {
   const client = assertSupabaseClient();
 
-  const { count: targetCount, error: targetError } = await client
-    .from('surveybundlesurvey')
-    .select('id', { count: 'exact', head: true })
-    .eq('survey_id', surveyId);
-  if (targetError) {
-    throw new Error(`Failed to compute target count for survey ${surveyId}: ${targetError.message}`);
+  const { data: survey, error: surveyError } = await client
+    .from('survey')
+    .select('target_count')
+    .eq('id', surveyId)
+    .maybeSingle();
+  if (surveyError) {
+    throw new Error(`Failed to load target count for survey ${surveyId}: ${surveyError.message}`);
   }
 
-  const { data: questionRows, error: questionError } = await client
-    .from('surveyquestion')
+  const { data: links, error: linkError } = await client
+    .from('surveybundle')
     .select('id')
     .eq('survey_id', surveyId);
-  if (questionError) {
-    throw new Error(`Failed to load questions for survey ${surveyId}: ${questionError.message}`);
+  if (linkError) {
+    throw new Error(`Failed to load links for survey ${surveyId}: ${linkError.message}`);
   }
-  const questionIds = (questionRows ?? []).map((q) => q.id as number);
-  if (questionIds.length === 0) {
-    return { targetCount: targetCount ?? 0, responseCount: 0 };
+  const bundleIds = (links ?? []).map((link) => link.id as number);
+  if (bundleIds.length === 0) {
+    return { targetCount: (survey?.target_count as number) ?? 0, responseCount: 0 };
   }
 
-  const { data: answerRows, error: answerError } = await client
-    .from('surveyanswer')
-    .select('response_id')
-    .in('question_id', questionIds);
-  if (answerError) {
-    throw new Error(`Failed to compute response count for survey ${surveyId}: ${answerError.message}`);
+  const { count: responseCount, error: responseError } = await client
+    .from('surveyresponse')
+    .select('id', { count: 'exact', head: true })
+    .in('bundle_id', bundleIds);
+  if (responseError) {
+    throw new Error(`Failed to compute response count for survey ${surveyId}: ${responseError.message}`);
   }
-  const distinctResponseIds = new Set((answerRows ?? []).map((a) => a.response_id as number));
 
-  return { targetCount: targetCount ?? 0, responseCount: distinctResponseIds.size };
+  return { targetCount: (survey?.target_count as number) ?? 0, responseCount: responseCount ?? 0 };
 }
 
 export interface RawResponseGroup {

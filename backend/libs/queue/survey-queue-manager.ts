@@ -42,19 +42,21 @@ export class SurveyQueueManager {
 
   async enqueueSurveySend(surveyId: number): Promise<void> {
     await this.sendQueue.add('send', { surveyId }, {
+      jobId: `survey-send-${surveyId}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
       removeOnComplete: true,
-      removeOnFail: false,
+      removeOnFail: true,
     });
   }
 
   async enqueueSurveyInsight(surveyId: number): Promise<void> {
     await this.insightQueue.add('insight', { surveyId }, {
+      jobId: `survey-insight-${surveyId}`,
       attempts: 3,
       backoff: { type: 'exponential', delay: 2000 },
       removeOnComplete: true,
-      removeOnFail: false,
+      removeOnFail: true,
     });
   }
 

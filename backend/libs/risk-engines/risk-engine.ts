@@ -65,7 +65,7 @@ export class RiskEngine {
     return "LOW";
   }
 
-  public async saveToDB(result: RiskResult): Promise<void> {
-    await saveRiskScore(result);
+  public async saveToDB(result: RiskResult, projectSnapshotId: number): Promise<void> {
+    await saveRiskScore(result, projectSnapshotId);
   }
 }

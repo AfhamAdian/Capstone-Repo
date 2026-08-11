@@ -1,16 +1,14 @@
 /**
  * Survey Response Service (anonymous, token-driven)
- * Handles decoding the encrypted link, serving the combined multi-project
- * form, and accepting submissions split by project for scoring/insight.
+ * Handles decoding the encrypted link, serving its project survey, and
+ * accepting anonymous submissions.
  */
 
 import { logger } from '@libs/logger.js';
-import type { SurveyQueueManager } from '@libs/queue/index.js';
 import { decodeToken, isExpired } from '@libs/security/survey-token.js';
-import { isSingleUse } from '@libs/security/survey-link.js';
-import { getBundleById, consumeBundle, getSurveysForBundle } from '../database/survey-bundle.js';
-import { insertResponse, getSurveyIdsForQuestions, type SubmittedAnswer } from '../database/survey-response.js';
-import { getQuestionsForSurveys, getDerivedCounts, updateSurveyStatus } from '../database/survey.js';
+import { getBundleById, getSurveyForBundle } from '../database/survey-bundle.js';
+import { insertResponse, type SubmittedAnswer } from '../database/survey-response.js';
+import { getQuestionsForSurveys, getSurveyById, type SurveyQuestionRow } from '../database/survey.js';
 
 const log = logger.child({ component: 'survey-response-service' });
 
@@ -20,81 +18,112 @@ export class SurveyLinkAlreadyUsedError extends Error {}
 export interface SurveyFormProject {
   projectId: number;
   projectName: string;
-  questions: { id: number; category: string; questionText: string; questionType: 'text' | 'scale' }[];
+  questions: { id: number; category: string; text: string; type: 'text' | 'scale' }[];
 }
 
 export class SurveyResponseService {
-  constructor(private deps: { surveyQueueManager: SurveyQueueManager }) {}
-
   /** Decodes the token, validates expiry statelessly, then confirms the bundle is still pending. Does not consume it. */
-  async getFormForToken(token: string): Promise<{ bundleId: number; projects: SurveyFormProject[] }> {
+  async getFormForToken(token: string): Promise<{ projects: SurveyFormProject[] }> {
     const payload = decodeToken(token);
     if (!payload) throw new InvalidSurveyLinkError('Invalid or tampered survey link');
     if (isExpired(payload)) throw new InvalidSurveyLinkError('This survey link has expired');
 
     const bundle = await getBundleById(payload.bundleId);
     if (!bundle) throw new InvalidSurveyLinkError('Survey link not found');
-    if (bundle.status !== 'pending') throw new SurveyLinkAlreadyUsedError('This survey has already been submitted');
+    if (
+      bundle.cycle_id !== payload.cycleId
+      || new Date(bundle.expires_at).getTime() !== new Date(payload.deadline).getTime()
+      || new Date(bundle.expires_at) <= new Date()
+    ) {
+      throw new InvalidSurveyLinkError('Survey link does not match an open distribution');
+    }
+    if (bundle.status !== 'pending') throw new SurveyLinkAlreadyUsedError('This survey is closed');
 
-    const surveys = await getSurveysForBundle(payload.bundleId);
-    const surveyIds = surveys.map((s) => s.surveyId);
-    const questions = await getQuestionsForSurveys(surveyIds);
+    const linkedSurvey = await getSurveyForBundle(payload.bundleId);
+    if (!linkedSurvey) throw new InvalidSurveyLinkError('Survey link has no survey');
+    const survey = await getSurveyById(linkedSurvey.surveyId);
+    if (!survey || survey.status !== 'active') {
+      throw new SurveyLinkAlreadyUsedError('This survey is not accepting responses');
+    }
 
-    const projects: SurveyFormProject[] = surveys.map((s) => ({
-      projectId: s.projectId,
-      projectName: s.projectName,
-      questions: questions
-        .filter((q) => q.survey_id === s.surveyId)
-        .map((q) => ({ id: q.id, category: q.category, questionText: q.question_text, questionType: q.question_type })),
-    }));
+    const questions = await getQuestionsForSurveys([linkedSurvey.surveyId]);
+    const projects: SurveyFormProject[] = [{
+      projectId: linkedSurvey.projectId,
+      projectName: linkedSurvey.projectName,
+      questions: questions.map((q) => ({
+        id: q.id,
+        category: q.category,
+        text: q.question_text,
+        type: q.question_type,
+      })),
+    }];
 
-    return { bundleId: payload.bundleId, projects };
+    return { projects };
   }
 
   /**
-   * Consumes the link atomically, persists the answers, then checks each
-   * touched project's survey for completion (response_count >= target_count)
-   * and enqueues that project's insight job if so.
+   * Validates answers against the active survey behind the shared link and
+   * persists one anonymous submission. Shared links are never consumed:
+   * surveys close only at their deadline or through an admin action.
    */
-  async submitResponse(token: string, answers: SubmittedAnswer[]): Promise<void> {
+  async submitResponse(token: string, submissionKey: string, answers: SubmittedAnswer[]): Promise<void> {
     const payload = decodeToken(token);
     if (!payload) throw new InvalidSurveyLinkError('Invalid or tampered survey link');
     if (isExpired(payload)) throw new InvalidSurveyLinkError('This survey link has expired');
     if (answers.length === 0) throw new InvalidSurveyLinkError('At least one answer is required');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(submissionKey)) {
+      throw new InvalidSurveyLinkError('submissionId must be a UUID');
+    }
 
     const bundle = await getBundleById(payload.bundleId);
     if (!bundle) throw new InvalidSurveyLinkError('Survey link not found');
+    if (
+      bundle.cycle_id !== payload.cycleId
+      || new Date(bundle.expires_at).getTime() !== new Date(payload.deadline).getTime()
+      || new Date(bundle.expires_at) <= new Date()
+    ) {
+      throw new InvalidSurveyLinkError('Survey link does not match an open distribution');
+    }
+    if (bundle.status !== 'pending') throw new SurveyLinkAlreadyUsedError('This survey is closed');
 
-    if (isSingleUse(bundle.mode)) {
-      // Per-developer link: atomic single-use consumption prevents replay.
-      const consumed = await consumeBundle(payload.bundleId);
-      if (!consumed) {
-        throw new SurveyLinkAlreadyUsedError('This survey link has already been used or has expired');
-      }
-    } else if (bundle.status !== 'pending') {
-      // Shared cohort link: reusable by the whole cohort, so NOT consumed - but
-      // still reject once the cohort link has been closed/expired.
-      throw new SurveyLinkAlreadyUsedError('This survey is closed');
+    const linkedSurvey = await getSurveyForBundle(payload.bundleId);
+    if (!linkedSurvey) throw new InvalidSurveyLinkError('Survey link has no survey');
+    const survey = await getSurveyById(linkedSurvey.surveyId);
+    if (!survey || survey.status !== 'active') {
+      throw new SurveyLinkAlreadyUsedError('This survey is not accepting responses');
     }
 
-    await insertResponse(payload.bundleId, answers);
+    const questions = await getQuestionsForSurveys([linkedSurvey.surveyId]);
+    validateSurveyAnswers(answers, questions);
+    await insertResponse(payload.bundleId, submissionKey, answers);
+    log.info({ surveyId: linkedSurvey.surveyId, answerCount: answers.length }, 'anonymous survey response recorded');
+  }
+}
 
-    const questionIds = answers.map((a) => a.questionId);
-    const surveyIdByQuestion = await getSurveyIdsForQuestions(questionIds);
-    const touchedSurveyIds = [...new Set(surveyIdByQuestion.values())];
+export function validateSurveyAnswers(answers: SubmittedAnswer[], questions: SurveyQuestionRow[]): void {
+  const questionById = new Map(questions.map((question) => [question.id, question]));
+  const seen = new Set<number>();
 
-    await Promise.all(
-      touchedSurveyIds.map(async (surveyId) => {
-        try {
-          const derived = await getDerivedCounts(surveyId);
-          if (derived.targetCount > 0 && derived.responseCount >= derived.targetCount) {
-            await updateSurveyStatus(surveyId, 'completed', new Date());
-            await this.deps.surveyQueueManager.enqueueSurveyInsight(surveyId);
-          }
-        } catch (error) {
-          log.error({ error, surveyId }, 'failed to check/trigger survey completion after response submit');
-        }
-      }),
-    );
+  for (const answer of answers) {
+    if (!Number.isInteger(answer.questionId) || seen.has(answer.questionId)) {
+      throw new InvalidSurveyLinkError('Each survey question may be answered once');
+    }
+    seen.add(answer.questionId);
+
+    const question = questionById.get(answer.questionId);
+    if (!question) throw new InvalidSurveyLinkError('An answer references a question outside this survey');
+
+    if (question.question_type === 'scale') {
+      if (!Number.isInteger(answer.answerScale) || answer.answerScale! < 1 || answer.answerScale! > 5 || answer.answerText != null) {
+        throw new InvalidSurveyLinkError('Scale answers must be a whole number from 1 to 5');
+      }
+      continue;
+    }
+
+    const text = answer.answerText?.trim();
+    if (!text || text.length > 4000 || answer.answerScale != null) {
+      throw new InvalidSurveyLinkError('Text answers must contain between 1 and 4000 characters');
+    }
+    answer.answerText = text;
   }
 }

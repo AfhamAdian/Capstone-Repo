@@ -181,10 +181,10 @@ async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse
   }
 }
 
-async function insertCodeQualityMetrics(...args: any[]): Promise<void> {
+async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
   for (let i = 0; i < 3; i++) {
     try {
-      return await insertCodeQualityMetrics_impl(...args);
+      return await insertCodeQualityMetrics_impl(snapshotId, data);
     } catch (e: any) {
       if (i === 2 || !e.message?.includes('fetch failed')) throw e;
       await new Promise(r => setTimeout(r, 1000));

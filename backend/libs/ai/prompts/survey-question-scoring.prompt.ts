@@ -1,4 +1,5 @@
 import type { ScoreSurveyQuestionsInput } from '../types.js';
+import { formatSurveyHealthContext } from './survey-questions.prompt.js';
 
 /**
  * Asks the model to score each candidate question on the four quality
@@ -16,11 +17,13 @@ export function buildSurveyQuestionScoringPrompt(input: ScoreSurveyQuestionsInpu
 Project: ${input.projectName}
 Reason this survey is being sent: ${input.trigger}
 
+${formatSurveyHealthContext(input.healthContext)}
+
 Candidate questions (evaluate each in the context of the whole set):
 ${numbered}
 
 Score EVERY question from 0 to 100 on each dimension:
-- relevance: how well it fits this project and the reason above.
+- relevance: how well it fits this project, the reason, and its health context.
 - clarity: how unambiguous and easy to answer it is (a leading, double-barrelled, or vague question scores low).
 - importance: how actionable/valuable the answer would be to an engineering manager.
 - diversity: how distinct it is from the OTHER questions in this set (a near-duplicate scores low).

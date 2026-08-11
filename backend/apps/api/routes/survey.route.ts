@@ -3,7 +3,13 @@
  */
 
 import { Router } from 'express';
-import { listGlobalSurveys, getSurveyDetail, completeSurvey, updateSurveyQuestions } from '../controllers/survey.controller.js';
+import {
+  listGlobalSurveys,
+  getSurveyDetail,
+  completeSurvey,
+  updateSurveyQuestions,
+  changeSurveyLifecycle,
+} from '../controllers/survey.controller.js';
 import { asyncHandler } from '../utils/async-handler.js';
 
 export const surveyRouter = Router();
@@ -19,3 +25,6 @@ surveyRouter.patch('/:surveyId/questions', asyncHandler(updateSurveyQuestions));
 
 /** PATCH /api/v1/surveys/:surveyId/complete */
 surveyRouter.patch('/:surveyId/complete', asyncHandler(completeSurvey));
+
+/** PATCH /api/v1/surveys/:surveyId/lifecycle */
+surveyRouter.patch('/:surveyId/lifecycle', asyncHandler(changeSurveyLifecycle));

@@ -3,17 +3,10 @@
  */
 
 import type { Request, Response } from 'express';
-import { SurveyQueueManager } from '@libs/queue/index.js';
 import { SurveyResponseService, InvalidSurveyLinkError, SurveyLinkAlreadyUsedError } from '../services/survey-response.service.js';
 import type { SubmittedAnswer } from '../database/survey-response.js';
-import { env } from '../config/env.js';
 
-if (!env.redisUrl) {
-  throw new Error('REDIS_URL is required to enqueue survey jobs');
-}
-
-const surveyQueueManager = new SurveyQueueManager({ redisUrl: env.redisUrl });
-const surveyResponseService = new SurveyResponseService({ surveyQueueManager });
+const surveyResponseService = new SurveyResponseService();
 
 /** GET /api/v1/public/surveys/:token */
 export async function getSurveyByToken(request: Request, response: Response): Promise<void> {
@@ -48,14 +41,18 @@ export async function submitSurveyResponse(request: Request, response: Response)
     return;
   }
 
-  const { answers } = request.body as { answers?: SubmittedAnswer[] };
+  const { answers, submissionId } = request.body as { answers?: SubmittedAnswer[]; submissionId?: string };
   if (!Array.isArray(answers) || answers.length === 0) {
     response.status(400).json({ message: 'answers must be a non-empty array' });
     return;
   }
+  if (!submissionId) {
+    response.status(400).json({ message: 'submissionId is required' });
+    return;
+  }
 
   try {
-    await surveyResponseService.submitResponse(token, answers);
+    await surveyResponseService.submitResponse(token, submissionId, answers);
     response.status(200).json({ message: 'Thank you - your response has been recorded' });
   } catch (error) {
     if (error instanceof InvalidSurveyLinkError) {

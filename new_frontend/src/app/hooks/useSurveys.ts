@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { listGlobalSurveys, getSurveyDetail, type SurveyDetail, type SurveyStatus } from "../api-survey";
+import {
+  listGlobalSurveys,
+  getSurveyDetail,
+  type GeneratedSurveyQuestion,
+  type SurveyDetail,
+  type SurveyHealthContext,
+  type SurveyStatus,
+} from "../api-survey";
 
 /**
  * Mirrors App.tsx's local `Survey` interface structurally (App.tsx doesn't
@@ -18,6 +25,14 @@ export interface FrontendSurvey {
   themes: string[];
   aiInsight: string;
   rawResponses: { question: string; answers: string[] }[];
+  questions: GeneratedSurveyQuestion[];
+  reviewDeadlineAt: string | null;
+  scheduledSendAt: string | null;
+  closedAt: string | null;
+  questionsLocked: boolean;
+  healthContext: SurveyHealthContext | null;
+  analysisError: string | null;
+  delivery: SurveyDetail["delivery"];
 }
 
 interface ProjectIdentity {
@@ -60,9 +75,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
 
       const detailById = new Map<number, SurveyDetail>();
       await Promise.all(
-        relevant
-          .filter((s) => s.status === "completed")
-          .map(async (s) => {
+        relevant.map(async (s) => {
             try {
               detailById.set(s.id, await getSurveyDetail(s.id));
             } catch {
@@ -79,13 +92,21 @@ export function useSurveys(projects: ProjectIdentity[]) {
             projectId: backendToFrontend.get(String(s.projectId))!,
             status: s.status,
             trigger: s.trigger,
-            sentDate: s.sentDate,
+            sentDate: s.sentDate ?? s.scheduledSendAt ?? s.reviewDeadlineAt ?? "",
             responseCount: s.responseCount,
             targetCount: s.targetCount,
             scores: detail?.scores ?? undefined,
             themes: detail?.themes ?? [],
             aiInsight: detail?.aiInsight ?? "",
             rawResponses: detail?.rawResponses ?? [],
+            questions: detail?.questions ?? [],
+            reviewDeadlineAt: s.reviewDeadlineAt,
+            scheduledSendAt: s.scheduledSendAt,
+            closedAt: s.closedAt,
+            questionsLocked: s.questionsLocked,
+            healthContext: detail?.healthContext ?? null,
+            analysisError: detail?.analysisError ?? null,
+            delivery: detail?.delivery ?? null,
           };
         }),
       );

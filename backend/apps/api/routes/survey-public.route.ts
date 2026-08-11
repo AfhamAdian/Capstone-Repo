@@ -10,17 +10,22 @@ import { asyncHandler } from '../utils/async-handler.js';
 
 export const surveyPublicRouter = Router();
 
-const publicSurveyRateLimit = rateLimit({
+const formRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 30,
+  limit: 60,
   standardHeaders: true,
   legacyHeaders: false,
 });
 
-surveyPublicRouter.use(publicSurveyRateLimit);
+const submissionRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 /** GET /api/v1/public/surveys/:token */
-surveyPublicRouter.get('/:token', asyncHandler(getSurveyByToken));
+surveyPublicRouter.get('/:token', formRateLimit, asyncHandler(getSurveyByToken));
 
 /** POST /api/v1/public/surveys/:token/responses */
-surveyPublicRouter.post('/:token/responses', asyncHandler(submitSurveyResponse));
+surveyPublicRouter.post('/:token/responses', submissionRateLimit, asyncHandler(submitSurveyResponse));

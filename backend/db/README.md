@@ -14,17 +14,18 @@ db/
     002_projects.sql
     003_metrics.sql
     004_risk.sql
-    005_surveys.sql   <- merged result of all three files in migrations/
+    005_surveys.sql   <- compact current-state survey model
 
   migrations/        Individual, numbered, meant-to-be-run changes, applied in
                       order. Each one is idempotent (CREATE ... IF NOT EXISTS /
                       ADD COLUMN IF NOT EXISTS), so re-running an already-applied
                       migration is a safe no-op.
     002_survey.sql
-    003_survey_categories_and_link_mode.sql
-    004_survey_scheduling_and_editing.sql
+    003_survey_categories.sql
+    004_survey_scheduling.sql
+    005_survey_shared_lifecycle.sql
 
-  migration.sql      All of the above migrations concatenated into ONE runnable,
+  migration.sql      All of the above migrations consolidated into ONE runnable,
                       idempotent script - the fast path for bringing any
                       environment's database up to date in a single command.
 ```

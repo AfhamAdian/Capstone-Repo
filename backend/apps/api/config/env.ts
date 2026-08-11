@@ -41,43 +41,48 @@ const jiraToken = process.env.JIRA_TOKEN;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const geminiModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
-// Survey feature: link delivery - per-recipient channels
-const sendgridApiKey = process.env.SENDGRID_API_KEY;
-const sendgridFromEmail = process.env.SENDGRID_FROM_EMAIL;
+// Broadcast channels (one message per cycle, not per recipient): Slack channel,
+// Telegram group, Discord channel-wide webhook. A bot posts the shared link once
+// rather than DMing every recipient individually.
 const slackBotToken = process.env.SLACK_BOT_TOKEN;
-// Discord bot: DMs individual recipients with a known discord_user_id (see
-// User.discord_user_id), same tier as Slack/SendGrid. Falls back to nothing
-// for recipients without a Discord ID on file - no email-based lookup exists.
-const discordBotToken = process.env.DISCORD_BOT_TOKEN;
-// Broadcast channels (shared-link mode only): Telegram group + Discord channel-wide webhook
+const slackChannelId = process.env.SLACK_CHANNEL_ID;
 const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
 const telegramChatId = process.env.TELEGRAM_CHAT_ID;
 const discordWebhookUrl = process.env.DISCORD_WEBHOOK_URL;
 
-// Survey feature: link distribution model ('shared' one-link-per-cycle | 'single_use' per-developer)
-const surveyLinkMode = process.env.SURVEY_LINK_MODE === 'single_use' ? 'single_use' : 'shared';
+function boundedInteger(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+}
 
 // Survey feature: AI question quality gate (overall score 0-100) and max questions returned
-const surveyQuestionMinScore = Number(process.env.SURVEY_QUESTION_MIN_SCORE ?? 60);
-const surveyQuestionMaxCount = Number(process.env.SURVEY_QUESTION_MAX_COUNT ?? 6);
+const surveyQuestionMinScore = boundedInteger(process.env.SURVEY_QUESTION_MIN_SCORE, 60, 0, 100);
+const surveyQuestionMaxCount = boundedInteger(process.env.SURVEY_QUESTION_MAX_COUNT, 6, 1, 20);
 
-// Survey feature: two-round monthly auto-pulse scheduling. Round 1 opens on
-// ROUND1_START_DAY, round 2 on ROUND2_START_DAY; each project gets a randomized
-// send moment somewhere inside that round's WINDOW_DAYS-day window (so not every
-// project fires at once). Questions are generated LEAD_DAYS before that moment.
-const surveyRound1StartDay = Number(process.env.SURVEY_ROUND1_START_DAY ?? 1);
-const surveyRound2StartDay = Number(process.env.SURVEY_ROUND2_START_DAY ?? 15);
-const surveyRoundWindowDays = Number(process.env.SURVEY_ROUND_WINDOW_DAYS ?? 3);
-const surveyQuestionGenLeadDays = Number(process.env.SURVEY_QUESTION_GEN_LEAD_DAYS ?? 2);
+// One shared monthly pulse per project. Each project gets a randomized send
+// moment inside this window; questions are generated LEAD_DAYS beforehand.
+const surveyMonthlyStartDay = boundedInteger(process.env.SURVEY_MONTHLY_START_DAY, 1, 1, 28);
+const surveyMonthlyWindowDays = boundedInteger(process.env.SURVEY_MONTHLY_WINDOW_DAYS, 3, 1, 7);
+const surveyQuestionGenLeadDays = boundedInteger(process.env.SURVEY_QUESTION_GEN_LEAD_DAYS, 2, 1, 14);
 
-// Survey feature: minimum gap (in days) before the same developer can be auto-pulse surveyed again
-const surveyMinDaysBetweenSurveys = Number(process.env.SURVEY_MIN_DAYS_BETWEEN_SURVEYS ?? 15);
+// Survey feature: how many days a survey link stays open for responses before it expires.
+// Customizable, clamped to a sane 7-15 day range.
+const SURVEY_RESPONSE_DEADLINE_MIN_DAYS = 7;
+const SURVEY_RESPONSE_DEADLINE_MAX_DAYS = 15;
+const surveyResponseDeadlineDays = boundedInteger(
+  process.env.SURVEY_RESPONSE_DEADLINE_DAYS,
+  7,
+  SURVEY_RESPONSE_DEADLINE_MIN_DAYS,
+  SURVEY_RESPONSE_DEADLINE_MAX_DAYS,
+);
+const surveyMinAnonymousResponses = boundedInteger(process.env.SURVEY_MIN_ANONYMOUS_RESPONSES, 5, 3, 100);
 
 // Survey feature: encrypted link tokens (AES-256-GCM key, base64url-encoded, 32 bytes decoded)
 const surveyTokenEncKey = process.env.SURVEY_TOKEN_ENC_KEY;
 
 // Survey feature: manual "Send Survey Now" monthly cap per project
-const manualSurveyMonthlyLimit = Number(process.env.MANUAL_SURVEY_MONTHLY_LIMIT ?? 2);
+const manualSurveyMonthlyLimit = boundedInteger(process.env.MANUAL_SURVEY_MONTHLY_LIMIT, 2, 1, 20);
 
 export const env = {
   nodeEnv,
@@ -93,21 +98,18 @@ export const env = {
   jiraToken,
   geminiApiKey,
   geminiModel,
-  sendgridApiKey,
-  sendgridFromEmail,
   slackBotToken,
-  discordBotToken,
+  slackChannelId,
   telegramBotToken,
   telegramChatId,
   discordWebhookUrl,
-  surveyLinkMode,
   surveyQuestionMinScore,
   surveyQuestionMaxCount,
-  surveyRound1StartDay,
-  surveyRound2StartDay,
-  surveyRoundWindowDays,
+  surveyMonthlyStartDay,
+  surveyMonthlyWindowDays,
   surveyQuestionGenLeadDays,
-  surveyMinDaysBetweenSurveys,
+  surveyResponseDeadlineDays,
+  surveyMinAnonymousResponses,
   surveyTokenEncKey,
   manualSurveyMonthlyLimit,
 } as const;

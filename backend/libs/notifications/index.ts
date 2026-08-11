@@ -1,12 +1,10 @@
 /**
  * Notification module exports (survey link delivery)
- * Per-recipient channels: email + Slack DM + Discord DM. Broadcast channels: Telegram + Discord webhook.
+ * One shared link is broadcast per cycle to Slack, Telegram, and Discord.
  */
 
-export type { SurveyLinkNotification, SurveyLinkBroadcast } from './types.js';
-export { sendSurveyLinkEmail } from './email.client.js';
-export { sendSurveyLinkSlackMessage } from './slack.client.js';
+export type { SurveyLinkBroadcast } from './types.js';
+export { sendSurveyLinkSlackBroadcast } from './slack.client.js';
 export { sendSurveyLinkTelegram } from './telegram.client.js';
-export { sendSurveyLinkDiscord, sendSurveyLinkDiscordDM } from './discord.client.js';
-export { notifySurveyRecipient } from './notify-survey-recipient.js';
+export { sendSurveyLinkDiscord } from './discord.client.js';
 export { broadcastSurveyLink } from './broadcast-survey-link.js';

@@ -1,12 +1,9 @@
 import { assertSupabaseClient } from '../config/supabase.js';
 
-export type SurveyRound = 1 | 2;
-
 export interface SurveyScheduleRow {
   id: number;
   project_id: number;
   period_month: string;
-  round: SurveyRound;
   scheduled_send_at: string;
   survey_id: number | null;
   questions_generated_at: string | null;
@@ -15,7 +12,7 @@ export interface SurveyScheduleRow {
 }
 
 /**
- * Creates this project's schedule row for a round if it doesn't exist yet,
+ * Creates this project's monthly schedule if it doesn't exist yet,
  * assigning a randomized `scheduledSendAt` within the round's window (the
  * caller computes the window/offset - this just persists it idempotently so
  * concurrent job ticks don't double-assign). Returns the existing row if one
@@ -24,7 +21,6 @@ export interface SurveyScheduleRow {
 export async function getOrCreateSchedule(
   projectId: number,
   periodMonth: string,
-  round: SurveyRound,
   scheduledSendAt: Date,
 ): Promise<SurveyScheduleRow> {
   const client = assertSupabaseClient();
@@ -34,7 +30,6 @@ export async function getOrCreateSchedule(
     .select('*')
     .eq('project_id', projectId)
     .eq('period_month', periodMonth)
-    .eq('round', round)
     .maybeSingle();
   if (findError) {
     throw new Error(`Failed to look up survey schedule: ${findError.message}`);
@@ -43,7 +38,7 @@ export async function getOrCreateSchedule(
 
   const { data: created, error: insertError } = await client
     .from('surveyschedule')
-    .insert([{ project_id: projectId, period_month: periodMonth, round, scheduled_send_at: scheduledSendAt.toISOString() }])
+    .insert([{ project_id: projectId, period_month: periodMonth, scheduled_send_at: scheduledSendAt.toISOString() }])
     .select('*')
     .single();
   if (insertError || !created) {
@@ -53,7 +48,6 @@ export async function getOrCreateSchedule(
       .select('*')
       .eq('project_id', projectId)
       .eq('period_month', periodMonth)
-      .eq('round', round)
       .maybeSingle();
     if (refetchError || !refetched) {
       throw new Error(`Failed to create survey schedule: ${insertError?.message ?? 'unknown error'}`);
@@ -112,8 +106,7 @@ export async function listSchedulesForProject(projectId: number, periodMonth?: s
     .from('surveyschedule')
     .select('*')
     .eq('project_id', projectId)
-    .order('period_month', { ascending: false })
-    .order('round', { ascending: true });
+    .order('period_month', { ascending: false });
   if (periodMonth) query = query.eq('period_month', periodMonth);
 
   const { data, error } = await query;
