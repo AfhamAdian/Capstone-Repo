@@ -7,6 +7,7 @@ import type { Request, Response } from 'express';
 import { QueueManager } from '@libs/queue/index.js';
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { SyncService } from '../services/sync.service.js';
+import { getProjectCompanyId, isProjectMember } from '../database/project.js';
 import { env } from '../config/env.js';
 
 if (!env.redisUrl) {
@@ -40,6 +41,22 @@ export async function enqueueSyncJob(request: Request, response: Response): Prom
 
     if (!payload.sessionId) {
       response.status(400).json({ message: 'sessionId is required for SSE updates' });
+      return;
+    }
+
+    // Authorization: project must belong to the user's company; non-admins also need a projectmember row.
+    const auth = request.auth!;
+    const projectCompanyId = await getProjectCompanyId(payload.projectId);
+    if (projectCompanyId === null) {
+      response.status(404).json({ message: 'Project not found' });
+      return;
+    }
+    if (projectCompanyId !== auth.companyId) {
+      response.status(403).json({ message: 'You do not have access to this project' });
+      return;
+    }
+    if (auth.role !== 'admin' && !(await isProjectMember(auth.userId, payload.projectId))) {
+      response.status(403).json({ message: 'You are not assigned to this project' });
       return;
     }
 
