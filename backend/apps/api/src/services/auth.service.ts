@@ -79,6 +79,7 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
       userId: user.id,
       companyId: user.company_id,
       email: user.email,
+      role: user.role,
     });
 
     log.info({ userId: user.id, companyId }, 'registered new user and company');
@@ -110,6 +111,7 @@ export async function login(input: LoginInput): Promise<AuthResult> {
     userId: user.id,
     companyId: user.company_id,
     email: user.email,
+    role: user.role,
   });
 
   log.info({ userId: user.id }, 'user logged in');

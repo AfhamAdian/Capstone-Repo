@@ -7,6 +7,7 @@ export interface SessionData {
   userId: number;
   companyId: number;
   email: string;
+  role: 'admin' | 'member';
 }
 
 const SESSION_KEY_PREFIX = 'auth:session:';

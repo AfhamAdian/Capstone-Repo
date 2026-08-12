@@ -6,6 +6,47 @@ type ToolIntegration = {
   project?: Record<string, string | undefined>;
 };
 
+// Returns the project's owning company id, or null if the project does not exist.
+export async function getProjectCompanyId(projectId: string): Promise<number | null> {
+  const numericProjectId = Number(projectId);
+  if (!Number.isFinite(numericProjectId) || numericProjectId <= 0) {
+    return null;
+  }
+
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('project')
+    .select('company_id')
+    .eq('id', numericProjectId)
+    .maybeSingle();
+
+  if (error || !data) {
+    return null;
+  }
+  return (data.company_id as number) ?? null;
+}
+
+// True if the user is assigned to the project via a projectmember row.
+export async function isProjectMember(userId: number, projectId: string): Promise<boolean> {
+  const numericProjectId = Number(projectId);
+  if (!Number.isFinite(numericProjectId) || numericProjectId <= 0) {
+    return false;
+  }
+
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('projectmember')
+    .select('id')
+    .eq('project_id', numericProjectId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to check project membership: ${error.message}`);
+  }
+  return data !== null;
+}
+
 //TODO: Better design. Have make it work for multipurpose use.
 export async function getProjectIntegrationsForTools(
   projectId: string,
