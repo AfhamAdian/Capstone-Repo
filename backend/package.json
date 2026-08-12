@@ -28,7 +28,8 @@
     "helmet": "^8.0.0",
     "ioredis": "^5.10.1",
     "morgan": "^1.10.0",
-    "pino": "^10.3.1"
+    "pino": "^10.3.1",
+    "resend": "^6.19.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

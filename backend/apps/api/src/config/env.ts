@@ -40,6 +40,11 @@ const githubToken = process.env.GITHUB_TOKEN;
 const jiraBaseUrl = process.env.JIRA_BASE_URL;
 const jiraToken = process.env.JIRA_TOKEN;
 
+// Email (Resend) + frontend base URL used to build password-reset links
+const resendApiKey = process.env.RESEND_API_KEY;
+const resendFrom = process.env.RESEND_FROM ?? 'onboarding@resend.dev';
+const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+
 export const env = {
   nodeEnv,
   port,
@@ -53,6 +58,9 @@ export const env = {
   githubToken,
   jiraBaseUrl,
   jiraToken,
+  resendApiKey,
+  resendFrom,
+  frontendUrl,
 } as const;
 
 /**
