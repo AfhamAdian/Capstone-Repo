@@ -4,6 +4,9 @@ import { assertSupabaseClient } from '../config/supabase.js';
 
 const USER_TABLE = 'User';
 
+// admin = CTO/CEO (all company projects); member = everyone else (assigned projects only).
+export type UserRole = 'admin' | 'member';
+
 // Raw DB row, including the password hash.
 export interface UserRecord {
   id: number;
@@ -11,6 +14,7 @@ export interface UserRecord {
   name: string;
   email: string;
   password_hash: string;
+  role: UserRole;
   created_at: string | null;
 }
 
@@ -20,6 +24,7 @@ export interface PublicUser {
   companyId: number;
   name: string;
   email: string;
+  role: UserRole;
 }
 
 export function toPublicUser(user: UserRecord): PublicUser {
@@ -28,6 +33,7 @@ export function toPublicUser(user: UserRecord): PublicUser {
     companyId: user.company_id,
     name: user.name,
     email: user.email,
+    role: user.role,
   };
 }
 
@@ -91,6 +97,7 @@ export async function createUser(input: {
   name: string;
   email: string;
   passwordHash: string;
+  role: UserRole;
 }): Promise<UserRecord> {
   const client = assertSupabaseClient();
 
@@ -102,6 +109,7 @@ export async function createUser(input: {
         name: input.name.trim(),
         email: input.email.trim().toLowerCase(),
         password_hash: input.passwordHash,
+        role: input.role,
         created_at: new Date().toISOString(),
       },
     ])

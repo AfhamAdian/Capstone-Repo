@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS "public"."User" (
     "email" character varying(255) NOT NULL,
     "password_hash" "text" NOT NULL,
     "created_at" timestamp without time zone,
-    "discord_user_id" character varying
+    "discord_user_id" character varying,
+    "role" character varying(50) DEFAULT 'member'::character varying NOT NULL,
+    CONSTRAINT "User_role_check" CHECK ((("role")::"text" = ANY ((ARRAY['admin'::character varying, 'member'::character varying])::"text"[])))
 );
 
 

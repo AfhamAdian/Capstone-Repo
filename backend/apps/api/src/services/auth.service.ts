@@ -72,6 +72,7 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
       name: input.name,
       email: input.email,
       passwordHash,
+      role: 'admin',
     });
 
     const sessionId = await sessionStore.create({
