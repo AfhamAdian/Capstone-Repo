@@ -2,6 +2,7 @@
 
 import bcrypt from 'bcryptjs';
 import { sessionStore } from '@libs/auth/session-store.js';
+import { resetTokenStore } from '@libs/auth/reset-token-store.js';
 import {
   createCompany,
   createUser,
@@ -9,8 +10,11 @@ import {
   findUserByEmail,
   findUserById,
   toPublicUser,
+  updatePassword,
   type PublicUser,
 } from '../database/user.js';
+import { sendPasswordResetEmail } from './email.service.js';
+import { env } from '../config/env.js';
 import { logger } from '@libs/logger.js';
 
 const log = logger.child({ component: 'auth-service' });
@@ -126,4 +130,48 @@ export async function logout(sessionId: string): Promise<void> {
 export async function getCurrentUser(userId: number): Promise<PublicUser | null> {
   const user = await findUserById(userId);
   return user ? toPublicUser(user) : null;
+}
+
+// Always resolves (never reveals whether the email exists). Emails a reset link if the user exists.
+export async function forgotPassword(email: string): Promise<void> {
+  if (!email?.trim()) {
+    throw new AuthError('Email is required', 400);
+  }
+
+  const user = await findUserByEmail(email);
+  if (!user) {
+    log.info({ email }, 'password reset requested for unknown email (no-op)');
+    return;
+  }
+
+  const token = await resetTokenStore.create(user.id);
+  const resetUrl = `${env.frontendUrl}/reset-password?token=${token}`;
+
+  try {
+    await sendPasswordResetEmail(user.email, resetUrl);
+  } catch (error) {
+    // Never fail the request on email trouble — log and move on.
+    log.error({ err: error, userId: user.id }, 'failed to send password reset email');
+  }
+}
+
+// Consumes a reset token, sets the new password, and revokes all of the user's sessions.
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  if (!token) {
+    throw new AuthError('Reset token is required', 400);
+  }
+  if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
+    throw new AuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400);
+  }
+
+  const userId = await resetTokenStore.consume(token);
+  if (userId === null) {
+    throw new AuthError('Invalid or expired reset token', 400);
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+  await updatePassword(userId, passwordHash);
+  await sessionStore.destroyAllForUser(userId);
+
+  log.info({ userId }, 'password reset completed and sessions revoked');
 }

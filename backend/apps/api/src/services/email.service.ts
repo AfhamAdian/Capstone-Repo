@@ -1,20 +1,27 @@
-// Transactional email via Resend. No-ops (logs the link) when RESEND_API_KEY is unset, for local dev.
+// Transactional email via Gmail SMTP (Nodemailer). Logs the link when SMTP creds are unset, for local dev.
 
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 import { logger } from '@libs/logger.js';
 
 const log = logger.child({ component: 'email-service' });
-const resend = env.resendApiKey ? new Resend(env.resendApiKey) : null;
+
+const transporter =
+  env.smtpUser && env.smtpPass
+    ? nodemailer.createTransport({
+        service: 'gmail',
+        auth: { user: env.smtpUser, pass: env.smtpPass },
+      })
+    : null;
 
 export async function sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-  if (!resend) {
-    log.warn({ to, resetUrl }, 'RESEND_API_KEY not set — skipping send, logging reset link instead');
+  if (!transporter) {
+    log.warn({ to, resetUrl }, 'SMTP not configured — skipping send, logging reset link instead');
     return;
   }
 
-  const { error } = await resend.emails.send({
-    from: env.resendFrom,
+  await transporter.sendMail({
+    from: env.smtpFrom,
     to,
     subject: 'Reset your Pulse password',
     html: `
@@ -27,8 +34,5 @@ export async function sendPasswordResetEmail(to: string, resetUrl: string): Prom
     `,
   });
 
-  if (error) {
-    throw new Error(`Failed to send password reset email: ${error.message}`);
-  }
   log.info({ to }, 'password reset email sent');
 }

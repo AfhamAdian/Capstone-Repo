@@ -4,10 +4,12 @@ import type { CookieOptions, Request, Response } from 'express';
 import { sessionStore } from '@libs/auth/session-store.js';
 import {
   AuthError,
+  forgotPassword,
   getCurrentUser,
   login,
   logout,
   register,
+  resetPassword,
 } from '../services/auth.service.js';
 import { SESSION_COOKIE_NAME, readSessionId } from '../middlewares/auth.middleware.js';
 import { env } from '../config/env.js';
@@ -73,4 +75,26 @@ export async function meHandler(request: Request, response: Response): Promise<v
     return;
   }
   response.status(200).json({ user });
+}
+
+// POST /api/v1/auth/forgot-password — always 200 to avoid revealing whether the email is registered.
+export async function forgotPasswordHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { email } = request.body ?? {};
+    await forgotPassword(email);
+    response.status(200).json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}
+
+// POST /api/v1/auth/reset-password
+export async function resetPasswordHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { token, password } = request.body ?? {};
+    await resetPassword(token, password);
+    response.status(200).json({ message: 'Password reset successful. Please log in.' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
 }

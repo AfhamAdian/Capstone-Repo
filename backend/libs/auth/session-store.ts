@@ -31,16 +31,21 @@ class SessionStore {
     return `${SESSION_KEY_PREFIX}${sessionId}`;
   }
 
+  // Reverse index: userId -> set of their session ids, for bulk revocation.
+  private getUserSessionsKey(userId: number): string {
+    return `auth:user-sessions:${userId}`;
+  }
+
   // Create a session; returns the id to store in the cookie.
   async create(data: SessionData): Promise<string> {
     const sessionId = randomBytes(32).toString('hex');
+    const client = this.getClient();
 
-    await this.getClient().set(
-      this.getKey(sessionId),
-      JSON.stringify(data),
-      'EX',
-      SESSION_TTL_SECONDS,
-    );
+    await client.set(this.getKey(sessionId), JSON.stringify(data), 'EX', SESSION_TTL_SECONDS);
+
+    const userKey = this.getUserSessionsKey(data.userId);
+    await client.sadd(userKey, sessionId);
+    await client.expire(userKey, SESSION_TTL_SECONDS);
 
     return sessionId;
   }
@@ -67,6 +72,17 @@ class SessionStore {
   // Revoke a session (logout).
   async destroy(sessionId: string): Promise<void> {
     await this.getClient().del(this.getKey(sessionId));
+  }
+
+  // Revoke every session for a user (e.g. after a password reset).
+  async destroyAllForUser(userId: number): Promise<void> {
+    const client = this.getClient();
+    const userKey = this.getUserSessionsKey(userId);
+    const sessionIds = await client.smembers(userKey);
+    if (sessionIds.length > 0) {
+      await client.del(...sessionIds.map((id) => this.getKey(id)));
+    }
+    await client.del(userKey);
   }
 
   // Cookie max-age should match the session TTL.

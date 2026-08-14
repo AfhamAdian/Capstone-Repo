@@ -70,6 +70,19 @@ export async function findUserById(id: number): Promise<UserRecord | null> {
   return (data as UserRecord | null) ?? null;
 }
 
+export async function updatePassword(userId: number, passwordHash: string): Promise<void> {
+  const client = assertSupabaseClient();
+
+  const { error } = await client
+    .from(USER_TABLE)
+    .update({ password_hash: passwordHash })
+    .eq('id', userId);
+
+  if (error) {
+    throw new Error(`Failed to update password: ${error.message}`);
+  }
+}
+
 export async function createCompany(name: string): Promise<number> {
   const client = assertSupabaseClient();
 
