@@ -17,6 +17,8 @@ import { useWorkspace } from "./context/WorkspaceContext";
 import type { SyncRiskKey } from "./api";
 import { LoginView } from "./pages/LoginView";
 import { RegisterView } from "./pages/RegisterView";
+import { ForgotPasswordView } from "./pages/ForgotPasswordView";
+import { ResetPasswordView } from "./pages/ResetPasswordView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
@@ -69,7 +71,7 @@ interface Survey {
   rawResponses: { question: string; answers: string[] }[];
 }
 
-type Screen = "login" | "register" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+type Screen = "login" | "register" | "forgot-password" | "reset-password" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
@@ -2496,7 +2498,14 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 export default function App() {
   const {isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const [dark,setDark]=useState(false);
+  // Reset link is /reset-password?token=...; capture the token once on first load.
+  const [resetToken]=useState<string|null>(()=>
+    typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")
+      ? new URLSearchParams(window.location.search).get("token")
+      : null
+  );
   const [screen,setScreen]=useState<Screen>(()=>{
+    if(typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")) return "reset-password";
     if(!isAuthenticated) return "login";
     if(!activeWorkspace) return "workspaces";
     return "portfolio";
@@ -2504,9 +2513,10 @@ export default function App() {
   // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
   useEffect(()=>{
     if(isAuthLoading) return;
+    const authScreens:Screen[]=["login","register","forgot-password","reset-password"];
     if(isAuthenticated && (screen==="login" || screen==="register")){
       setScreen(activeWorkspace ? "portfolio" : "workspaces");
-    } else if(!isAuthenticated && screen!=="login" && screen!=="register"){
+    } else if(!isAuthenticated && !authScreens.includes(screen)){
       setScreen("login");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2566,11 +2576,24 @@ export default function App() {
   if(isAuthLoading || (isAuthenticated && (screen==="login" || screen==="register"))){
     return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
+  // Return to login and drop any /reset-password?token=... from the address bar.
+  const goToLogin=()=>{
+    if(typeof window!=="undefined" && window.location.pathname!=="/"){
+      window.history.replaceState(null,"","/");
+    }
+    setScreen("login");
+  };
   if(screen==="login"){
-    return <LoginView onSuccess={()=>setScreen("workspaces")} onNavigateToRegister={()=>setScreen("register")}/>;
+    return <LoginView onSuccess={()=>setScreen("workspaces")} onNavigateToRegister={()=>setScreen("register")} onNavigateToForgot={()=>setScreen("forgot-password")}/>;
   }
   if(screen==="register"){
     return <RegisterView onSuccess={()=>setScreen("workspaces")} onNavigateToLogin={()=>setScreen("login")}/>;
+  }
+  if(screen==="forgot-password"){
+    return <ForgotPasswordView onBackToLogin={()=>setScreen("login")}/>;
+  }
+  if(screen==="reset-password"){
+    return <ResetPasswordView token={resetToken} onSuccess={goToLogin} onBackToLogin={goToLogin}/>;
   }
   if(screen==="workspaces"){
     return (

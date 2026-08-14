@@ -50,6 +50,24 @@ export async function logout(): Promise<void> {
   await apiRequest("/auth/logout", { method: "POST" });
 }
 
+// Always resolves with a generic message (backend never reveals whether the email exists).
+export async function forgotPassword(email: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return message;
+}
+
+// Throws on invalid/expired token or weak password; the backend revokes all sessions on success.
+export async function resetPassword(token: string, password: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+  return message;
+}
+
 // Returns null when not authenticated (401), instead of throwing.
 export async function getMe(): Promise<AuthUser | null> {
   const response = await fetch(`${API_BASE_URL}/auth/me`, { credentials: "include" });

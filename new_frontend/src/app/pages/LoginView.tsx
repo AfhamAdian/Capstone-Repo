@@ -5,9 +5,11 @@ import { useWorkspace } from "../context/WorkspaceContext";
 export function LoginView({
   onSuccess,
   onNavigateToRegister,
+  onNavigateToForgot,
 }: {
   onSuccess: () => void;
   onNavigateToRegister?: () => void;
+  onNavigateToForgot?: () => void;
 }) {
   const { login } = useWorkspace();
   const [email, setEmail] = useState("");
@@ -120,6 +122,18 @@ export function LoginView({
             {isLoading ? "Signing In…" : "Sign In"}
           </button>
         </form>
+
+        {onNavigateToForgot && (
+          <p className="text-sm text-center mt-4">
+            <button
+              type="button"
+              onClick={onNavigateToForgot}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Forgot your password?
+            </button>
+          </p>
+        )}
 
         {onNavigateToRegister && (
           <p className="text-sm text-muted-foreground text-center mt-6">
