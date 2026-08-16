@@ -33,6 +33,51 @@ CREATE TYPE "public"."tool_category_type" AS ENUM (
 
 ALTER TYPE "public"."tool_category_type" OWNER TO "postgres";
 
+
+CREATE OR REPLACE FUNCTION "public"."submit_survey_response"("p_survey_id" integer, "p_submission_key" "uuid", "p_answers" "jsonb") RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  response_id integer;
+BEGIN
+  SELECT id INTO response_id
+  FROM public.survey_response
+  WHERE survey_id = p_survey_id
+    AND submission_key = p_submission_key;
+  IF response_id IS NOT NULL THEN
+    RETURN response_id;
+  END IF;
+
+  PERFORM 1
+  FROM public.survey
+  WHERE id = p_survey_id
+    AND status = 'active'
+    AND (expires_at IS NULL OR expires_at > now())
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'survey is not accepting responses';
+  END IF;
+
+  INSERT INTO public.survey_response (survey_id, submission_key, answers)
+  VALUES (p_survey_id, p_submission_key, COALESCE(p_answers, '[]'::jsonb))
+  ON CONFLICT (survey_id, submission_key) DO NOTHING
+  RETURNING id INTO response_id;
+
+  IF response_id IS NULL THEN
+    SELECT id INTO response_id
+    FROM public.survey_response
+    WHERE survey_id = p_survey_id
+      AND submission_key = p_submission_key;
+  END IF;
+
+  RETURN response_id;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."submit_survey_response"("p_survey_id" integer, "p_submission_key" "uuid", "p_answers" "jsonb") OWNER TO "postgres";
+
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
@@ -406,8 +451,7 @@ CREATE TABLE IF NOT EXISTS "public"."projectmember" (
     "project_id" integer NOT NULL,
     "user_id" integer NOT NULL,
     "role" character varying(50) NOT NULL,
-    "joined_at" timestamp without time zone,
-    "last_survey_sent_at" timestamp with time zone
+    "joined_at" timestamp without time zone
 );
 
 
@@ -464,7 +508,8 @@ CREATE TABLE IF NOT EXISTS "public"."projecttoolintegration" (
     "tool_name" character varying(100) NOT NULL,
     "external_project_id" character varying(255) NOT NULL,
     "last_synced_at" timestamp without time zone,
-    "is_active" boolean
+    "is_active" boolean,
+    "config" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL
 );
 
 
@@ -533,24 +578,36 @@ ALTER SEQUENCE "public"."survey_id_seq" OWNER TO "postgres";
 CREATE TABLE IF NOT EXISTS "public"."survey" (
     "id" integer DEFAULT "nextval"('"public"."survey_id_seq"'::"regclass") NOT NULL,
     "project_id" integer NOT NULL,
-    "status" character varying DEFAULT 'sent'::character varying NOT NULL,
+    "status" character varying DEFAULT 'draft'::character varying NOT NULL,
     "source" character varying NOT NULL,
     "trigger" character varying NOT NULL,
     "custom_guidance" "text",
     "target_count" integer DEFAULT 0 NOT NULL,
-    "response_count" integer DEFAULT 0 NOT NULL,
-    "sent_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "sent_at" timestamp with time zone,
     "completed_at" timestamp with time zone,
     "period_month" "date",
-    "first_sent_at" timestamp with time zone,
-    "questions_modified_at" timestamp with time zone
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "scheduled_send_at" timestamp with time zone,
+    "closed_at" timestamp with time zone,
+    "close_reason" character varying,
+    "analysis_error" "text",
+    "health_context" "jsonb",
+    "questions" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    "cycle_id" character varying,
+    "expires_at" timestamp with time zone,
+    "notified_at" timestamp with time zone,
+    "delivery" "jsonb" DEFAULT '{}'::"jsonb" NOT NULL,
+    "insight" "jsonb",
+    CONSTRAINT "survey_questions_array_check" CHECK (("jsonb_typeof"("questions") = 'array'::"text")),
+    CONSTRAINT "survey_source_check" CHECK ((("source")::"text" = ANY ((ARRAY['manual'::character varying, 'auto_pulse'::character varying])::"text"[]))),
+    CONSTRAINT "survey_status_check" CHECK ((("status")::"text" = ANY ((ARRAY['draft'::character varying, 'active'::character varying, 'paused'::character varying, 'closed'::character varying, 'completed'::character varying, 'cancelled'::character varying, 'failed'::character varying])::"text"[])))
 );
 
 
 ALTER TABLE "public"."survey" OWNER TO "postgres";
 
 
-CREATE SEQUENCE IF NOT EXISTS "public"."surveyanswer_id_seq"
+CREATE SEQUENCE IF NOT EXISTS "public"."survey_response_id_seq"
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -558,195 +615,20 @@ CREATE SEQUENCE IF NOT EXISTS "public"."surveyanswer_id_seq"
     CACHE 1;
 
 
-ALTER SEQUENCE "public"."surveyanswer_id_seq" OWNER TO "postgres";
+ALTER SEQUENCE "public"."survey_response_id_seq" OWNER TO "postgres";
 
 
-CREATE TABLE IF NOT EXISTS "public"."surveyanswer" (
-    "id" integer DEFAULT "nextval"('"public"."surveyanswer_id_seq"'::"regclass") NOT NULL,
-    "response_id" integer NOT NULL,
-    "question_id" integer NOT NULL,
-    "answer_text" "text",
-    "answer_scale" integer
-);
-
-
-ALTER TABLE "public"."surveyanswer" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveybundle_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveybundle_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveybundle" (
-    "id" integer DEFAULT "nextval"('"public"."surveybundle_id_seq"'::"regclass") NOT NULL,
-    "user_id" integer,
-    "cycle_id" character varying NOT NULL,
-    "status" character varying DEFAULT 'pending'::character varying NOT NULL,
-    "scheduled_send_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "notified_at" timestamp with time zone,
-    "expires_at" timestamp with time zone NOT NULL,
-    "used_at" timestamp with time zone,
-    "mode" character varying DEFAULT 'shared'::character varying NOT NULL
-);
-
-
-ALTER TABLE "public"."surveybundle" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveybundlesurvey_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveybundlesurvey_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveybundlesurvey" (
-    "id" integer DEFAULT "nextval"('"public"."surveybundlesurvey_id_seq"'::"regclass") NOT NULL,
-    "bundle_id" integer NOT NULL,
+CREATE TABLE IF NOT EXISTS "public"."survey_response" (
+    "id" integer DEFAULT "nextval"('"public"."survey_response_id_seq"'::"regclass") NOT NULL,
     "survey_id" integer NOT NULL,
-    "project_member_id" integer
+    "submission_key" "uuid" NOT NULL,
+    "submitted_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "answers" "jsonb" DEFAULT '[]'::"jsonb" NOT NULL,
+    CONSTRAINT "survey_response_answers_array_check" CHECK (("jsonb_typeof"("answers") = 'array'::"text"))
 );
 
 
-ALTER TABLE "public"."surveybundlesurvey" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveycategory_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveycategory_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveycategory" (
-    "id" integer DEFAULT "nextval"('"public"."surveycategory_id_seq"'::"regclass") NOT NULL,
-    "key" character varying NOT NULL,
-    "label" character varying NOT NULL,
-    "description" "text",
-    "rubric_category" character varying NOT NULL,
-    "is_builtin" boolean DEFAULT false NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
-);
-
-
-ALTER TABLE "public"."surveycategory" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveyinsight_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveyinsight_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveyinsight" (
-    "id" integer DEFAULT "nextval"('"public"."surveyinsight_id_seq"'::"regclass") NOT NULL,
-    "survey_id" integer NOT NULL,
-    "ai_insight" "text",
-    "themes" "text"[],
-    "delivery_score" numeric,
-    "code_quality_score" numeric,
-    "cicd_score" numeric,
-    "team_health_score" numeric,
-    "blockers_score" numeric,
-    "ai_model" character varying,
-    "generated_at" timestamp with time zone
-);
-
-
-ALTER TABLE "public"."surveyinsight" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveyquestion_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveyquestion_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveyquestion" (
-    "id" integer DEFAULT "nextval"('"public"."surveyquestion_id_seq"'::"regclass") NOT NULL,
-    "survey_id" integer NOT NULL,
-    "category" character varying NOT NULL,
-    "question_text" "text" NOT NULL,
-    "question_type" character varying NOT NULL,
-    "order_index" integer NOT NULL
-);
-
-
-ALTER TABLE "public"."surveyquestion" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveyresponse_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveyresponse_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveyresponse" (
-    "id" integer DEFAULT "nextval"('"public"."surveyresponse_id_seq"'::"regclass") NOT NULL,
-    "bundle_id" integer NOT NULL,
-    "submitted_at" timestamp with time zone DEFAULT "now"() NOT NULL
-);
-
-
-ALTER TABLE "public"."surveyresponse" OWNER TO "postgres";
-
-
-CREATE SEQUENCE IF NOT EXISTS "public"."surveyschedule_id_seq"
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER SEQUENCE "public"."surveyschedule_id_seq" OWNER TO "postgres";
-
-
-CREATE TABLE IF NOT EXISTS "public"."surveyschedule" (
-    "id" integer DEFAULT "nextval"('"public"."surveyschedule_id_seq"'::"regclass") NOT NULL,
-    "project_id" integer NOT NULL,
-    "period_month" "date" NOT NULL,
-    "round" smallint NOT NULL,
-    "scheduled_send_at" timestamp with time zone NOT NULL,
-    "survey_id" integer,
-    "questions_generated_at" timestamp with time zone,
-    "sent_at" timestamp with time zone,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
-);
-
-
-ALTER TABLE "public"."surveyschedule" OWNER TO "postgres";
+ALTER TABLE "public"."survey_response" OWNER TO "postgres";
 
 
 CREATE TABLE IF NOT EXISTS "public"."versioncontrolmetrics" (
@@ -945,6 +827,11 @@ ALTER TABLE ONLY "public"."projecttoolintegration"
 
 
 
+ALTER TABLE ONLY "public"."projecttoolintegration"
+    ADD CONSTRAINT "projecttoolintegration_project_tool_uniq" UNIQUE ("project_id", "tool_name");
+
+
+
 ALTER TABLE ONLY "public"."riskscore"
     ADD CONSTRAINT "riskscore_pkey" PRIMARY KEY ("id");
 
@@ -960,63 +847,13 @@ ALTER TABLE ONLY "public"."survey"
 
 
 
-ALTER TABLE ONLY "public"."surveyanswer"
-    ADD CONSTRAINT "surveyanswer_pkey" PRIMARY KEY ("id");
+ALTER TABLE ONLY "public"."survey_response"
+    ADD CONSTRAINT "survey_response_pkey" PRIMARY KEY ("id");
 
 
 
-ALTER TABLE ONLY "public"."surveybundle"
-    ADD CONSTRAINT "surveybundle_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundlesurvey"
-    ADD CONSTRAINT "surveybundlesurvey_bundle_survey_unique" UNIQUE ("bundle_id", "survey_id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundlesurvey"
-    ADD CONSTRAINT "surveybundlesurvey_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveycategory"
-    ADD CONSTRAINT "surveycategory_key_unique" UNIQUE ("key");
-
-
-
-ALTER TABLE ONLY "public"."surveycategory"
-    ADD CONSTRAINT "surveycategory_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyinsight"
-    ADD CONSTRAINT "surveyinsight_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyinsight"
-    ADD CONSTRAINT "surveyinsight_survey_id_key" UNIQUE ("survey_id");
-
-
-
-ALTER TABLE ONLY "public"."surveyquestion"
-    ADD CONSTRAINT "surveyquestion_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyresponse"
-    ADD CONSTRAINT "surveyresponse_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyschedule"
-    ADD CONSTRAINT "surveyschedule_pkey" PRIMARY KEY ("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyschedule"
-    ADD CONSTRAINT "surveyschedule_unique" UNIQUE ("project_id", "period_month", "round");
+ALTER TABLE ONLY "public"."survey_response"
+    ADD CONSTRAINT "survey_response_survey_submission_unique" UNIQUE ("survey_id", "submission_key");
 
 
 
@@ -1054,43 +891,27 @@ CREATE INDEX "projecthealthscore_project_id_idx" ON "public"."projecthealthscore
 
 
 
+CREATE UNIQUE INDEX "survey_auto_month_idx" ON "public"."survey" USING "btree" ("project_id", "period_month") WHERE (("source")::"text" = 'auto_pulse'::"text");
+
+
+
+CREATE UNIQUE INDEX "survey_auto_pulse_period_idx" ON "public"."survey" USING "btree" ("project_id", "period_month") WHERE ((("source")::"text" = 'auto_pulse'::"text") AND ("period_month" IS NOT NULL));
+
+
+
+CREATE UNIQUE INDEX "survey_cycle_id_idx" ON "public"."survey" USING "btree" ("cycle_id") WHERE ("cycle_id" IS NOT NULL);
+
+
+
 CREATE INDEX "survey_project_id_idx" ON "public"."survey" USING "btree" ("project_id");
 
 
 
+CREATE INDEX "survey_response_survey_id_idx" ON "public"."survey_response" USING "btree" ("survey_id");
+
+
+
 CREATE INDEX "survey_source_period_idx" ON "public"."survey" USING "btree" ("project_id", "source", "period_month");
-
-
-
-CREATE INDEX "surveyanswer_question_id_idx" ON "public"."surveyanswer" USING "btree" ("question_id");
-
-
-
-CREATE INDEX "surveybundle_cycle_id_idx" ON "public"."surveybundle" USING "btree" ("cycle_id");
-
-
-
-CREATE INDEX "surveybundle_user_id_idx" ON "public"."surveybundle" USING "btree" ("user_id");
-
-
-
-CREATE INDEX "surveybundlesurvey_bundle_id_idx" ON "public"."surveybundlesurvey" USING "btree" ("bundle_id");
-
-
-
-CREATE INDEX "surveybundlesurvey_survey_id_idx" ON "public"."surveybundlesurvey" USING "btree" ("survey_id");
-
-
-
-CREATE INDEX "surveyquestion_survey_id_idx" ON "public"."surveyquestion" USING "btree" ("survey_id");
-
-
-
-CREATE INDEX "surveyschedule_due_gen_idx" ON "public"."surveyschedule" USING "btree" ("scheduled_send_at") WHERE ("questions_generated_at" IS NULL);
-
-
-
-CREATE INDEX "surveyschedule_due_send_idx" ON "public"."surveyschedule" USING "btree" ("scheduled_send_at") WHERE ("sent_at" IS NULL);
 
 
 
@@ -1179,58 +1000,8 @@ ALTER TABLE ONLY "public"."survey"
 
 
 
-ALTER TABLE ONLY "public"."surveyanswer"
-    ADD CONSTRAINT "surveyanswer_question_id_fkey" FOREIGN KEY ("question_id") REFERENCES "public"."surveyquestion"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyanswer"
-    ADD CONSTRAINT "surveyanswer_response_id_fkey" FOREIGN KEY ("response_id") REFERENCES "public"."surveyresponse"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundle"
-    ADD CONSTRAINT "surveybundle_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."User"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundlesurvey"
-    ADD CONSTRAINT "surveybundlesurvey_bundle_id_fkey" FOREIGN KEY ("bundle_id") REFERENCES "public"."surveybundle"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundlesurvey"
-    ADD CONSTRAINT "surveybundlesurvey_project_member_id_fkey" FOREIGN KEY ("project_member_id") REFERENCES "public"."projectmember"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveybundlesurvey"
-    ADD CONSTRAINT "surveybundlesurvey_survey_id_fkey" FOREIGN KEY ("survey_id") REFERENCES "public"."survey"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyinsight"
-    ADD CONSTRAINT "surveyinsight_survey_id_fkey" FOREIGN KEY ("survey_id") REFERENCES "public"."survey"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyquestion"
-    ADD CONSTRAINT "surveyquestion_survey_id_fkey" FOREIGN KEY ("survey_id") REFERENCES "public"."survey"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyresponse"
-    ADD CONSTRAINT "surveyresponse_bundle_id_fkey" FOREIGN KEY ("bundle_id") REFERENCES "public"."surveybundle"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyschedule"
-    ADD CONSTRAINT "surveyschedule_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."project"("id");
-
-
-
-ALTER TABLE ONLY "public"."surveyschedule"
-    ADD CONSTRAINT "surveyschedule_survey_id_fkey" FOREIGN KEY ("survey_id") REFERENCES "public"."survey"("id");
+ALTER TABLE ONLY "public"."survey_response"
+    ADD CONSTRAINT "survey_response_survey_id_fkey" FOREIGN KEY ("survey_id") REFERENCES "public"."survey"("id");
 
 
 
@@ -1246,6 +1017,12 @@ GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
 GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."submit_survey_response"("p_survey_id" integer, "p_submission_key" "uuid", "p_answers" "jsonb") TO "anon";
+GRANT ALL ON FUNCTION "public"."submit_survey_response"("p_survey_id" integer, "p_submission_key" "uuid", "p_answers" "jsonb") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."submit_survey_response"("p_survey_id" integer, "p_submission_key" "uuid", "p_answers" "jsonb") TO "service_role";
 
 
 
@@ -1435,99 +1212,15 @@ GRANT ALL ON TABLE "public"."survey" TO "service_role";
 
 
 
-GRANT ALL ON SEQUENCE "public"."surveyanswer_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveyanswer_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveyanswer_id_seq" TO "service_role";
+GRANT ALL ON SEQUENCE "public"."survey_response_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."survey_response_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."survey_response_id_seq" TO "service_role";
 
 
 
-GRANT ALL ON TABLE "public"."surveyanswer" TO "anon";
-GRANT ALL ON TABLE "public"."surveyanswer" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveyanswer" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveybundle_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveybundle_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveybundle_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveybundle" TO "anon";
-GRANT ALL ON TABLE "public"."surveybundle" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveybundle" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveybundlesurvey_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveybundlesurvey_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveybundlesurvey_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveybundlesurvey" TO "anon";
-GRANT ALL ON TABLE "public"."surveybundlesurvey" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveybundlesurvey" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveycategory_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveycategory_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveycategory_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveycategory" TO "anon";
-GRANT ALL ON TABLE "public"."surveycategory" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveycategory" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveyinsight_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveyinsight_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveyinsight_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveyinsight" TO "anon";
-GRANT ALL ON TABLE "public"."surveyinsight" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveyinsight" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveyquestion_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveyquestion_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveyquestion_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveyquestion" TO "anon";
-GRANT ALL ON TABLE "public"."surveyquestion" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveyquestion" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveyresponse_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveyresponse_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveyresponse_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveyresponse" TO "anon";
-GRANT ALL ON TABLE "public"."surveyresponse" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveyresponse" TO "service_role";
-
-
-
-GRANT ALL ON SEQUENCE "public"."surveyschedule_id_seq" TO "anon";
-GRANT ALL ON SEQUENCE "public"."surveyschedule_id_seq" TO "authenticated";
-GRANT ALL ON SEQUENCE "public"."surveyschedule_id_seq" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."surveyschedule" TO "anon";
-GRANT ALL ON TABLE "public"."surveyschedule" TO "authenticated";
-GRANT ALL ON TABLE "public"."surveyschedule" TO "service_role";
+GRANT ALL ON TABLE "public"."survey_response" TO "anon";
+GRANT ALL ON TABLE "public"."survey_response" TO "authenticated";
+GRANT ALL ON TABLE "public"."survey_response" TO "service_role";
 
 
 
