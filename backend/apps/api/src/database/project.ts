@@ -115,9 +115,45 @@ export async function getProjectById(id: number): Promise<ProjectRecord | null> 
   return (data as ProjectRecord | null) ?? null;
 }
 
-// Compensating delete for the create flow (Supabase client has no transactions).
+// Projects in the company the user is assigned to (member view).
+export async function listProjectsForMember(
+  companyId: number,
+  userId: number,
+): Promise<ProjectRecord[]> {
+  const client = assertSupabaseClient();
+
+  const { data: memberRows, error: memberError } = await client
+    .from('projectmember')
+    .select('project_id')
+    .eq('user_id', userId);
+
+  if (memberError) {
+    throw new Error(`Failed to list member projects: ${memberError.message}`);
+  }
+
+  const ids = (memberRows ?? []).map((row) => row.project_id as number);
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await client
+    .from('project')
+    .select(PROJECT_COLUMNS)
+    .eq('company_id', companyId)
+    .in('id', ids)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list member projects: ${error.message}`);
+  }
+  return (data as ProjectRecord[]) ?? [];
+}
+
+// Compensating delete for the create flow (no transactions) — clears child rows first.
 export async function deleteProject(id: number): Promise<void> {
   const client = assertSupabaseClient();
+  await client.from('projecttoolintegration').delete().eq('project_id', id);
+  await client.from('projectmember').delete().eq('project_id', id);
   await client.from('project').delete().eq('id', id);
 }
 

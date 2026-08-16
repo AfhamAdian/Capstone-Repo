@@ -48,6 +48,26 @@ export async function addIntegration(input: {
   return data as ToolIntegrationRecord;
 }
 
+// Integrations for many projects at once (used to annotate a project list with its vcs).
+export async function listIntegrationsForProjects(
+  projectIds: number[],
+): Promise<ToolIntegrationRecord[]> {
+  if (projectIds.length === 0) {
+    return [];
+  }
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client
+    .from('projecttoolintegration')
+    .select(INTEGRATION_COLUMNS)
+    .in('project_id', projectIds);
+
+  if (error) {
+    throw new Error(`Failed to list tool integrations: ${error.message}`);
+  }
+  return (data as ToolIntegrationRecord[]) ?? [];
+}
+
 // All integrations for a project (used for the project detail view and sync).
 export async function listIntegrations(projectId: number): Promise<ToolIntegrationRecord[]> {
   const client = assertSupabaseClient();
