@@ -47,6 +47,80 @@ export async function isProjectMember(userId: number, projectId: string): Promis
   return data !== null;
 }
 
+// Core project row (tool credentials live in projecttoolintegration, not here).
+export interface ProjectRecord {
+  id: number;
+  company_id: number;
+  name: string;
+  description: string | null;
+  created_at: string | null;
+}
+
+const PROJECT_COLUMNS = 'id, company_id, name, description, created_at';
+
+export async function createProject(input: {
+  companyId: number;
+  name: string;
+  description?: string | null;
+}): Promise<ProjectRecord> {
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client
+    .from('project')
+    .insert([
+      {
+        company_id: input.companyId,
+        name: input.name.trim(),
+        description: input.description?.trim() || null,
+        created_at: new Date().toISOString(),
+      },
+    ])
+    .select(PROJECT_COLUMNS)
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Failed to create project: ${error?.message ?? 'no row returned'}`);
+  }
+  return data as ProjectRecord;
+}
+
+// Newest first; scoped to a single company.
+export async function listProjectsByCompany(companyId: number): Promise<ProjectRecord[]> {
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client
+    .from('project')
+    .select(PROJECT_COLUMNS)
+    .eq('company_id', companyId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    throw new Error(`Failed to list projects: ${error.message}`);
+  }
+  return (data as ProjectRecord[]) ?? [];
+}
+
+export async function getProjectById(id: number): Promise<ProjectRecord | null> {
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client
+    .from('project')
+    .select(PROJECT_COLUMNS)
+    .eq('id', id)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to get project: ${error.message}`);
+  }
+  return (data as ProjectRecord | null) ?? null;
+}
+
+// Compensating delete for the create flow (Supabase client has no transactions).
+export async function deleteProject(id: number): Promise<void> {
+  const client = assertSupabaseClient();
+  await client.from('project').delete().eq('id', id);
+}
+
 //TODO: Better design. Have make it work for multipurpose use.
 export async function getProjectIntegrationsForTools(
   projectId: string,
