@@ -69,10 +69,11 @@ export async function sendSurvey(request: Request, response: Response): Promise<
   const projectId = parseProjectId(request, response);
   if (projectId === null) return;
 
-  const { trigger, customGuidance, questions } = request.body as {
+  const { trigger, customGuidance, questions, targetCount } = request.body as {
     trigger?: string;
     customGuidance?: string;
     questions?: unknown;
+    targetCount?: number;
   };
   if (!trigger) {
     response.status(400).json({ message: 'trigger is required' });
@@ -89,6 +90,7 @@ export async function sendSurvey(request: Request, response: Response): Promise<
       trigger,
       customGuidance,
       questions: questions as GeneratedSurveyQuestion[],
+      targetCount: typeof targetCount === 'number' ? targetCount : undefined,
     });
     response.status(202).json({ message: 'Survey queued for sending', surveyId: result.surveyId });
   } catch (error) {
@@ -96,6 +98,28 @@ export async function sendSurvey(request: Request, response: Response): Promise<
       response.status(400).json({ message: error.message });
       return;
     }
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Failed to send survey';
+    const status = message.includes('Monthly manual survey limit') ? 429 : 500;
+    response.status(status).json({ message });
+  }
+}
+
+/** POST /api/v1/projects/:projectId/surveys/send-now */
+export async function sendSurveyNow(request: Request, response: Response): Promise<void> {
+  const projectId = parseProjectId(request, response);
+  if (projectId === null) return;
+
+  const { trigger, customGuidance } = (request.body ?? {}) as { trigger?: string; customGuidance?: string };
+
+  try {
+    await assertProjectAccess(projectId, request);
+    const result = await surveyService.sendNow(projectId, { trigger, customGuidance });
+    response.status(200).json(result);
+  } catch (error) {
     if (error instanceof ForbiddenError) {
       response.status(403).json({ message: error.message });
       return;
@@ -178,10 +202,7 @@ export async function getSurveyDetail(request: Request, response: Response): Pro
 
 /**
  * PATCH /api/v1/surveys/:surveyId/questions
- * Level-1 (CEO/CTO) question editing - no approval workflow, this endpoint IS
- * the review step. Works before or after the survey has been sent; blocked
- * once any response has been submitted. Editing after first send sets a
- * "modified" tag rather than being rejected.
+ * Level-1 (CEO/CTO) question editing. Blocked once the survey has been sent.
  */
 export async function updateSurveyQuestions(request: Request, response: Response): Promise<void> {
   const surveyId = Number(request.params.surveyId);
@@ -246,13 +267,96 @@ export async function completeSurvey(request: Request, response: Response): Prom
     await assertProjectAccess(survey.project_id, request);
 
     await surveyService.completeSurvey(surveyId);
-    response.status(200).json({ message: 'Survey marked complete, analysis queued' });
+    response.status(200).json({ message: 'Survey closed; scoring queued' });
   } catch (error) {
     if (error instanceof ForbiddenError) {
       response.status(403).json({ message: error.message });
       return;
     }
+    if (error instanceof SurveyNotFoundError) {
+      response.status(404).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyLockedError) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
     const message = error instanceof Error ? error.message : 'Failed to complete survey';
+    response.status(500).json({ message });
+  }
+}
+
+/** POST /api/v1/surveys/:surveyId/close — stop the public form and queue AI scoring */
+export async function closeSurveyForm(request: Request, response: Response): Promise<void> {
+  const surveyId = Number(request.params.surveyId);
+  if (!Number.isFinite(surveyId) || surveyId <= 0) {
+    response.status(400).json({ message: 'surveyId must be a positive number' });
+    return;
+  }
+
+  try {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) {
+      response.status(404).json({ message: `Survey ${surveyId} not found` });
+      return;
+    }
+    await assertProjectAccess(survey.project_id, request);
+    if (!['active', 'closed', 'failed'].includes(survey.status)) {
+      response.status(409).json({ message: 'Only an active, closed, or failed survey can be scored' });
+      return;
+    }
+
+    await surveyService.completeSurvey(surveyId);
+    response.status(200).json({ message: 'Survey form closed; scoring queued' });
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyNotFoundError) {
+      response.status(404).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyLockedError) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Failed to close survey form';
+    response.status(500).json({ message });
+  }
+}
+
+/** POST /api/v1/surveys/:surveyId/remind — anonymous channel reminder that the form is still open */
+export async function remindSurveyForm(request: Request, response: Response): Promise<void> {
+  const surveyId = Number(request.params.surveyId);
+  if (!Number.isFinite(surveyId) || surveyId <= 0) {
+    response.status(400).json({ message: 'surveyId must be a positive number' });
+    return;
+  }
+
+  try {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) {
+      response.status(404).json({ message: `Survey ${surveyId} not found` });
+      return;
+    }
+    await assertProjectAccess(survey.project_id, request);
+    const result = await surveyService.remindActiveSurvey(surveyId);
+    response.status(200).json({ message: 'Reminder posted to team channels', ...result });
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      response.status(403).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyNotFoundError) {
+      response.status(404).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyLockedError) {
+      response.status(409).json({ message: error.message });
+      return;
+    }
+    const message = error instanceof Error ? error.message : 'Failed to send reminder';
     response.status(500).json({ message });
   }
 }
@@ -309,8 +413,7 @@ export async function getSurveyQuota(request: Request, response: Response): Prom
 
 /**
  * GET /api/v1/projects/:projectId/surveys/schedule
- * Admin visibility into this month's staggered auto-pulse rounds for this
- * project - otherwise `surveyschedule` is invisible worker-internal state.
+ * Admin visibility into this month's auto-pulse for this project.
  */
 export async function getSurveySchedule(request: Request, response: Response): Promise<void> {
   const projectId = parseProjectId(request, response);

@@ -6,4 +6,5 @@ export interface SurveyLinkBroadcast {
   url: string;
   projectNames: string[];
   deadline: Date;
+  kind?: 'invite' | 'reminder';
 }

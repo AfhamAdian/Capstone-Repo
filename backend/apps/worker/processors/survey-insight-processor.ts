@@ -5,85 +5,21 @@
  */
 
 import type { SurveyInsightJobData } from '@libs/queue/index.js';
-import { createAiClient, type SurveyQuestionCategory } from '@libs/ai/index.js';
 import { logger } from '@libs/logger.js';
-import {
-  getSurveyById,
-  getRawResponsesForSurvey,
-  getDerivedCounts,
-  updateSurveyStatus,
-} from '../../api/database/survey.js';
-import { getProjectName } from '../../api/database/project.js';
-import { getRubricCategoryMap } from '../../api/database/survey-category.js';
-import { saveInsight } from '../../api/database/survey-insight.js';
-import { blendAndSaveProjectHealthScore } from '../../api/services/health-score-blend.service.js';
-import { env } from '../../api/config/env.js';
-
-const aiClient = createAiClient(env.geminiApiKey, env.geminiModel);
+import { analyzeAndSaveSurveyInsight } from '../../api/services/survey-insight.service.js';
+import { updateSurveyStatus } from '../../api/database/survey.js';
 
 export async function processSurveyInsightJob(jobData: SurveyInsightJobData): Promise<void> {
   const { surveyId } = jobData;
   const log = logger.child({ component: 'survey-insight-processor', surveyId });
 
-  const survey = await getSurveyById(surveyId);
-  if (!survey) {
-    log.error('survey not found, skipping insight generation');
-    return;
-  }
-
-  await updateSurveyStatus(surveyId, 'analyzing', { analysisError: null });
-
-  const [projectName, rawResponses, counts] = await Promise.all([
-    getProjectName(survey.project_id),
-    getRawResponsesForSurvey(surveyId),
-    getDerivedCounts(surveyId),
-  ]);
-
-  if (
-    counts.responseCount < env.surveyMinAnonymousResponses
-    || rawResponses.length === 0
-    || rawResponses.every((r) => r.answers.length === 0)
-  ) {
-    await updateSurveyStatus(surveyId, 'completed', {
-      completedAt: new Date(),
-      analysisError: `insufficient_responses:${counts.responseCount}/${env.surveyMinAnonymousResponses}`,
+  try {
+    await analyzeAndSaveSurveyInsight(surveyId);
+  } catch (error) {
+    await updateSurveyStatus(surveyId, 'failed', {
+      analysisError: error instanceof Error ? error.message : 'Survey analysis failed',
     });
-    log.warn(
-      { responseCount: counts.responseCount, minimum: env.surveyMinAnonymousResponses },
-      'insufficient anonymous responses; skipping AI analysis',
-    );
-    return;
+    log.error({ error }, 'survey insight generation failed');
+    throw error;
   }
-
-  // Questions may be tagged with a custom category (e.g. "onboarding") rather
-  // than one of the 5 built-in rubric buckets the AI scores against. Translate
-  // each question's category key to its rubric bucket before analysis so
-  // custom-category answers still count toward scoring instead of being
-  // silently dropped (see backend/apps/api/src/database/survey-category.ts).
-  const rubricByKey = await getRubricCategoryMap();
-  const analysis = await aiClient.analyzeSurveyResponses({
-    projectName,
-    healthContext: survey.health_context_snapshot ?? undefined,
-    rawResponses: rawResponses.map((r) => ({
-      question: r.question,
-      category: (rubricByKey.get(r.category) ?? (r.category as SurveyQuestionCategory)),
-      answers: r.answers,
-    })),
-  });
-
-  await saveInsight({
-    surveyId,
-    aiInsight: analysis.aiInsight,
-    themes: analysis.themes,
-    scores: analysis.scores,
-    aiModel: env.geminiApiKey ? env.geminiModel : 'stub',
-  });
-
-  await blendAndSaveProjectHealthScore(survey.project_id, surveyId);
-  await updateSurveyStatus(surveyId, 'completed', {
-    completedAt: new Date(),
-    analysisError: null,
-  });
-
-  log.info('survey insight generated and health score blended');
 }

@@ -1,13 +1,13 @@
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 
 /**
- * Self-describing encrypted survey link token. The bundle id, cycle id, and
+ * Self-describing encrypted survey link token. The survey id, cycle id, and
  * deadline are embedded in the ciphertext so both can be read (and the
  * deadline checked) without a DB round-trip, and AES-GCM's auth tag makes
  * tampering with any of those fields fail decode rather than silently succeed.
  */
 export interface SurveyTokenPayload {
-  bundleId: number;
+  surveyId: number;
   cycleId: string;
   deadline: string; // ISO 8601
 }
@@ -57,8 +57,8 @@ export function decodeToken(token: string): SurveyTokenPayload | null {
 
     const parsed = JSON.parse(plaintext.toString('utf8'));
     if (
-      !Number.isInteger(parsed?.bundleId) ||
-      parsed.bundleId <= 0 ||
+      !Number.isInteger(parsed?.surveyId) ||
+      parsed.surveyId <= 0 ||
       typeof parsed?.cycleId !== 'string' ||
       parsed.cycleId.length === 0 ||
       parsed.cycleId.length > 200 ||

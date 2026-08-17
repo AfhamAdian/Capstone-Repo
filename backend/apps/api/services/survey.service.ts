@@ -9,8 +9,7 @@ import type { SurveyQueueManager } from '@libs/queue/index.js';
 import { logger } from '@libs/logger.js';
 import {
   createSurvey,
-  addSurveyQuestions,
-  deleteQuestionsForSurvey,
+  replaceSurveyQuestions,
   getSurveyById,
   listSurveysForProject,
   listSurveysGlobal,
@@ -19,17 +18,17 @@ import {
   transitionUnsentSurveyStatus,
   getDerivedCounts,
   getRawResponsesForSurvey,
-  getQuestionsForSurveys,
+  listCategoryKeys,
+  listMonthlyPulse,
+  updateSurveyDelivery,
   type SurveyStatus,
   type SurveyRow,
 } from '../database/survey.js';
-import { getInsight } from '../database/survey-insight.js';
 import { getProjectName, getPendingSurvey as getPendingSurveyFromDb } from '../database/project.js';
 import { captureSurveyHealthContext } from '../database/project-health-score.js';
-import { listCategoryKeys } from '../database/survey-category.js';
-import { listSchedulesForProject } from '../database/survey-schedule.js';
-import { closeBundlesForSurvey, getLatestBundleForSurvey } from '../database/survey-bundle.js';
 import { generateQualityQuestions } from './survey-question-generation.service.js';
+import { publicSurveyUrlFor } from './survey-dispatch.service.js';
+import { broadcastSurveyLink } from '@libs/notifications/index.js';
 import { isLevel1 } from '../utils/requester-role.js';
 import { ForbiddenError } from '../utils/errors.js';
 import { periodMonthString } from '../utils/period-month.js';
@@ -45,7 +44,7 @@ async function validateSurveyQuestions(questions: GeneratedSurveyQuestion[]): Pr
   if (questions.length === 0 || questions.length > 20) {
     throw new SurveyValidationError('A survey must contain between 1 and 20 questions');
   }
-  const categoryKeys = new Set(await listCategoryKeys());
+  const categoryKeys = new Set(listCategoryKeys());
   const normalized = questions.map((question) => ({
     category: typeof question.category === 'string' ? question.category.trim() : '',
     questionText: typeof question.questionText === 'string' ? question.questionText.trim() : '',
@@ -83,6 +82,14 @@ interface SurveyServiceDependencies {
   surveyQueueManager: SurveyQueueManager;
 }
 
+export interface SurveyScores {
+  delivery: number;
+  codeQuality: number;
+  cicd: number;
+  teamHealth: number;
+  blockers: number;
+}
+
 export interface SurveyListItem {
   id: number;
   projectId: number;
@@ -98,15 +105,16 @@ export interface SurveyListItem {
   questionVersion: number;
   /** Questions are immutable once their shared link has been broadcast. */
   questionsLocked: boolean;
+  scores: SurveyScores | null;
+  themes: string[];
+  aiInsight: string | null;
+  publicUrl: string | null;
 }
 
 export interface SurveyDetail extends SurveyListItem {
-  scores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number } | null;
-  themes: string[];
-  aiInsight: string | null;
   rawResponses: { question: string; answers: string[] }[];
   questions: { id: number; category: string; questionText: string; questionType: 'text' | 'scale' }[];
-  healthContext: SurveyRow['health_context_snapshot'];
+  healthContext: SurveyRow['health_context'];
   analysisError: string | null;
   delivery: {
     notifiedAt: string | null;
@@ -121,7 +129,6 @@ export interface SurveyScheduleSummary {
   surveyId: number | null;
 }
 
-
 export class SurveyService {
   private readonly log = logger.child({ component: 'survey-service' });
 
@@ -135,9 +142,8 @@ export class SurveyService {
    */
   async generateQuestions(projectId: number, trigger: string, customGuidance?: string): Promise<ScoredSurveyQuestion[]> {
     const normalized = normalizeSurveyText(trigger, customGuidance);
-    const [projectName, categories, healthContext] = await Promise.all([
+    const [projectName, healthContext] = await Promise.all([
       getProjectName(projectId),
-      listCategoryKeys(),
       captureSurveyHealthContext(projectId),
     ]);
     return generateQualityQuestions({
@@ -145,15 +151,14 @@ export class SurveyService {
       projectName,
       trigger: normalized.trigger,
       customGuidance: normalized.customGuidance,
-      categories,
+      categories: listCategoryKeys(),
       healthContext,
     });
   }
 
   /**
-   * Level-1 (CEO/CTO) question editing during the review window.
-   * Questions freeze at dispatch. A respondent may have loaded the shared form
-   * before any answer exists, so response count is not a safe editing lock.
+   * Level-1 (CEO/CTO) question editing before dispatch.
+   * Questions freeze once the shared link has been broadcast.
    */
   async editQuestions(surveyId: number, questions: GeneratedSurveyQuestion[], requesterRole: string | null): Promise<void> {
     if (!isLevel1(requesterRole)) {
@@ -169,13 +174,12 @@ export class SurveyService {
     }
 
     const validatedQuestions = await validateSurveyQuestions(questions);
-    await deleteQuestionsForSurvey(surveyId);
-    await addSurveyQuestions(surveyId, validatedQuestions);
+    await replaceSurveyQuestions(surveyId, validatedQuestions);
   }
 
   async createAndSendSurvey(
     projectId: number,
-    input: { trigger: string; customGuidance?: string; questions: GeneratedSurveyQuestion[] },
+    input: { trigger: string; customGuidance?: string; questions: GeneratedSurveyQuestion[]; targetCount?: number },
   ): Promise<{ surveyId: number }> {
     const used = await countManualSurveysThisMonth(projectId);
     if (used >= env.manualSurveyMonthlyLimit) {
@@ -190,16 +194,48 @@ export class SurveyService {
       source: 'manual',
       trigger: normalized.trigger,
       customGuidance: normalized.customGuidance,
-      status: 'scheduled',
+      status: 'draft',
       scheduledSendAt: new Date(),
       healthContext,
+      questions: validatedQuestions.map((question, index) => ({ id: index + 1, ...question })),
+      targetCount: input.targetCount,
     });
-    await addSurveyQuestions(surveyId, validatedQuestions);
 
     await this.deps.surveyQueueManager.enqueueSurveySend(surveyId);
     this.log.info({ surveyId, projectId }, 'manual survey created and send job enqueued');
 
     return { surveyId };
+  }
+
+  /**
+   * Create a manual survey and enqueue background question generation + delivery.
+   */
+  async sendNow(
+    projectId: number,
+    input: { trigger?: string; customGuidance?: string; targetCount?: number } = {},
+  ): Promise<{ surveyId: number; queued: true }> {
+    const used = await countManualSurveysThisMonth(projectId);
+    if (used >= env.manualSurveyMonthlyLimit) {
+      throw new Error(`Monthly manual survey limit reached (${env.manualSurveyMonthlyLimit}/month)`);
+    }
+
+    const trigger = input.trigger?.trim() || 'Manual team pulse check';
+    const healthContext = await captureSurveyHealthContext(projectId);
+    const surveyId = await createSurvey({
+      projectId,
+      source: 'manual',
+      trigger,
+      customGuidance: input.customGuidance,
+      status: 'draft',
+      scheduledSendAt: new Date(),
+      healthContext,
+      questions: [],
+      targetCount: input.targetCount,
+    });
+
+    await this.deps.surveyQueueManager.enqueueSurveySend(surveyId);
+    this.log.info({ surveyId, projectId }, 'manual survey created; generate-and-send job enqueued');
+    return { surveyId, queued: true };
   }
 
   async listForProject(projectId: number): Promise<SurveyListItem[]> {
@@ -225,12 +261,7 @@ export class SurveyService {
     const survey = await getSurveyById(surveyId);
     if (!survey) return null;
 
-    const [projectName, insight, questions, bundle] = await Promise.all([
-      getProjectName(survey.project_id),
-      getInsight(surveyId),
-      getQuestionsForSurveys([surveyId]),
-      getLatestBundleForSurvey(surveyId),
-    ]);
+    const projectName = await getProjectName(survey.project_id);
     const listItem = await this.toListItem(survey, projectName);
     const rawResponses =
       listItem.responseCount >= env.surveyMinAnonymousResponses
@@ -239,43 +270,69 @@ export class SurveyService {
 
     return {
       ...listItem,
-      scores: insight
-        ? {
-            delivery: insight.delivery_score ?? 0,
-            codeQuality: insight.code_quality_score ?? 0,
-            cicd: insight.cicd_score ?? 0,
-            teamHealth: insight.team_health_score ?? 0,
-            blockers: insight.blockers_score ?? 0,
-          }
-        : null,
-      themes: insight?.themes ?? [],
-      aiInsight: insight?.ai_insight ?? null,
       rawResponses: rawResponses.map((r) => ({ question: r.question, answers: r.answers })),
-      questions: questions.map((question) => ({
-        id: question.id,
-        category: question.category,
-        questionText: question.question_text,
-        questionType: question.question_type,
-      })),
-      healthContext: survey.health_context_snapshot,
+      questions: survey.questions,
+      healthContext: survey.health_context,
       analysisError: survey.analysis_error,
-      delivery: bundle
+      delivery: survey.expires_at
         ? {
-            notifiedAt: bundle.notified_at,
-            expiresAt: bundle.expires_at,
-            channels: bundle.delivery_results,
+            notifiedAt: survey.notified_at,
+            expiresAt: survey.expires_at,
+            channels: survey.delivery ?? {},
           }
         : null,
     };
   }
 
   async completeSurvey(surveyId: number): Promise<void> {
-    await updateSurveyStatus(surveyId, 'closed', {
-      closedAt: new Date(),
-      closeReason: 'manual',
-    });
-    await closeBundlesForSurvey(surveyId);
+    const survey = await getSurveyById(surveyId);
+    if (!survey) throw new SurveyNotFoundError(`Survey ${surveyId} not found`);
+    if (survey.status === 'completed' && survey.insight) return;
+    if (survey.status === 'active') {
+      await updateSurveyStatus(surveyId, 'closed', {
+        closedAt: new Date(),
+        closeReason: 'manual',
+      });
+    }
     await this.deps.surveyQueueManager.enqueueSurveyInsight(surveyId);
+  }
+
+  async remindActiveSurvey(surveyId: number): Promise<{ remindedAt: string }> {
+    const survey = await getSurveyById(surveyId);
+    if (!survey) throw new SurveyNotFoundError(`Survey ${surveyId} not found`);
+    if (survey.status !== 'active') {
+      throw new SurveyLockedError('Only an active survey can be reminded');
+    }
+    const url = publicSurveyUrlFor(survey);
+    if (!url || !survey.expires_at) {
+      throw new SurveyLockedError('This survey does not have a public link yet');
+    }
+
+    const lastReminded = survey.delivery?.lastRemindedAt;
+    const cooldownMs = 15 * 60 * 1000;
+    if (lastReminded && Date.now() - new Date(lastReminded).getTime() < cooldownMs) {
+      throw new SurveyLockedError('A reminder was sent recently. Try again in a few minutes.');
+    }
+
+    const projectName = await getProjectName(survey.project_id);
+    const channels = await broadcastSurveyLink({
+      url,
+      projectNames: [projectName],
+      deadline: new Date(survey.expires_at),
+      kind: 'reminder',
+    });
+    if (!channels.slackSent && !channels.telegramSent && !channels.discordSent) {
+      throw new Error('Reminder was not delivered: configure at least one broadcast channel');
+    }
+
+    const remindedAt = new Date().toISOString();
+    await updateSurveyDelivery(surveyId, {
+      ...survey.delivery,
+      ...channels,
+      lastRemindedAt: remindedAt,
+    });
+    this.log.info({ surveyId, channels }, 'anonymous survey reminder broadcast');
+    return { remindedAt };
   }
 
   async changeLifecycle(surveyId: number, action: SurveyLifecycleAction): Promise<void> {
@@ -297,12 +354,7 @@ export class SurveyService {
         await this.deps.surveyQueueManager.enqueueSurveyInsight(surveyId);
         return;
       }
-      const retried = await transitionUnsentSurveyStatus(
-        surveyId,
-        ['failed'],
-        survey.source === 'manual' ? 'scheduled' : 'in_review',
-        null,
-      );
+      const retried = await transitionUnsentSurveyStatus(surveyId, ['failed'], 'draft', null);
       if (!retried) throw new SurveyLockedError('Survey state changed before retry');
       if (survey.source === 'manual') await this.deps.surveyQueueManager.enqueueSurveySend(surveyId);
       return;
@@ -313,17 +365,17 @@ export class SurveyService {
     }
 
     if (action === 'pause') {
-      if (!['draft', 'in_review', 'scheduled'].includes(survey.status)) {
+      if (survey.status !== 'draft') {
         throw new SurveyLockedError(`Survey cannot be paused from ${survey.status}`);
       }
-      const paused = await transitionUnsentSurveyStatus(surveyId, ['draft', 'in_review', 'scheduled'], 'paused');
+      const paused = await transitionUnsentSurveyStatus(surveyId, ['draft'], 'paused');
       if (!paused) throw new SurveyLockedError('Survey state changed before it could be paused');
       return;
     }
 
     if (action === 'resume') {
       if (survey.status !== 'paused') throw new SurveyLockedError('Only a paused survey can be resumed');
-      const resumed = await transitionUnsentSurveyStatus(surveyId, ['paused'], 'in_review');
+      const resumed = await transitionUnsentSurveyStatus(surveyId, ['paused'], 'draft');
       if (!resumed) throw new SurveyLockedError('Survey state changed before it could be resumed');
       return;
     }
@@ -331,7 +383,7 @@ export class SurveyService {
     if (survey.status === 'cancelled') return;
     const cancelled = await transitionUnsentSurveyStatus(
       surveyId,
-      ['draft', 'in_review', 'scheduled', 'paused', 'failed'],
+      ['draft', 'paused', 'failed'],
       'cancelled',
     );
     if (!cancelled) throw new SurveyLockedError('Survey state changed before it could be cancelled');
@@ -348,23 +400,22 @@ export class SurveyService {
   }
 
   /**
-   * Admin-facing view into the current month's auto-pulse rounds for a
-   * project - the `surveyschedule` rows are otherwise an internal worker
-   * concern, invisible to the UI. Lets the frontend show e.g. "next pulse
-   * survey: Aug 3" instead of the staggered rollout being a black box.
+   * Admin-facing view into the current month's auto-pulse for a project.
    */
   async getSchedule(projectId: number): Promise<SurveyScheduleSummary[]> {
     const periodMonth = periodMonthString(new Date());
-    const rows = await listSchedulesForProject(projectId, periodMonth);
-    return rows.map((row) => ({
-      scheduledSendAt: row.scheduled_send_at,
-      status: row.sent_at ? 'sent' : row.questions_generated_at ? 'questions_ready' : 'pending',
-      surveyId: row.survey_id,
-    }));
+    const pulse = await listMonthlyPulse(projectId, periodMonth);
+    if (!pulse || !pulse.scheduled_send_at) return [];
+    return [{
+      scheduledSendAt: pulse.scheduled_send_at,
+      status: pulse.sent_at ? 'sent' : pulse.questions.length > 0 ? 'questions_ready' : 'pending',
+      surveyId: pulse.id,
+    }];
   }
 
   private async toListItem(survey: SurveyRow, projectName: string): Promise<SurveyListItem> {
     const derived = await getDerivedCounts(survey.id);
+    const insight = survey.insight;
     return {
       id: survey.id,
       projectId: survey.project_id,
@@ -374,11 +425,31 @@ export class SurveyService {
       sentDate: survey.sent_at,
       responseCount: derived.responseCount,
       targetCount: derived.targetCount || survey.target_count,
-      reviewDeadlineAt: survey.review_deadline_at,
+      reviewDeadlineAt: survey.scheduled_send_at,
       scheduledSendAt: survey.scheduled_send_at,
       closedAt: survey.closed_at,
-      questionVersion: survey.question_version,
+      questionVersion: 1,
       questionsLocked: survey.sent_at !== null,
+      scores: insight?.scores
+        ? {
+            delivery: insight.scores.delivery ?? 0,
+            codeQuality: insight.scores.codeQuality ?? 0,
+            cicd: insight.scores.cicd ?? 0,
+            teamHealth: insight.scores.teamHealth ?? 0,
+            blockers: insight.scores.blockers ?? 0,
+          }
+        : null,
+      themes: insight?.themes ?? [],
+      aiInsight: insight?.aiInsight ?? null,
+      publicUrl: survey.status === 'active' ? safePublicSurveyUrl(survey) : null,
     };
+  }
+}
+
+function safePublicSurveyUrl(survey: SurveyRow): string | null {
+  try {
+    return publicSurveyUrlFor(survey);
+  } catch {
+    return null;
   }
 }

@@ -21,9 +21,10 @@ A shared channel cannot enforce a private 50/50 recipient cohort. Automatic
 distribution therefore schedules one monthly project pulse instead of
 pretending that a channel-wide post targets selected individuals.
 
-Responses are anonymous by construction. `surveybundle` has no user or
-project-member relationship, and `surveyresponse` stores only the shared link,
-an opaque client retry key, and submission time.
+Responses are anonymous by construction. The survey row holds the shared link
+fields (`cycle_id`, `expires_at`, `notified_at`, `delivery`) with no user or
+project-member relationship. `survey_response` stores only the survey id, an
+opaque client retry key, submission time, and answers JSON.
 
 ## 2. Runtime components
 
@@ -37,8 +38,9 @@ The existing folder structure is preserved:
 - `libs/security/` encrypts and decrypts survey-link tokens.
 - `libs/queue/` owns deterministic BullMQ job creation.
 - `db/migrations/` contains numbered, executable changes.
+- `db/migrations/007_survey_compact.sql` is the compact two-table cutover.
 - `db/schema/005_surveys.sql` is the compact current-state survey schema.
-- `db/migration.sql` is the consolidated idempotent migration.
+- `db/migration.sql` is the frozen 002–006 consolidation; do not edit it.
 - `new_frontend/src/app/` contains the admin and respondent experiences.
 
 High-level flow:
@@ -58,53 +60,43 @@ High-level flow:
 
 The core relationship is intentionally linear:
 
-`project -> survey -> surveyquestion`
+`project -> survey -> survey_response`
 
-`survey -> surveybundle -> surveyresponse -> surveyanswer`
-
-`survey -> surveyinsight`
-
-`project -> projecthealthscore`
-
-`project -> surveyschedule`
+`survey -> projecthealthscore` (optional pointer; health history, not survey plumbing)
 
 Core tables:
 
-- `survey`: lifecycle, trigger, audience target, immutable health snapshot,
-  review/send/close timestamps, and analysis state.
-- `surveyquestion`: ordered text or 1–5 scale questions.
-- `surveycategory`: built-in and admin-defined category keys mapped to the five
-  canonical score buckets.
-- `surveybundle`: one shared encrypted-link record, expiry, state, and compact
-  per-channel delivery result JSON.
-- `surveyresponse`: anonymous submission metadata and client-generated UUID
-  used only to make retries idempotent.
-- `surveyanswer`: one validated answer per response/question.
-- `surveyinsight`: validated Gemini scores, themes, narrative, model, and
-  generation timestamp.
+- `survey`: one pulse. Lifecycle, trigger, questions JSON, anonymous link
+  fields, schedule (`period_month`, `scheduled_send_at`), delivery JSON,
+  health-context snapshot, and AI insight JSON.
+- `survey_response`: one anonymous submission. `submission_key` UUID retry
+  key and `answers` JSON `[{ questionId, answerText?, answerScale? }]`.
 - `projecthealthscore`: health history, including the metrics snapshot and
   survey that contributed to a blended row.
-- `surveyschedule`: one randomized monthly send time per project.
+
+Questions live on the survey row as
+`[{ id, category, questionText, questionType }]`. Category keys are the five
+rubric buckets (`delivery`, `codeQuality`, `cicd`, `teamHealth`, `blockers`),
+enforced in application code. There is no category table or HTTP API.
+
+Dropped by `007_survey_compact.sql`: `surveyquestion`, `surveyanswer`,
+`surveybundle`, `surveyschedule`, `surveyinsight`, `surveycategory`.
 
 There is no survey-owned user table, recipient table, delivery-attempt table,
-bundle-to-member join, bundle mode, or persisted raw token.
+or persisted raw token.
 
-The migration function `submit_survey_response` inserts the response and all
-answers in one PostgreSQL transaction. Database constraints enforce unique
-question answers, answer shape, and valid scale range.
+The function `submit_survey_response(survey_id, submission_key, answers)`
+inserts one `survey_response` row. Unique `(survey_id, submission_key)` makes
+retries idempotent.
 
 ## 4. Lifecycle
 
 Supported survey states:
 
-- `draft`: row created; questions may still be generated.
-- `in_review`: questions are ready and the review deadline is visible.
-- `scheduled`: manual survey queued for immediate background delivery.
-- `sending`: worker claimed the survey; pre-send lifecycle actions are locked.
-- `active`: at least one broadcast channel accepted the link.
+- `draft`: row created; questions may still be generated or edited.
+- `active`: the anonymous link has been broadcast and is accepting responses.
 - `paused`: automatic send is suspended before dispatch.
 - `closed`: response collection ended; insight work is queued.
-- `analyzing`: Gemini analysis is in progress.
 - `completed`: analysis finished or was intentionally skipped because the
   privacy threshold was not met.
 - `cancelled`: stopped before dispatch.
@@ -123,31 +115,38 @@ eligible; a paused survey remains pending until resumed.
 The hourly `survey-distribution` job:
 
 1. Looks at the current and next month.
-2. Creates one schedule per project when the configured review lead time
-   begins, including round-one dates that fall near the previous month end.
-3. Chooses and persists one randomized send moment inside
-   `SURVEY_MONTHLY_START_DAY` plus `SURVEY_MONTHLY_WINDOW_DAYS`.
-4. Generates and persists questions at
+2. Creates one auto-pulse `survey` row per project when the configured review
+   lead time begins, including send dates that fall near the previous month end.
+3. Chooses and persists one randomized send moment on
+   `survey.scheduled_send_at` inside `SURVEY_MONTHLY_START_DAY` plus
+   `SURVEY_MONTHLY_WINDOW_DAYS`.
+4. Generates and persists questions JSON at
    `SURVEY_QUESTION_GEN_LEAD_DAYS` before the send moment.
-5. Marks the survey `in_review`.
+5. Leaves the survey in `draft` until send.
 6. Broadcasts at the persisted moment unless paused or cancelled.
 7. Expires due links, closes active surveys, and queues insight jobs.
 
-The persisted schedule, unique project/month constraint, unique link cycle,
-and deterministic queue IDs make repeated hourly ticks safe.
+The unique project/month index for `auto_pulse`, unique `cycle_id`, and
+deterministic queue IDs make repeated hourly ticks safe.
 
 ## 6. Manual surveys
 
 The manager flow:
 
 1. `POST /projects/:projectId/surveys/generate-questions`
-2. Review and edit Gemini-scored questions in the existing modal.
-3. `POST /projects/:projectId/surveys`
-4. Persist the survey, questions, and health-context snapshot.
-5. Enqueue a deterministic send job.
-6. The worker creates or reuses `manual-<surveyId>`, broadcasts once, stores
-   channel results, sets the project-member count as the audience target, and
-   marks the survey active.
+2. Review, edit, and preview Gemini-scored questions in the send modal.
+3. `POST /projects/:projectId/surveys` with the reviewed questions (queues a
+   background send job). Optional `targetCount` comes from Settings team size.
+4. Persist the survey, questions JSON, health-context snapshot, and target count.
+5. The send worker broadcasts one anonymous link, stores channel results on the
+   survey row, keeps the provided target count when set, and marks the survey
+   active. Active list items include a reconstructed `publicUrl`.
+6. `POST /api/v1/surveys/:surveyId/remind` re-broadcasts the same anonymous
+   link (`kind: reminder`) with a 15-minute cooldown. Identities are never
+   collected.
+
+`POST /projects/:projectId/surveys/send-now` still exists as a skip-review
+path (generate + send in one queued job) and is not used by the current UI.
 
 Manual creation is limited per project/calendar month by
 `MANUAL_SURVEY_MONTHLY_LIMIT`.
@@ -205,7 +204,7 @@ Admins may still edit wording and switch text/scale type during review.
 
 `survey-token.ts` uses AES-256-GCM. The encrypted payload contains:
 
-- bundle id;
+- survey id;
 - cycle id;
 - response deadline.
 
@@ -213,14 +212,14 @@ The token is not stored. Public requests:
 
 1. decrypt and authenticate the token;
 2. reject payload expiry before database work;
-3. verify bundle id, cycle id, pending state, and database expiry;
-4. verify the linked survey is active;
+3. verify survey id, cycle id, and database expiry;
+4. verify the survey is active;
 5. verify every question belongs to that survey;
 6. reject duplicate question ids;
 7. enforce text length `1..4000`;
 8. enforce integer scale values `1..5`;
 9. require exactly one text or scale value;
-10. commit response and answers atomically.
+10. insert one `survey_response` row atomically.
 
 The frontend sends one random UUID per response attempt. Repeating the same
 request returns the original response id and does not duplicate answers. This
@@ -236,20 +235,20 @@ Shared links are reusable until closed. A survey closes:
 - automatically when `expires_at` passes; or
 - when a manager closes it.
 
-Closing updates both survey and link state before queuing analysis.
+Closing updates the survey row and enqueues a background Gemini scoring job
+(stored on `survey.insight`, then blended into `projecthealthscore`). The
+same worker generates questions and delivers a "Send Survey Now" job.
 
 `SURVEY_MIN_ANONYMOUS_RESPONSES` defaults to 5 and is clamped to at least 3.
-Below the threshold:
+With at least one response, Gemini produces five category scores, themes,
+and a narrative. Below the privacy threshold:
 
-- Gemini analysis is skipped;
 - raw answers are suppressed from admin API responses;
-- the survey completes with an `insufficient_responses:<count>/<minimum>`
-  reason;
-- metrics health remains available and unchanged.
+- the survey completes with `raw_responses_hidden:<count>/<minimum>`;
+- scores and the AI summary are still shown.
 
-At or above the threshold, answers are grouped by question, Gemini produces
-five category scores, themes, and narrative, and the validated result is
-stored once per survey.
+With zero responses, analysis is skipped and the survey completes with
+`insufficient_responses:<count>/<minimum>`. Metrics health remains available.
 
 ## 11. Health-score blending and provenance
 
@@ -279,7 +278,7 @@ treated as new response evidence.
 
 Each client is best-effort, but the send job succeeds only when at least one
 channel accepted the broadcast. Otherwise the job throws and BullMQ retries.
-Successful channel booleans and `notified_at` are persisted on the bundle so a
+Successful channel booleans and `notified_at` are persisted on the survey so a
 retry does not broadcast the same link again.
 
 Provider delivery is still at-least-once at the narrow crash boundary between a
@@ -298,6 +297,7 @@ Project/admin endpoints:
 
 - `POST /api/v1/projects/:projectId/surveys/generate-questions`
 - `POST /api/v1/projects/:projectId/surveys`
+- `POST /api/v1/projects/:projectId/surveys/send-now`
 - `GET /api/v1/projects/:projectId/surveys`
 - `GET /api/v1/projects/:projectId/surveys/quota`
 - `GET /api/v1/projects/:projectId/surveys/schedule`
@@ -306,8 +306,9 @@ Project/admin endpoints:
 - `GET /api/v1/surveys/:surveyId`
 - `PATCH /api/v1/surveys/:surveyId/questions`
 - `PATCH /api/v1/surveys/:surveyId/lifecycle`
+- `POST /api/v1/surveys/:surveyId/close` (stop an active public form and queue analysis)
+- `POST /api/v1/surveys/:surveyId/remind` (anonymous channel reminder; same shared link)
 - `PATCH /api/v1/surveys/:surveyId/complete` (compatibility close endpoint)
-- survey-category CRUD under `/api/v1/survey-categories`
 
 Public endpoints:
 
@@ -325,12 +326,17 @@ The existing frontend structure is retained.
 
 Admin experience:
 
-- manual Gemini generation with visible quality scores;
-- editable question wording and type;
+- generate → edit → preview before send (reviewed questions are queued);
+- Settings question guidance is passed into generation; Settings team size
+  is the send `targetCount`;
+- copy public survey URL and anonymous Remind on Active history rows;
+- live poll while Draft/Active/Closed-without-scores so response counts update;
+- score-over-time chart for the last scored pulses;
 - scheduled-survey review card;
 - captured health-context summary;
 - pause, resume, cancel, and save actions;
-- expanded lifecycle statuses;
+- expanded lifecycle statuses (`draft`, `active`, `paused`, `closed`,
+  `completed`, `cancelled`, `failed`);
 - safe response-rate math when target count is zero;
 - insights, themes, category scores, delivery state, and privacy suppression.
 
@@ -375,15 +381,25 @@ Behavior controls:
 
 ## 16. Migration and operations
 
-No automated migration runner exists. Apply:
+No automated migration runner exists. Numbered files `002`–`006` have already
+been applied (or written) against live Supabase and must not be edited.
+
+On a database that already has the older survey tables, apply only:
+
+```bash
+psql "$DATABASE_URL" -f db/migrations/007_survey_compact.sql
+```
+
+`007` adds the compact columns, copies leftover questions/insights/links into
+the survey row, replaces `submit_survey_response`, and drops the unused
+tables. It is safe to rerun.
+
+On a brand-new environment that still needs 002–006:
 
 ```bash
 psql "$DATABASE_URL" -f db/migration.sql
+psql "$DATABASE_URL" -f db/migrations/007_survey_compact.sql
 ```
-
-or run numbered files in order. `005_survey_shared_lifecycle.sql` also removes
-legacy personal-delivery columns/tables if an older survey migration was
-applied. The migration is safe to rerun.
 
 Run API and worker as separate processes. Redis and the worker are required for
 delivery, deadline closing, and insights.
@@ -391,11 +407,11 @@ delivery, deadline closing, and insights.
 Operational checks:
 
 - worker logs show the hourly distribution job;
-- `surveybundle.delivery_results` shows channel acceptance;
+- `survey.delivery` shows channel acceptance;
 - `survey.sent_at` is the actual first successful broadcast time;
 - `survey.closed_at` and `close_reason` explain collection closure;
 - `survey.analysis_error` explains privacy skip/failure state;
-- `surveyinsight.ai_model` records the model used;
+- `survey.insight.aiModel` records the model used;
 - `projecthealthscore.survey_id` proves blend provenance.
 
 ## 17. Verification

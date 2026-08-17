@@ -6,6 +6,7 @@ import { Router } from 'express';
 import {
   generateSurveyQuestions,
   sendSurvey,
+  sendSurveyNow,
   listProjectSurveys,
   getSurveyQuota,
   getSurveySchedule,
@@ -17,6 +18,9 @@ export const projectSurveyRouter = Router({ mergeParams: true });
 
 /** POST /api/v1/projects/:projectId/surveys/generate-questions */
 projectSurveyRouter.post('/surveys/generate-questions', asyncHandler(generateSurveyQuestions));
+
+/** POST /api/v1/projects/:projectId/surveys/send-now */
+projectSurveyRouter.post('/surveys/send-now', asyncHandler(sendSurveyNow));
 
 /** POST /api/v1/projects/:projectId/surveys */
 projectSurveyRouter.post('/surveys', asyncHandler(sendSurvey));

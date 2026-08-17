@@ -1,7 +1,9 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, type MouseEvent } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router";
+import { pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
-  BarChart2, Activity, AlertTriangle, Clock, Users,
+  BarChart2, Activity, AlertTriangle, Users,
   MessageSquare, X, ChevronRight, ChevronDown, Send,
   GitCommit, ArrowRight, Check, Settings,
   ChevronLeft, Bell, Zap, Star, RefreshCw, CheckSquare,
@@ -16,12 +18,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
 import type { SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
+import { useProjectSurveySettings } from "./hooks/useProjectSurveySettings";
 import { useProjectHealthSync } from "./hooks/useProjectHealth";
 import { PublicSurveyPage } from "./pages/PublicSurveyPage";
 import { SurveyFlow } from "./components/SurveyFlow";
 import {
-  changeSurveyLifecycle, generateSurveyQuestions, sendSurvey, getSurveyQuota,
-  updateSurveyQuestions,
+  changeSurveyLifecycle, generateSurveyQuestions, getSurveyQuota,
+  updateSurveyQuestions, closeSurvey, sendSurvey, remindSurvey,
   type GeneratedSurveyQuestion, type SurveyHealthContext, type SurveyQuota,
   type QuestionScore, type SurveyStatus,
 } from "./api-survey";
@@ -83,6 +86,7 @@ interface Survey {
   questionsLocked?: boolean;
   healthContext?: SurveyHealthContext | null;
   analysisError?: string | null;
+  publicUrl?: string | null;
   delivery?: {
     notifiedAt: string | null;
     expiresAt: string;
@@ -92,13 +96,9 @@ interface Survey {
 
 const SURVEY_STATUS_CONFIG:Record<SurveyStatus,{c:string;l:string}>={
   draft:{c:"text-slate-500",l:"Draft"},
-  in_review:{c:"text-violet-600 dark:text-violet-400",l:"In review"},
-  scheduled:{c:"text-blue-500",l:"Scheduled"},
-  sending:{c:"text-blue-600 dark:text-blue-400",l:"Sending"},
   active:{c:"text-amber-500",l:"Active"},
   paused:{c:"text-orange-500",l:"Paused"},
   closed:{c:"text-slate-500",l:"Closed"},
-  analyzing:{c:"text-violet-500",l:"Analyzing"},
   completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"},
   cancelled:{c:"text-slate-400",l:"Cancelled"},
   failed:{c:"text-red-500",l:"Failed"},
@@ -108,7 +108,98 @@ const surveyResponseRate=(survey:Pick<Survey,"responseCount"|"targetCount">)=>
 const surveyDeliveryChannels=(survey:Survey)=>
   Object.entries(survey.delivery?.channels??{}).filter(([,sent])=>sent).map(([channel])=>channel.replace("Sent","")).join(", ");
 
-type Screen = "login" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+function CloseSurveyFormButton({surveyId,onClosed,mode}:{surveyId:string;onClosed?:()=>void;mode?:"close"|"score";}) {
+  const [busy,setBusy]=useState(false);
+  const closeForm=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    setBusy(true);
+    try{
+      await closeSurvey(Number(surveyId));
+      onClosed?.();
+    }catch(error){
+      window.alert(error instanceof Error?error.message:"Failed to close survey");
+    }finally{
+      setBusy(false);
+    }
+  };
+  const idleLabel=mode==="score"?"Retry scoring":"Close form";
+  return (
+    <button type="button" disabled={busy} onClick={event=>{void closeForm(event);}}
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-amber-500/50 text-amber-700 dark:text-amber-400 px-2 py-1 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50">
+      {busy?"Closing…":idleLabel}
+    </button>
+  );
+}
+
+function CopySurveyLinkButton({url}:{url:string}) {
+  const [copied,setCopied]=useState(false);
+  const copy=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    try{
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(()=>setCopied(false),1600);
+    }catch{
+      window.alert("Could not copy the survey link");
+    }
+  };
+  return (
+    <button type="button" title={copied?"Copied":"Copy survey link"} onClick={event=>{void copy(event);}}
+      className="shrink-0 border border-border px-1.5 py-1 text-muted-foreground hover:text-primary hover:border-primary">
+      {copied?<Check size={13}/>:<Link2 size={13}/>}
+    </button>
+  );
+}
+
+function RemindSurveyButton({surveyId,onDone}:{surveyId:string;onDone?:()=>void;}) {
+  const [busy,setBusy]=useState(false);
+  const remind=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    setBusy(true);
+    try{
+      await remindSurvey(Number(surveyId));
+      onDone?.();
+    }catch(error){
+      window.alert(error instanceof Error?error.message:"Failed to send reminder");
+    }finally{
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" disabled={busy} title="Post an anonymous reminder to team channels" onClick={event=>{void remind(event);}}
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary disabled:opacity-50">
+      {busy?"Sending…":"Remind"}
+    </button>
+  );
+}
+
+type Screen = AppScreen;
+
+function surveyHasResults(s: Survey) {
+  return Boolean(s.scores || s.aiInsight || s.themes.length > 0 || s.status === "completed");
+}
+
+function surveyRowStatus(s: Survey) {
+  if (s.status === "closed" && !s.scores) return { c: "text-amber-500", l: "Scoring" };
+  if (s.status === "draft") return { c: "text-slate-500", l: "Generating" };
+  return SURVEY_STATUS_CONFIG[s.status];
+}
+
+const SURVEY_HISTORY_COLS = "110px 120px minmax(0,1fr) 120px 88px 56px minmax(220px,max-content)";
+
+function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
+  const keys = ["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
+  return (
+    <div className="grid grid-cols-5 gap-2 mb-4">
+      {keys.map((k)=>(
+        <div key={k} className="border border-border px-2 py-2 text-center">
+          <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SUBSCORE_LABELS[k]}</div>
+          <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scores[k]}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
@@ -308,6 +399,7 @@ const SURVEYS: Survey[] = [
     id:"s2", projectId:"onyx-mobile", status:"active",
     trigger:"Score declined >8 points in 30 days", sentDate:"2025-11-18",
     responseCount:2, targetCount:7, aiInsight:"", themes:[], rawResponses:[],
+    publicUrl:"http://localhost:5173/survey/demo-link",
   },
   {
     id:"s3", projectId:"onyx-mobile", status:"completed",
@@ -343,7 +435,7 @@ const SURVEYS: Survey[] = [
     ],
   },
   {
-    id:"s5", projectId:"helix-platform", status:"scheduled",
+    id:"s5", projectId:"helix-platform", status:"draft",
     trigger:"Quarterly pulse (manual)", sentDate:"2025-11-17",
     responseCount:4, targetCount:10, aiInsight:"", themes:[], rawResponses:[],
   },
@@ -643,15 +735,13 @@ function GlobalActionsView({actions,projects,onBack,onLogAction}:{
 
 // ─── GLOBAL SURVEYS VIEW ──────────────────────────────────────────────────────
 
-function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:Project[];onBack:()=>void;}) {
+function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];projects:Project[];onBack:()=>void;onClosed?:()=>void;}) {
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [filterStatus,setFilterStatus]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [exId,setExId]=useState<string|null>(null);
   const [rawId,setRawId]=useState<string|null>(null);
-
-  const scfg=SURVEY_STATUS_CONFIG;
 
   const filtered=useMemo(()=>{
     let list=[...surveys];
@@ -689,12 +779,10 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
           <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
             className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
             <option value="all">All Statuses</option>
-            <option value="in_review">In review</option>
+            <option value="draft">Draft</option>
             <option value="paused">Paused</option>
-            <option value="scheduled">Scheduled</option>
-            <option value="sending">Sending</option>
             <option value="active">Active</option>
-            <option value="analyzing">Analyzing</option>
+            <option value="closed">Closed</option>
             <option value="completed">Completed</option>
             <option value="cancelled">Cancelled</option>
             <option value="failed">Failed</option>
@@ -712,51 +800,60 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
 
         <div className="border border-border bg-card">
           <div className="grid px-5 py-3 border-b border-border bg-muted"
-            style={{gridTemplateColumns:"130px 130px 1fr 170px 90px 64px 32px"}}>
+            style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
             {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
               <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
             ))}
           </div>
           {filtered.map(s=>{
             const proj=projects.find(p=>p.id===s.projectId);
-            const cfg=scfg[s.status];
+            const cfg=surveyRowStatus(s);
             const pct=surveyResponseRate(s);
             const isEx=exId===s.id;
             const avgScore=s.scores?Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5):null;
             const sTag=proj?projectTagStyle(proj.score):{bg:"bg-muted",text:"text-foreground"};
             return (
               <div key={s.id} className="border-b border-border last:border-b-0">
-                <button onClick={()=>{if(s.status==="completed"){setExId(isEx?null:s.id);setRawId(null);}}}
-                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${s.status==="completed"?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
-                  style={{gridTemplateColumns:"130px 130px 1fr 170px 90px 64px 32px"}}>
-                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[122px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
+                <div role={surveyHasResults(s)?"button":undefined} onClick={()=>{if(surveyHasResults(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${surveyHasResults(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                  style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
+                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
                   <span className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</span>
-                  <div>
+                  <div className="min-w-0">
                     <div className="h-1.5 bg-muted mb-1">
                       <div className="h-full transition-all" style={{width:`${pct}%`,backgroundColor:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}/>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 min-w-0">
                       <span className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</span>
-                      <span className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount} responses</span>
+                      <span className="text-xs text-muted-foreground truncate">{s.responseCount}/{s.targetCount}</span>
                     </div>
                   </div>
                   <span className={`text-sm font-bold ${cfg.c}`} style={{fontFamily:"var(--font-display)"}}>{cfg.l}</span>
                   {avgScore!=null
                     ?<span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(avgScore)}}>{avgScore}</span>
+                    :s.status==="closed"?<span className="text-xs text-amber-500">…</span>
                     :<span className="text-sm text-muted-foreground">—</span>}
-                  {s.status==="completed"?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:<span/>}
-                </button>
+                  <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
+                    {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                    {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onClosed}/>}
+                    {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed}/>}
+                    {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed} mode="score"/>}
+                    {surveyHasResults(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                  </div>
+                </div>
 
                 <AnimatePresence>
-                  {isEx&&s.status==="completed"&&(
+                  {isEx&&surveyHasResults(s)&&(
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                       <div className="border-t border-border px-5 py-4">
                         <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                         {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                        {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
                         {s.analysisError?.startsWith("insufficient_responses")
-                          ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because the anonymous response minimum was not reached.</div>
+                          ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
                           :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                        {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
                         {s.themes.length>0&&<div className="border border-border divide-y divide-border mb-4">
                           {s.themes.map((t,i)=>(
                             <div key={i} className="flex gap-3 px-4 py-3 items-start">
@@ -1087,7 +1184,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
   const [reviewOpen,setReviewOpen]=useState(false);
   const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:project.subscores[k]}));
   const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
-  const completed=surveys.filter(s=>s.projectId===project.id&&s.status==="completed");
+  const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
   const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
   return (
@@ -1317,8 +1414,10 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</div>
-                      <div className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount}</div>
+                      {s.scores
+                        ?<div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5))}}>{Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5)}</div>
+                        :<div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</div>}
+                      <div className="text-xs text-muted-foreground">{s.scores?"AI score":`${s.responseCount}/${s.targetCount}`}</div>
                     </div>
                   </div>
                 );
@@ -1827,7 +1926,7 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
   );
 }
 
-function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;}) {
+function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;audienceSize?:number;}) {
   const backendProjectId=project.backendProjectId;
   const isReal=Boolean(backendProjectId);
 
@@ -1838,6 +1937,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
   const [step,setStep]=useState<"generating"|"edit"|"preview"|"sending"|"sent"|"error">(isReal?"generating":"edit");
   const [errorMessage,setErrorMessage]=useState<string|null>(null);
   const [quota,setQuota]=useState<SurveyQuota|null>(null);
+  const [sentResult,setSentResult]=useState<{queued?:boolean;questionCount?:number;url?:string;expiresAt?:string;delivery?:{slackSent?:boolean;telegramSent?:boolean;discordSent?:boolean}}|null>(null);
 
   const generate=async()=>{
     if(!backendProjectId) return;
@@ -1856,6 +1956,26 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
       setStep("error");
     }
   };
+
+  const sendReviewed=async()=>{
+    if(!backendProjectId) return;
+    setStep("sending");
+    setErrorMessage(null);
+    try{
+      const payload=questions.filter(q=>q.text.trim()).map(q=>({
+        category:q.category||"delivery",
+        questionText:q.text.trim(),
+        questionType:q.questionType,
+      }));
+      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,audienceSize);
+      setSentResult({queued:true,questionCount:payload.length});
+      onSent?.();
+      setStep("sent");
+    }catch(err){
+      setErrorMessage(err instanceof Error?err.message:"Failed to send survey");
+      setStep("error");
+    }
+  };
   useEffect(()=>{if(isReal) void generate();},[]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateQ=(id:string,val:string)=>setQuestions(prev=>prev.map(q=>q.id===id?{...q,text:val}:q));
@@ -1864,18 +1984,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
 
   const send=async()=>{
     if(!isReal||!backendProjectId){setStep("sent");return;}
-    setStep("sending");
-    setErrorMessage(null);
-    try{
-      await sendSurvey(backendProjectId,trigger,customGuidance,questions.filter(q=>q.text.trim()).map(q=>({
-        category:q.category??"delivery",questionText:q.text,questionType:q.questionType,
-      })));
-      onSent?.();
-      setStep("sent");
-    }catch(err){
-      setErrorMessage(err instanceof Error?err.message:"Failed to send survey");
-      setStep("edit");
-    }
+    await sendReviewed();
   };
 
   const remaining=quota?quota.remaining:1;
@@ -1889,7 +1998,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
             <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>
-              {step==="generating"?"Generating Questions":step==="edit"?"Review & Edit Survey":step==="preview"?"Survey Preview":step==="sending"?"Sending…":step==="error"?"Something Went Wrong":"Survey Sent"}
+              {step==="generating"?"Generating Questions":step==="edit"?"Review & Edit Survey":step==="preview"?"Survey Preview":step==="sending"?"Sending Survey…":step==="error"?"Something Went Wrong":"Survey Sent"}
             </div>
             <div className="text-sm text-muted-foreground mt-0.5">{project.name}</div>
           </div>
@@ -1899,20 +2008,22 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
         {step==="generating"||step==="sending"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-3 p-10">
             <RefreshCw size={24} className="animate-spin text-primary"/>
-            <div className="text-base text-muted-foreground">{step==="generating"?"AI is drafting questions for this survey…":"Queuing survey for delivery…"}</div>
+            <div className="text-base text-muted-foreground text-center max-w-sm">{step==="generating"?"AI is drafting and scoring questions for this survey…":"Queuing delivery of your reviewed questions…"}</div>
           </div>
         ):step==="error"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
             <AlertTriangle size={28} className="text-red-500"/>
             <div className="text-base text-foreground text-center max-w-sm">{errorMessage}</div>
-            <button onClick={generate} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
+            <button onClick={()=>{if(isReal) void generate(); else setStep("edit");}} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
           </div>
         ):step==="sent"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
             <div className="w-14 h-14 bg-emerald-500 flex items-center justify-center"><Check size={26} className="text-white"/></div>
-            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{isReal?"Survey queued for sending":"Survey sent successfully"}</div>
-            <div className="text-base text-muted-foreground text-center">
-              {isReal?`Queued for ${project.name} team · ${questions.filter(q=>q.text.trim()).length} questions · delivery runs in the background`:`Sent to ${project.name} team · ${questions.length} questions · responses due in 48h`}
+            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{isReal?"Survey queued":"Survey sent successfully"}</div>
+            <div className="text-base text-muted-foreground text-center max-w-md">
+              {isReal
+                ? `${sentResult?.questionCount??questions.length} reviewed questions will be posted to team channels in the background. Watch Survey History for Active status.`
+                :`Sent to ${project.name} team · ${questions.length} questions · responses due in 48h`}
             </div>
             <button onClick={onClose} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
           </div>
@@ -1976,6 +2087,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent}:{onClose:()=>vo
                   </div>
                   <div className="text-sm text-muted-foreground mt-0.5">
                     Quota: {quota.used} used / {quota.limit} per month
+                    {audienceSize?` · audience ${audienceSize} people from Settings → Team`:""}
                   </div>
                 </div>
               </div>
@@ -2098,9 +2210,11 @@ function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
 
 // ─── SURVEYS VIEW ─────────────────────────────────────────────────────────────
 
-function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;}) {
+function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;loadError?:string|null;loading?:boolean;}) {
   const ps=surveys.filter(s=>s.projectId===project.id);
-  const completed=ps.filter(s=>s.status==="completed"&&s.themes.length>0);
+  const completed=ps.filter(s=>surveyHasResults(s)&&(s.themes.length>0||Boolean(s.scores)||Boolean(s.aiInsight)));
+  const {settings,update,customGuidance,audienceSize}=useProjectSurveySettings(project.id);
+  const guidance=settings.guidance;
   const [iIdx,setIIdx]=useState(0);
   const [exId,setExId]=useState<string|null>(null);
   const [rawId,setRawId]=useState<string|null>(null);
@@ -2111,12 +2225,6 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
   const [surveySearch,setSurveySearch]=useState("");
   const [surveySort,setSurveySort]=useState<"newest"|"oldest">("newest");
   const [quota,setQuotaState]=useState<SurveyQuota|null>(null);
-  const [guidance,setGuidance]=useState([
-    {id:"g1",text:"Ask about specific blockers preventing sprint completion. Focus on cross-team dependencies."},
-    {id:"g2",text:"Probe team confidence in current sprint goals — is the scope realistic?"},
-    {id:"g3",text:"Explore communication and process pain points."},
-    {id:"g4",text:"Ask about workload balance and signs of unsustainable pace."},
-  ]);
   useEffect(()=>{
     if(!project.backendProjectId){setQuotaState(null);return;}
     let cancelled=false;
@@ -2124,9 +2232,21 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
     return ()=>{cancelled=true;};
   },[project.backendProjectId,ps.length]);
   const latest=completed[0];
-  const upcoming=ps.find(s=>["draft","in_review","scheduled","paused","failed"].includes(s.status));
+  const scoreHistory=useMemo(()=>[...ps]
+    .filter(s=>s.scores)
+    .sort((a,b)=>new Date(a.sentDate).getTime()-new Date(b.sentDate).getTime())
+    .slice(-6)
+    .map(s=>({
+      label:fmtDate(s.sentDate),
+      overall:Math.round(Object.values(s.scores!).reduce((a,b)=>a+b,0)/5),
+      delivery:s.scores!.delivery,
+      codeQuality:s.scores!.codeQuality,
+      cicd:s.scores!.cicd,
+      teamHealth:s.scores!.teamHealth,
+      blockers:s.scores!.blockers,
+    })),[ps]);
+  const upcoming=ps.find(s=>["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
   const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
-  const scfg=SURVEY_STATUS_CONFIG;
   const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
   const quotaLimit=quota?quota.limit:2;
 
@@ -2223,7 +2343,30 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
           </div>
         )}
 
-        {/* ── AI Insights carousel ── */}
+        {scoreHistory.length>1&&(
+          <div className="bg-card border border-border">
+            <div className="px-5 py-3.5 border-b border-border">
+              <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Survey score over time</div>
+              <div className="text-sm text-muted-foreground mt-0.5">Last {scoreHistory.length} scored pulses</div>
+            </div>
+            <div className="px-3 py-4">
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={scoreHistory} margin={{top:8,right:12,bottom:0,left:0}}>
+                  <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
+                  <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}}/>
+                  <YAxis domain={[0,100]} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={32}/>
+                  <ReTooltip contentStyle={{background:"var(--popover)",border:"1px solid var(--border)",fontSize:12}}/>
+                  <Line type="monotone" dataKey="overall" name="Overall" stroke="var(--primary)" strokeWidth={2.5} dot={{r:3}}/>
+                  <Line type="monotone" dataKey="delivery" name="Delivery" stroke="#3b82f6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="codeQuality" name="Code Quality" stroke="#10b981" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="cicd" name="CI/CD" stroke="#8b5cf6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="teamHealth" name="Team Health" stroke="#f59e0b" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="blockers" name="Blockers" stroke="#ef4444" strokeWidth={1.5} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
         {completed.length>0&&(
           <div className="bg-card border border-border">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-muted/30">
@@ -2335,12 +2478,12 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
                     <div key={g.id} className="flex items-start gap-3">
                       <div className="shrink-0 w-6 h-6 flex items-center justify-center border border-border text-xs font-bold text-muted-foreground mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
                       <textarea value={g.text} rows={2} placeholder="Describe what the AI should ask about…"
-                        onChange={e=>setGuidance(prev=>prev.map(x=>x.id===g.id?{...x,text:e.target.value}:x))}
+                        onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(x=>x.id===g.id?{...x,text:e.target.value}:x)}))}
                         className="flex-1 bg-input-background border border-border px-3 py-2.5 text-[14px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                      <button onClick={()=>setGuidance(prev=>prev.filter(x=>x.id!==g.id))} className="mt-2 text-muted-foreground hover:text-red-500 transition-colors shrink-0"><X size={14}/></button>
+                      <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(x=>x.id!==g.id)}))} className="mt-2 text-muted-foreground hover:text-red-500 transition-colors shrink-0"><X size={14}/></button>
                     </div>
                   ))}
-                  <button onClick={()=>setGuidance(prev=>[...prev,{id:`g${Date.now()}`,text:""}])}
+                  <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`g${Date.now()}`,text:""}]}))}
                     className="flex items-center gap-1.5 text-sm text-primary font-semibold hover:opacity-75 transition-opacity mt-1">
                     <Plus size={13}/> Add instruction
                   </button>
@@ -2379,28 +2522,28 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
           <div className="border border-border bg-card">
             {/* Header */}
             <div className="grid items-center border-b border-border bg-muted px-4 py-2.5"
-              style={{gridTemplateColumns:"120px 130px 1fr 160px 80px 64px 32px"}}>
+              style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
               {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
                 <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
 
-            {filteredPs.length===0&&<div className="text-center py-12 text-base text-muted-foreground">No surveys match your search.</div>}
+            {filteredPs.length===0&&<div className="text-center py-12 text-base text-muted-foreground">{loadError?loadError:loading?"Loading surveys…":surveySearch?"No surveys match your search.":"No surveys yet."}</div>}
 
             {filteredPs.map(s=>{
-              const cfg=scfg[s.status];
+              const cfg=surveyRowStatus(s);
               const pct=surveyResponseRate(s);
               const isEx=exId===s.id;
               const sTag=projectTagStyle(project.score);
               return (
                 <div key={s.id} className="border-b border-border last:border-b-0">
                   {/* Row */}
-                  <button onClick={()=>{if(s.status==="completed"){setExId(isEx?null:s.id);setRawId(null);}}}
-                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${s.status==="completed"?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
-                    style={{gridTemplateColumns:"120px 130px 1fr 160px 80px 64px 32px"}}>
+                  <div role={surveyHasResults(s)?"button":undefined} onClick={()=>{if(surveyHasResults(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${surveyHasResults(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                    style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
                     {/* Project */}
-                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[110px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
+                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
 
                     {/* Issue date */}
                     <div className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</div>
@@ -2409,44 +2552,52 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
                     <div className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</div>
 
                     {/* Response bar */}
-                    <div>
+                    <div className="min-w-0">
                       <div className="h-1.5 bg-muted mb-1">
                         <div className="h-full transition-all" style={{width:`${pct}%`,backgroundColor:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}/>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 min-w-0">
                         <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</span>
                         <span className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount}</span>
-                        {s.status==="active"&&<span className="text-xs text-amber-500 flex items-center gap-0.5"><Clock size={10}/>collecting</span>}
                       </div>
                     </div>
 
                     {/* Status */}
                     <div className={`text-sm font-bold ${cfg.c}`} style={{fontFamily:"var(--font-display)"}}>{cfg.l}</div>
 
-                    {/* Score (completed only) */}
+                    {/* Score */}
                     <div>
                       {s.scores?(
                         <span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5))}}>
                           {Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5)}
                         </span>
-                      ):s.status==="completed"?<span className="text-sm text-muted-foreground">—</span>:<span/>}
+                      ):s.status==="closed"?<span className="text-xs text-amber-500">…</span>
+                      :surveyHasResults(s)?<span className="text-sm text-muted-foreground">—</span>:<span className="text-sm text-muted-foreground">—</span>}
                     </div>
 
-                    {s.status==="completed"?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:<span/>}
-                  </button>
+                    <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
+                      {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                      {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onSurveySent}/>}
+                      {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent}/>}
+                      {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
+                      {surveyHasResults(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                    </div>
+                  </div>
 
                   {/* Expanded */}
                   <AnimatePresence>
-                    {isEx&&s.status==="completed"&&(
+                    {isEx&&surveyHasResults(s)&&(
                       <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                         <div className="border-t border-border">
                           {/* AI Summary */}
                           <div className="px-5 py-4 border-b border-border">
                             <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                             {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                            {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
                             {s.analysisError?.startsWith("insufficient_responses")
-                              ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because the anonymous response minimum was not reached.</div>
+                              ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
                               :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                            {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
                             {s.themes.length>0&&<div className="border border-border divide-y divide-border">
                               {s.themes.map((t,i)=>(
                                 <div key={i} className="flex gap-3 px-4 py-3 items-start">
@@ -2507,7 +2658,8 @@ function SurveysView({project,surveys,onSurveySent}:{project:Project;surveys:Sur
       </AnimatePresence>
       <AnimatePresence>
         {showSend&&<SendSurveyModal key="send" onClose={()=>setShowSend(false)} project={project}
-          customGuidance={guidance.map(g=>g.text.trim()).filter(Boolean).join("\n")}
+          customGuidance={customGuidance}
+          audienceSize={audienceSize}
           onSent={onSurveySent}/>}
       </AnimatePresence>
       <AnimatePresence>
@@ -2630,16 +2782,17 @@ function ConnectorCard({def}:{def:ConnectorDef}) {
   );
 }
 
-interface QI{id:string;text:string;}
 function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
-  const [qi,setQi]=useState<QI[]>([
-    {id:"qi1",text:"Ask about specific blockers preventing sprint completion. Focus on cross-team dependencies and waiting-on relationships."},
-    {id:"qi2",text:"Probe team confidence in current sprint goals. Ask whether scope is realistic given current capacity."},
-    {id:"qi3",text:"Explore communication and process pain points — what slows people down day-to-day."},
-    {id:"qi4",text:"Ask about workload balance and signs of unsustainable pace or burnout risk."},
-  ]);
-  const team=[{n:"Sarah Chen",r:"Engineering Manager",e:"s.chen@company.io"},{n:"Marcus Webb",r:"Product Manager",e:"m.webb@company.io"},{n:"Priya Nair",r:"Senior Engineer",e:"p.nair@company.io"},{n:"James Okafor",r:"Tech Lead",e:"j.okafor@company.io"},{n:"Lena Fischer",r:"QA Lead",e:"l.fischer@company.io"}];
+  const {settings,update}=useProjectSurveySettings(project.id);
+  const [draftMember,setDraftMember]=useState({n:"",r:"",e:""});
+  const team=settings.team;
+  const qi=settings.guidance;
+  const addMember=()=>{
+    if(!draftMember.n.trim()||!draftMember.e.trim()) return;
+    update(prev=>({...prev,team:[...prev.team,{n:draftMember.n.trim(),r:draftMember.r.trim()||"Team member",e:draftMember.e.trim()}]}));
+    setDraftMember({n:"",r:"",e:""});
+  };
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-4xl mx-auto px-8 py-8">
@@ -2656,22 +2809,35 @@ function SettingsView({project}:{project:Project;}) {
         {tab==="team"&&(
           <div>
             <div className="flex items-center justify-between mb-5">
-              <div className="text-[15px] font-bold text-foreground">Survey Recipients — {team.length} members</div>
-              <button className="flex items-center gap-1.5 text-[15px] text-primary font-semibold hover:opacity-75"><Plus size={14}/>Add member</button>
+              <div>
+                <div className="text-[15px] font-bold text-foreground">Survey Recipients — {team.length} members</div>
+                <p className="text-sm text-muted-foreground mt-1">Audience size is used for response rate. The public form stays anonymous — this list is not sent to respondents.</p>
+              </div>
             </div>
-            <div className="border border-border bg-card">
+            <div className="border border-border bg-card mb-4">
               {team.map((m,i)=>(
-                <div key={i} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
+                <div key={`${m.e}-${i}`} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 bg-primary/15 text-primary flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{m.n.split(" ").map(n=>n[0]).join("")}</div>
                     <div><div className="text-[15px] font-semibold text-foreground">{m.n}</div><div className="text-sm text-muted-foreground">{m.r}</div></div>
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.e}</span>
-                    <button className="text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
+                    <button onClick={()=>update(prev=>({...prev,team:prev.team.filter((_,idx)=>idx!==i)}))} className="text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
+              <input value={draftMember.n} onChange={e=>setDraftMember(m=>({...m,n:e.target.value}))} placeholder="Name"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <input value={draftMember.r} onChange={e=>setDraftMember(m=>({...m,r:e.target.value}))} placeholder="Role"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <input value={draftMember.e} onChange={e=>setDraftMember(m=>({...m,e:e.target.value}))} placeholder="Email"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <button onClick={addMember} className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90">
+                <Plus size={14}/>Add
+              </button>
             </div>
           </div>
         )}
@@ -2679,20 +2845,20 @@ function SettingsView({project}:{project:Project;}) {
           <div>
             <div className="mb-6">
               <div className="text-[15px] font-bold text-foreground mb-1">Question Generation Instructions</div>
-              <p className="text-[15px] text-muted-foreground leading-relaxed">Each instruction steers the AI when generating survey questions. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
+              <p className="text-[15px] text-muted-foreground leading-relaxed">These instructions are sent to Gemini when you generate a survey. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
             </div>
             <div className="space-y-3">
               {qi.map((inst,idx)=>(
                 <div key={inst.id} className="bg-card border border-border p-4 flex items-start gap-3">
                   <div className="shrink-0 w-7 h-7 flex items-center justify-center text-sm font-bold text-muted-foreground border border-border mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
                   <textarea value={inst.text} rows={2} placeholder="Describe what the AI should ask about…"
-                    onChange={e=>setQi(p=>p.map(i=>i.id===inst.id?{...i,text:e.target.value}:i))}
+                    onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(i=>i.id===inst.id?{...i,text:e.target.value}:i)}))}
                     className="flex-1 bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                  <button onClick={()=>setQi(p=>p.filter(i=>i.id!==inst.id))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
+                  <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(i=>i.id!==inst.id)}))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
                 </div>
               ))}
             </div>
-            <button onClick={()=>setQi(p=>[...p,{id:`qi${Date.now()}`,text:""}])} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
+            <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`qi${Date.now()}`,text:""}]}))} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
           </div>
         )}
         {tab==="notifications"&&(
@@ -2731,13 +2897,15 @@ function SettingsView({project}:{project:Project;}) {
 
 export default function App() {
   const {isAuthenticated,activeWorkspace,logout}=useWorkspace();
+  const location=useLocation();
+  const navigate=useNavigate();
+  const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
+  const screen=parsed.screen;
+  const activeId=parsed.projectId;
+  const go=useCallback((next:Screen)=>{
+    navigate(pathFromScreen(next, parsed.projectId));
+  },[navigate,parsed.projectId]);
   const [dark,setDark]=useState(false);
-  const [screen,setScreen]=useState<Screen>(()=>{
-    if(!isAuthenticated) return "login";
-    if(!activeWorkspace) return "workspaces";
-    return "portfolio";
-  });
-  const [activeId,setActiveId]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const [projects,setProjects]=useState<Project[]>(PROJECTS);
@@ -2749,14 +2917,14 @@ export default function App() {
   const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
   // Real health scores for backend-synced projects, merged into `projects` in place so
   // the SSE-driven updateProjectRisk (below) keeps building on top of real data once loaded.
-  useProjectHealthSync(projects,setProjects);
+  const {refetch:refetchHealth}=useProjectHealthSync(projects,setProjects);
   // Real survey data for backend-synced projects; demo-only projects (no backendProjectId) keep their static mock surveys.
-  const {surveys:realSurveys,refetch:refetchSurveys}=useSurveys(projects);
+  const {surveys:realSurveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
   const surveys=useMemo(()=>{
     const mockOnly=SURVEYS.filter(s=>!projects.find(p=>p.id===s.projectId)?.backendProjectId);
     return [...mockOnly,...realSurveys];
   },[realSurveys,projects]);
-  const updateProjectRisk=(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
+  const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
     setProjects(prev=>prev.map(p=>{
       if(p.id!==projectId) return p;
       const subscores={...p.subscores};
@@ -2769,67 +2937,85 @@ export default function App() {
       if(typeof riskScore!=="number") return {...p,subscores};
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
-  };
+    void refetchHealth();
+  },[refetchHealth]);
   const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
   const [ratingOpen,setRatingOpen]=useState(false);
-  const sel=(id:string)=>{setActiveId(id);setScreen("dashboard");};
-  const home=()=>{setActiveId(null);setScreen("portfolio");};
+  const sel=(id:string)=>{navigate(pathFromScreen("dashboard", id));};
+  const home=()=>{navigate(pathFromScreen("portfolio"));};
   const renderContent=()=>{
     if(screen==="global-actions")
       return <GlobalActionsView actions={ACTIONS} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)}/>;
     if(screen==="global-surveys")
-      return <GlobalSurveysView surveys={surveys} projects={projects} onBack={home}/>;
+      return <GlobalSurveysView surveys={surveys} projects={projects} onBack={home} onClosed={refetchSurveys}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
         projects={projects} actions={ACTIONS} surveys={surveys}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
-        onViewActions={()=>setScreen("global-actions")}
-        onViewSurveys={()=>setScreen("global-surveys")}
+        onViewActions={()=>go("global-actions")}
+        onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
       />;
     const view=()=>{switch(screen){
-      case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={setScreen} onSyncComplete={updateProjectRisk}/>;
+      case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
       case"actions-timeline": return <ActionsTimeline project={active} actions={ACTIONS}/>;
       case"actions-library": return <ActionsLibrary actions={ACTIONS}/>;
-      case"surveys": return <SurveysView project={active} surveys={surveys} onSurveySent={refetchSurveys}/>;
+      case"surveys": return <SurveysView project={active} surveys={surveys} onSurveySent={refetchSurveys} loadError={surveysError} loading={surveysLoading}/>;
       case"settings": return <SettingsView project={active}/>;
       default: return null;
     }};
-    return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={setScreen} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
+    return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={go} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
   };
-  // Anonymous, unauthenticated respondent path - bypasses login/workspace gating entirely,
-  // since a developer clicking a survey link has no account. No router is wired into this
-  // app (a single `screen` state machine drives navigation instead), so this one public path
-  // is matched directly off the URL rather than pulling in routing for just this one case.
-  const publicSurveyMatch=window.location.pathname.match(/^\/survey\/([^/]+)$/);
-  if(publicSurveyMatch){
-    return <PublicSurveyPage token={publicSurveyMatch[1]}/>;
+  if(parsed.surveyToken){
+    return <PublicSurveyPage token={parsed.surveyToken}/>;
+  }
+  if(!isAuthenticated){
+    if(screen!=="login") return <Navigate to="/login" replace/>;
+    return <LoginView onSuccess={()=>navigate("/workspaces")}/>;
+  }
+  if(!activeWorkspace){
+    if(screen==="create-workspace"){
+      return (
+        <CreateWorkspaceView
+          onBack={()=>navigate("/workspaces")}
+          onCreated={()=>navigate("/")}
+        />
+      );
+    }
+    if(screen!=="workspaces") return <Navigate to="/workspaces" replace/>;
+    return (
+      <WorkspaceSelectionView
+        onSelect={()=>navigate("/")}
+        onCreateNew={()=>navigate("/workspaces/new")}
+        onLogout={()=>{logout();navigate("/login");}}
+      />
+    );
   }
   if(screen==="login"){
-    return <LoginView onSuccess={()=>setScreen("workspaces")}/>;
+    return <Navigate to="/" replace/>;
   }
   if(screen==="workspaces"){
     return (
       <WorkspaceSelectionView
-        onSelect={()=>setScreen("portfolio")}
-        onCreateNew={()=>setScreen("create-workspace")}
-        onLogout={()=>{logout();setScreen("login");}}
+        onSelect={()=>navigate("/")}
+        onCreateNew={()=>navigate("/workspaces/new")}
+        onLogout={()=>{logout();navigate("/login");}}
       />
     );
   }
   if(screen==="create-workspace"){
     return (
       <CreateWorkspaceView
-        onBack={()=>setScreen("workspaces")}
-        onCreated={()=>setScreen("portfolio")}
+        onBack={()=>navigate("/workspaces")}
+        onCreated={()=>navigate("/")}
       />
     );
   }
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={projects} activeId={activeId} onSelect={sel} onHome={home}
-        pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>setScreen("workspaces")}/>
+        pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>go("workspaces")}/>
       <div className="flex-1 flex min-h-0">{renderContent()}</div>
       {(screen==="portfolio"||screen==="global-actions"||screen==="global-surveys")&&(
         <div className="border-t border-border bg-card px-6 py-2.5 flex items-center gap-6 text-sm text-muted-foreground">

@@ -4,13 +4,9 @@ import { API_BASE_URL } from "./api";
 
 export type SurveyStatus =
   | "draft"
-  | "in_review"
-  | "scheduled"
-  | "sending"
   | "active"
   | "paused"
   | "closed"
-  | "analyzing"
   | "completed"
   | "cancelled"
   | "failed";
@@ -37,6 +33,10 @@ export interface SurveyListItem {
   closedAt: string | null;
   questionVersion: number;
   questionsLocked: boolean;
+  scores: SurveyScores | null;
+  themes: string[];
+  aiInsight: string | null;
+  publicUrl: string | null;
 }
 
 export interface SurveyHealthContext {
@@ -48,9 +48,6 @@ export interface SurveyHealthContext {
 }
 
 export interface SurveyDetail extends SurveyListItem {
-  scores: SurveyScores | null;
-  themes: string[];
-  aiInsight: string | null;
   rawResponses: { question: string; answers: string[] }[];
   questions: Array<{ id: number; category: string; questionText: string; questionType: "text" | "scale" }>;
   healthContext: SurveyHealthContext | null;
@@ -145,14 +142,41 @@ function requesterHeaders(ctx?: RequesterContext): Record<string, string> {
   return headers;
 }
 
+function readApiError(body: unknown, status: number): string {
+  if (!body || typeof body !== "object") return `Request failed (${status})`;
+  const record = body as Record<string, unknown>;
+  const top = typeof record.message === "string" ? record.message.trim() : "";
+  if (top) {
+    try {
+      const nested = JSON.parse(top) as { error?: { message?: string; status?: string } };
+      const inner = nested.error?.message?.trim() || nested.error?.status;
+      if (inner) return inner;
+    } catch {
+      return top;
+    }
+    return top;
+  }
+  const nested = record.error;
+  if (nested && typeof nested === "object") {
+    const inner = nested as Record<string, unknown>;
+    if (typeof inner.message === "string" && inner.message.trim()) return inner.message;
+    if (typeof inner.status === "string" && inner.status.trim()) return inner.status;
+  }
+  return `Request failed (${status})`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      ...requesterHeaders(),
+      ...(init?.headers ?? {}),
+    },
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}) as { message?: string });
-    throw new Error(err.message || `Request failed (${response.status})`);
+    const err = await response.json().catch(() => null);
+    throw new Error(readApiError(err, response.status));
   }
   if (response.status === 204) return undefined as T;
   return response.json();
@@ -179,11 +203,36 @@ export async function sendSurvey(
   customGuidance: string | undefined,
   questions: GeneratedSurveyQuestion[],
   ctx?: RequesterContext,
+  targetCount?: number,
 ): Promise<{ surveyId: number }> {
   return request(`/projects/${projectId}/surveys`, {
     method: "POST",
     headers: requesterHeaders(ctx),
-    body: JSON.stringify({ trigger, customGuidance, questions }),
+    body: JSON.stringify({ trigger, customGuidance, questions, targetCount }),
+  });
+}
+
+export interface SendSurveyNowResult {
+  surveyId: number;
+  queued?: boolean;
+  url?: string;
+  questionCount?: number;
+  targetCount?: number;
+  expiresAt?: string;
+  delivery?: { slackSent: boolean; telegramSent: boolean; discordSent: boolean };
+}
+
+/** Queues background question generation and delivery. */
+export async function sendSurveyNow(
+  projectId: string,
+  trigger?: string,
+  customGuidance?: string,
+  ctx?: RequesterContext,
+): Promise<SendSurveyNowResult> {
+  return request(`/projects/${projectId}/surveys/send-now`, {
+    method: "POST",
+    headers: requesterHeaders(ctx),
+    body: JSON.stringify({ trigger, customGuidance }),
   });
 }
 
@@ -220,6 +269,15 @@ export async function updateSurveyQuestions(
 
 export async function completeSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
   await request(`/surveys/${surveyId}/complete`, { method: "PATCH", headers: requesterHeaders(ctx) });
+}
+
+/** Closes an active public form and queues background AI scoring. */
+export async function closeSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
+  await request(`/surveys/${surveyId}/close`, { method: "POST", headers: requesterHeaders(ctx) });
+}
+
+export async function remindSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
+  await request(`/surveys/${surveyId}/remind`, { method: "POST", headers: requesterHeaders(ctx) });
 }
 
 export async function getSurveyQuota(projectId: string): Promise<SurveyQuota> {

@@ -5,58 +5,36 @@
  * per project:
  *   - The send window opens on `SURVEY_MONTHLY_START_DAY`.
  *   - Each project is assigned its OWN randomized send moment somewhere inside
- *     the configured window, the first time this
- *     tick sees that window open for the project (persisted in `surveyschedule`
- *     so it's decided once, not re-rolled every tick) - so projects don't all
- *     fire in the same instant.
+ *     the configured window, the first time this tick sees that window open
+ *     for the project (persisted on the survey row so it's decided once, not
+ *     re-rolled every tick).
  *   - Questions are generated `SURVEY_QUESTION_GEN_LEAD_DAYS` days before that
- *     project's send moment, with no approval gate - editing IS the review step
- *     (see survey.service.ts::editQuestions), open to level-1 users right up
- *     until someone submits a response.
- *   - At the assigned moment, the survey auto-sends - no manual trigger needed.
- * One anonymous shared link is created per project/month and broadcast once
- * to Slack/Telegram/Discord. No recipient identity is stored on the link.
- * The link stays open for env.surveyResponseDeadlineDays (customizable, 7-15 days).
+ *     project's send moment.
+ *   - At the assigned moment, the survey auto-sends.
+ * One anonymous shared link is stored on the survey row and broadcast once
+ * to Slack/Telegram/Discord.
  */
 
 import { logger } from '@libs/logger.js';
-import { encodeToken } from '@libs/security/survey-token.js';
-import { broadcastSurveyLink } from '@libs/notifications/index.js';
 import { getAiClient } from '@libs/ai/index.js';
-import { getAllProjectIds, countProjectMembers } from '../../api/database/project-member.js';
+import { getAllProjectIds } from '../../api/database/project-member.js';
 import {
-  findOrCreateAutoPulseSurvey,
-  setSurveyTargetCount,
-  getQuestionsForSurveys,
-  addSurveyQuestions,
-  markSurveySent,
-  setSurveyReviewWindow,
+  getOrCreateMonthlyPulse,
+  replaceSurveyQuestions,
   getSurveyById,
   updateSurveyStatus,
-  claimSurveyForSend,
+  listDueForQuestionGeneration,
+  listDueForSend,
+  expireDueSurveys,
+  listCategoryKeys,
+  type SurveyRow,
 } from '../../api/database/survey.js';
-import { listCategoryKeys } from '../../api/database/survey-category.js';
 import { getProjectName } from '../../api/database/project.js';
 import { captureSurveyHealthContext } from '../../api/database/project-health-score.js';
 import { generateQualityQuestions } from '../../api/services/survey-question-generation.service.js';
+import { dispatchAnonymousSurveyBroadcast } from '../../api/services/survey-dispatch.service.js';
 import { periodMonthString } from '../../api/utils/period-month.js';
 import { env } from '../../api/config/env.js';
-import {
-  createBundle,
-  findBundleByCycle,
-  markBundleNotified,
-  getBundleById,
-  expireDueBundles,
-  type SurveyBundleRow,
-} from '../../api/database/survey-bundle.js';
-import {
-  getOrCreateSchedule,
-  listDueForQuestionGeneration,
-  listDueForSend,
-  markQuestionsGenerated,
-  markScheduleSent,
-  type SurveyScheduleRow,
-} from '../../api/database/survey-schedule.js';
 
 function windowRange(periodMonth: string, startDay: number, windowDays: number): { start: Date; end: Date } {
   const [year, month] = periodMonth.split('-').map(Number) as [number, number];
@@ -74,54 +52,48 @@ function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
-function buildSurveyUrl(token: string): string {
-  const base = process.env.SURVEY_FORM_BASE_URL ?? 'http://localhost:5173/survey';
-  return `${base}/${token}`;
-}
-
 /** Ensures this project's monthly auto-pulse survey exists and has questions. */
 async function ensureSurveyWithQuestions(
   projectId: number,
   periodMonth: string,
   projectName: string,
   scheduledSendAt: Date,
-): Promise<number> {
+): Promise<SurveyRow> {
   const healthContext = await captureSurveyHealthContext(projectId);
-  const surveyId = await findOrCreateAutoPulseSurvey(
+  const survey = await getOrCreateMonthlyPulse({
     projectId,
     periodMonth,
-    'Scheduled monthly pulse check',
+    trigger: 'Scheduled monthly pulse check',
+    scheduledSendAt,
     healthContext,
-  );
-  const existingQuestions = await getQuestionsForSurveys([surveyId]);
-  if (existingQuestions.length === 0) {
+  });
+  if (survey.questions.length === 0) {
     try {
-      const categories = await listCategoryKeys();
       const scored = await generateQualityQuestions({
         aiClient: getAiClient(),
         projectName,
         trigger: 'Scheduled monthly pulse check',
-        categories,
+        categories: listCategoryKeys(),
         healthContext,
       });
-      await addSurveyQuestions(surveyId, scored);
+      await replaceSurveyQuestions(survey.id, scored);
     } catch (error) {
-      await updateSurveyStatus(surveyId, 'failed', {
+      await updateSurveyStatus(survey.id, 'failed', {
         analysisError: error instanceof Error ? error.message : 'Question generation failed',
       });
       throw error;
     }
   }
-  await setSurveyReviewWindow(surveyId, scheduledSendAt);
-  return surveyId;
+  const refreshed = await getSurveyById(survey.id);
+  if (!refreshed) throw new Error(`Survey ${survey.id} missing after question generation`);
+  return refreshed;
 }
 
 /**
- * Step 1: assign schedules before each send window opens so the configured
- * review lead time is real. A start-day of 1 can therefore be prepared in the final
- * days of the previous month.
+ * Step 1: assign monthly pulse rows before each send window opens so the
+ * configured review lead time is real.
  */
-async function assignDueSchedules(now: Date, projectIds: number[]): Promise<void> {
+async function assignDueSurveys(now: Date, projectIds: number[]): Promise<void> {
   const currentMonth = periodMonthString(now);
   const nextMonth = periodMonthString(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)));
 
@@ -131,144 +103,95 @@ async function assignDueSchedules(now: Date, projectIds: number[]): Promise<void
     if (now < assignmentStart || now > end) continue;
     const sendRangeStart = now > start ? now : start;
     for (const projectId of projectIds) {
-      await getOrCreateSchedule(projectId, periodMonth, randomWithin(sendRangeStart, end));
+      const healthContext = await captureSurveyHealthContext(projectId);
+      await getOrCreateMonthlyPulse({
+        projectId,
+        periodMonth,
+        trigger: 'Scheduled monthly pulse check',
+        scheduledSendAt: randomWithin(sendRangeStart, end),
+        healthContext,
+      });
     }
   }
 }
 
-/** Step 2: generate questions for any project whose review lead time has arrived. */
+/** Step 2: generate questions for any pulse whose review lead time has arrived. */
 async function processQuestionGeneration(now: Date): Promise<void> {
   const log = logger.child({ component: 'survey-distribution-processor', step: 'question-generation' });
   const due = await listDueForQuestionGeneration(now, env.surveyQuestionGenLeadDays);
 
-  for (const schedule of due) {
+  for (const survey of due) {
     try {
-      const projectName = await getProjectName(schedule.project_id);
-      const surveyId = await ensureSurveyWithQuestions(
-        schedule.project_id,
-        schedule.period_month,
+      const projectName = await getProjectName(survey.project_id);
+      await ensureSurveyWithQuestions(
+        survey.project_id,
+        survey.period_month ?? periodMonthString(now),
         projectName,
-        new Date(schedule.scheduled_send_at),
+        new Date(survey.scheduled_send_at ?? now),
       );
-      await markQuestionsGenerated(schedule.id, surveyId);
     } catch (error) {
-      log.error({ error, scheduleId: schedule.id, projectId: schedule.project_id }, 'failed to generate scheduled survey');
+      log.error({ error, surveyId: survey.id, projectId: survey.project_id }, 'failed to generate scheduled survey');
     }
   }
 }
 
-/** Resolves the one shared link for this project/month. */
-async function resolveBundle(
-  surveyId: number,
-  projectId: number,
-  monthKey: string,
-  expiresAt: Date,
-): Promise<SurveyBundleRow> {
-  const cycleId = `auto-${projectId}-${monthKey}`;
-  const existing = await findBundleByCycle(cycleId);
-  if (existing) return existing;
-  const bundleId = await createBundle({ surveyId, cycleId, expiresAt });
-  const bundle = await getBundleById(bundleId);
-  if (!bundle) throw new Error(`Survey link ${bundleId} vanished immediately after creation`);
-  return bundle;
-}
-
-/** Step 3: dispatch after the review window when the monthly send time arrives. */
+/** Step 3: dispatch when the monthly send time arrives. */
 async function processSend(now: Date): Promise<void> {
   const log = logger.child({ component: 'survey-distribution-processor', step: 'send' });
   const due = await listDueForSend(now);
   if (due.length === 0) return;
 
-  for (const schedule of due) {
+  for (const survey of due) {
     try {
-      await dispatchScheduleRound(schedule, now);
+      await dispatchMonthlyPulse(survey, now);
     } catch (error) {
-      if (schedule.survey_id) {
-        await updateSurveyStatus(schedule.survey_id, 'failed', {
-          analysisError: error instanceof Error ? error.message : 'Scheduled survey delivery failed',
-        });
-      }
-      log.error({ error, scheduleId: schedule.id, projectId: schedule.project_id }, 'failed to dispatch scheduled survey');
+      await updateSurveyStatus(survey.id, 'failed', {
+        analysisError: error instanceof Error ? error.message : 'Scheduled survey delivery failed',
+      });
+      log.error({ error, surveyId: survey.id, projectId: survey.project_id }, 'failed to dispatch scheduled survey');
     }
   }
 }
 
-async function dispatchScheduleRound(schedule: SurveyScheduleRow, now: Date): Promise<void> {
-  const { project_id: projectId, period_month: periodMonth } = schedule;
+async function dispatchMonthlyPulse(survey: SurveyRow, now: Date): Promise<void> {
+  const projectId = survey.project_id;
+  const periodMonth = survey.period_month ?? periodMonthString(now);
   const monthKey = periodMonth.slice(0, 7);
   const projectName = await getProjectName(projectId);
 
-  // Safety net: if the gen step hasn't run yet for this schedule (e.g. LEAD_DAYS=0
-  // or a missed tick), ensure the survey/questions exist before sending anyway.
-  const surveyId = schedule.survey_id ?? (
-    await ensureSurveyWithQuestions(projectId, periodMonth, projectName, new Date(schedule.scheduled_send_at))
-  );
-  const survey = await getSurveyById(surveyId);
-  if (!survey) throw new Error(`Survey ${surveyId} not found for schedule ${schedule.id}`);
-  if (survey.status === 'paused') return;
-  if (survey.status === 'cancelled') {
-    await markScheduleSent(schedule.id);
-    return;
-  }
-  if (survey.sent_at) {
-    await markScheduleSent(schedule.id);
-    return;
-  }
-  if (!(await claimSurveyForSend(surveyId))) return;
+  const ready = survey.questions.length > 0
+    ? survey
+    : await ensureSurveyWithQuestions(
+      projectId,
+      periodMonth,
+      projectName,
+      new Date(survey.scheduled_send_at ?? now),
+    );
+  if (ready.status === 'paused' || ready.status === 'cancelled') return;
+  if (ready.sent_at) return;
 
-  const targetCount = await countProjectMembers(projectId);
-  if (targetCount === 0) {
-    await updateSurveyStatus(surveyId, 'failed', { analysisError: 'no_project_members' });
-    await markScheduleSent(schedule.id);
-    return;
-  }
-
-  const expiresAt = addDays(new Date(schedule.scheduled_send_at), env.surveyResponseDeadlineDays);
-  const bundle = await resolveBundle(surveyId, projectId, monthKey, expiresAt);
-  if (!bundle.notified_at) {
-    const token = encodeToken({ bundleId: bundle.id, cycleId: bundle.cycle_id, deadline: bundle.expires_at });
-    const delivery = await broadcastSurveyLink({
-      url: buildSurveyUrl(token),
-      projectNames: [projectName],
-      deadline: new Date(bundle.expires_at),
-    });
-    if (!delivery.slackSent && !delivery.telegramSent && !delivery.discordSent) {
-      throw new Error('Survey link was not delivered: configure at least one broadcast channel');
-    }
-    await markBundleNotified(bundle.id, delivery);
-  }
-
-  await setSurveyTargetCount(surveyId, targetCount);
-  await markSurveySent(surveyId, now);
-  await markScheduleSent(schedule.id);
+  const sendAt = new Date(ready.scheduled_send_at ?? now);
+  const expiresAt = addDays(sendAt, env.surveyResponseDeadlineDays);
+  const result = await dispatchAnonymousSurveyBroadcast({
+    surveyId: ready.id,
+    projectId,
+    cycleId: `auto-${projectId}-${monthKey}`,
+    expiresAt,
+  });
+  if (!result) return;
 
   logger
     .child({ component: 'survey-distribution-processor' })
-    .info({ projectId, targetCount }, 'broadcast scheduled monthly pulse');
+    .info({ projectId, targetCount: result.targetCount, at: now.toISOString() }, 'broadcast scheduled monthly pulse');
 }
 
 export async function processSurveyDistributionJob(): Promise<number[]> {
   const now = new Date();
   const projectIds = await getAllProjectIds();
   if (projectIds.length > 0) {
-    await assignDueSchedules(now, projectIds);
+    await assignDueSurveys(now, projectIds);
     await processQuestionGeneration(now);
     await processSend(now);
   }
-  return closeExpiredSurveys(now);
-}
-
-async function closeExpiredSurveys(now: Date): Promise<number[]> {
-  const surveyIds = await expireDueBundles(now);
-  const closed: number[] = [];
-  for (const surveyId of surveyIds) {
-    const survey = await getSurveyById(surveyId);
-    if (!survey || survey.status !== 'active') continue;
-    await updateSurveyStatus(surveyId, 'closed', {
-      closedAt: now,
-      closeReason: 'deadline',
-    });
-    closed.push(surveyId);
-  }
-  return closed;
+  return expireDueSurveys(now);
 }

@@ -33,6 +33,7 @@ export interface FrontendSurvey {
   healthContext: SurveyHealthContext | null;
   analysisError: string | null;
   delivery: SurveyDetail["delivery"];
+  publicUrl: string | null;
 }
 
 interface ProjectIdentity {
@@ -59,7 +60,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
     .sort()
     .join(",");
 
-  const fetchSurveys = useCallback(async () => {
+  const fetchSurveys = useCallback(async (opts?: { silent?: boolean }) => {
     const backendToFrontend = new Map(projects.filter((p) => p.backendProjectId).map((p) => [p.backendProjectId!, p.id]));
     if (backendToFrontend.size === 0) {
       setSurveys([]);
@@ -67,7 +68,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
       return;
     }
 
-    setLoading(true);
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const items = await listGlobalSurveys();
@@ -90,14 +91,14 @@ export function useSurveys(projects: ProjectIdentity[]) {
           return {
             id: String(s.id),
             projectId: backendToFrontend.get(String(s.projectId))!,
-            status: s.status,
+            status: detail?.status ?? s.status,
             trigger: s.trigger,
             sentDate: s.sentDate ?? s.scheduledSendAt ?? s.reviewDeadlineAt ?? "",
-            responseCount: s.responseCount,
+            responseCount: detail?.responseCount ?? s.responseCount,
             targetCount: s.targetCount,
-            scores: detail?.scores ?? undefined,
-            themes: detail?.themes ?? [],
-            aiInsight: detail?.aiInsight ?? "",
+            scores: detail?.scores ?? s.scores ?? undefined,
+            themes: detail?.themes ?? s.themes ?? [],
+            aiInsight: detail?.aiInsight ?? s.aiInsight ?? "",
             rawResponses: detail?.rawResponses ?? [],
             questions: detail?.questions ?? [],
             reviewDeadlineAt: s.reviewDeadlineAt,
@@ -107,13 +108,14 @@ export function useSurveys(projects: ProjectIdentity[]) {
             healthContext: detail?.healthContext ?? null,
             analysisError: detail?.analysisError ?? null,
             delivery: detail?.delivery ?? null,
+            publicUrl: detail?.publicUrl ?? s.publicUrl ?? null,
           };
         }),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load surveys");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backedProjectIds]);
@@ -121,6 +123,17 @@ export function useSurveys(projects: ProjectIdentity[]) {
   useEffect(() => {
     void fetchSurveys();
   }, [fetchSurveys]);
+
+  const waitingForBackground = surveys.some(
+    (s) => s.status === "draft" || s.status === "active" || (s.status === "closed" && !s.scores),
+  );
+  useEffect(() => {
+    if (!waitingForBackground) return;
+    const timer = window.setInterval(() => {
+      void fetchSurveys({ silent: true });
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [waitingForBackground, fetchSurveys]);
 
   return { surveys, loading, error, refetch: fetchSurveys };
 }

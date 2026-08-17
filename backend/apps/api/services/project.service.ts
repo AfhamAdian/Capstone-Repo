@@ -1,15 +1,15 @@
 /**
  * Project Service
- * Read-side mapping from the raw project + projecthealthscore tables to the
- * shape the dashboard needs: current score, per-category subscores, and
- * history for the sparkline/timeSeries/subscoreSeries charts. Deliberately
- * scoped to health-score data only - the raw ops metrics widgets (commits,
- * tickets closed, deployments, PR cycle time) read from a different set of
- * snapshot tables and are not covered here.
+ * Read-side mapping from project + projecthealthscore + snapshot metric
+ * tables to the dashboard shape: health scores and the six ops-metric cards.
  */
 
 import { listProjects, getProject, type ProjectRow } from '../database/project.js';
 import { listProjectHealthScoreHistory, type ProjectHealthScoreRow } from '../database/project-health-score.js';
+import {
+  listProjectOpsMetricsHistory,
+  type SnapshotOpsMetricsRow,
+} from '../database/project-ops-metrics.js';
 
 export interface HealthSubscores {
   delivery: number;
@@ -25,6 +25,20 @@ export interface HealthSeriesPoint {
   score: number;
 }
 
+export interface OpsMetrics {
+  commits: number | null;
+  ticketsClosed: number | null;
+  sprintVelocity: number | null;
+  openBlockers: number | null;
+  deployments: number | null;
+  prCycleTime: number | null;
+}
+
+export type OpsMetricSeries = Record<
+  'commits' | 'tickets' | 'velocity' | 'blockers' | 'deployments' | 'prCycleTime',
+  { v: number; label: string }[]
+>;
+
 export interface ProjectHealth {
   id: number;
   name: string;
@@ -36,18 +50,99 @@ export interface ProjectHealth {
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
   subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string }[]>;
+  metrics: OpsMetrics | null;
+  metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;
   pendingSurveyTrigger: string | null;
   lastUpdated: string | null;
   /** True once at least one projecthealthscore row exists - lets the frontend distinguish "never synced" from "score is genuinely 0". */
   hasData: boolean;
+  /** True once at least one snapshot metric value exists for the ops cards. */
+  hasMetrics: boolean;
 }
 
 function formatLabel(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function buildProjectHealth(project: ProjectRow, history: ProjectHealthScoreRow[]): ProjectHealth {
+function roundMetric(value: number, decimals = 0): number {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function lastKnown(rows: SnapshotOpsMetricsRow[], pick: (row: SnapshotOpsMetricsRow) => number | null): number | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const value = pick(rows[index]!);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function carryForwardSeries(
+  rows: SnapshotOpsMetricsRow[],
+  pick: (row: SnapshotOpsMetricsRow) => number | null,
+  decimals = 0,
+): { v: number; label: string }[] {
+  let last: number | null = null;
+  const series: { v: number; label: string }[] = [];
+  for (const row of rows) {
+    const value = pick(row);
+    if (value !== null) last = value;
+    if (last !== null) {
+      series.push({ v: roundMetric(last, decimals), label: formatLabel(row.snapshotTime) });
+    }
+  }
+  return series;
+}
+
+function buildOpsMetrics(rows: SnapshotOpsMetricsRow[]): { metrics: OpsMetrics | null; metricSeries: OpsMetricSeries; hasMetrics: boolean } {
+  const emptySeries: OpsMetricSeries = {
+    commits: [],
+    tickets: [],
+    velocity: [],
+    blockers: [],
+    deployments: [],
+    prCycleTime: [],
+  };
+
+  const commits = lastKnown(rows, (row) => row.commits);
+  const ticketsClosed = lastKnown(rows, (row) => row.ticketsClosed);
+  const sprintVelocity = lastKnown(rows, (row) => row.sprintVelocity);
+  const openBlockers = lastKnown(rows, (row) => row.openBlockers);
+  const deployments = lastKnown(rows, (row) => row.deployments);
+  const prCycleTime = lastKnown(rows, (row) => row.prCycleTime);
+
+  const hasMetrics = [commits, ticketsClosed, sprintVelocity, openBlockers, deployments, prCycleTime].some((value) => value !== null);
+  if (!hasMetrics) {
+    return { metrics: null, metricSeries: emptySeries, hasMetrics: false };
+  }
+
+  return {
+    hasMetrics: true,
+    metrics: {
+      commits: commits === null ? null : roundMetric(commits),
+      ticketsClosed: ticketsClosed === null ? null : roundMetric(ticketsClosed),
+      sprintVelocity: sprintVelocity === null ? null : roundMetric(sprintVelocity),
+      openBlockers: openBlockers === null ? null : roundMetric(openBlockers),
+      deployments: deployments === null ? null : roundMetric(deployments),
+      prCycleTime: prCycleTime === null ? null : roundMetric(prCycleTime, 1),
+    },
+    metricSeries: {
+      commits: carryForwardSeries(rows, (row) => row.commits),
+      tickets: carryForwardSeries(rows, (row) => row.ticketsClosed),
+      velocity: carryForwardSeries(rows, (row) => row.sprintVelocity),
+      blockers: carryForwardSeries(rows, (row) => row.openBlockers),
+      deployments: carryForwardSeries(rows, (row) => row.deployments),
+      prCycleTime: carryForwardSeries(rows, (row) => row.prCycleTime, 1),
+    },
+  };
+}
+
+function buildProjectHealth(
+  project: ProjectRow,
+  history: ProjectHealthScoreRow[],
+  opsHistory: SnapshotOpsMetricsRow[],
+): ProjectHealth {
   const latest = history[history.length - 1] ?? null;
   const previous = history.length > 1 ? history[history.length - 2] : null;
 
@@ -83,6 +178,8 @@ function buildProjectHealth(project: ProjectRow, history: ProjectHealthScoreRow[
     blockers: history.map((h) => ({ v: Math.round(h.blockers_score ?? 0), label: formatLabel(h.computed_at) })),
   };
 
+  const ops = buildOpsMetrics(opsHistory);
+
   return {
     id: project.id,
     name: project.name,
@@ -94,10 +191,13 @@ function buildProjectHealth(project: ProjectRow, history: ProjectHealthScoreRow[
     sparkline,
     timeSeries,
     subscoreSeries,
+    metrics: ops.metrics,
+    metricSeries: ops.metricSeries,
     pendingSurvey: project.pendingSurvey,
     pendingSurveyTrigger: project.pendingSurveyTrigger,
-    lastUpdated: latest?.computed_at ?? null,
+    lastUpdated: latest?.computed_at ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
     hasData: latest !== null,
+    hasMetrics: ops.hasMetrics,
   };
 }
 
@@ -105,8 +205,11 @@ export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
   const projects = await listProjects();
   return Promise.all(
     projects.map(async (project) => {
-      const history = await listProjectHealthScoreHistory(project.id);
-      return buildProjectHealth(project, history);
+      const [history, opsHistory] = await Promise.all([
+        listProjectHealthScoreHistory(project.id),
+        listProjectOpsMetricsHistory(project.id),
+      ]);
+      return buildProjectHealth(project, history, opsHistory);
     }),
   );
 }
@@ -114,6 +217,9 @@ export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
 export async function getProjectHealth(projectId: number): Promise<ProjectHealth | null> {
   const project = await getProject(projectId);
   if (!project) return null;
-  const history = await listProjectHealthScoreHistory(projectId);
-  return buildProjectHealth(project, history);
+  const [history, opsHistory] = await Promise.all([
+    listProjectHealthScoreHistory(projectId),
+    listProjectOpsMetricsHistory(projectId),
+  ]);
+  return buildProjectHealth(project, history, opsHistory);
 }

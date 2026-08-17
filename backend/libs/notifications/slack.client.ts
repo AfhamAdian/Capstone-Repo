@@ -22,6 +22,13 @@ function buildMessage(broadcast: SurveyLinkBroadcast): string {
     broadcast.projectNames.length > 1
       ? `covering *${broadcast.projectNames.join(', ')}*`
       : `for *${broadcast.projectNames[0]}*`;
+  if (broadcast.kind === 'reminder') {
+    return [
+      `Reminder: the anonymous developer pulse survey is still open ${projectLine}.`,
+      `Please respond by ${broadcast.deadline.toDateString()}: ${broadcast.url}`,
+      `This is a shared link — responses stay anonymous.`,
+    ].join('\n');
+  }
   return [
     `A short, anonymous developer pulse survey is open ${projectLine}.`,
     `Please respond by ${broadcast.deadline.toDateString()}: ${broadcast.url}`,

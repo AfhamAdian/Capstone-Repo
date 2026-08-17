@@ -41,23 +41,33 @@ export class SurveyQueueManager {
   }
 
   async enqueueSurveySend(surveyId: number): Promise<void> {
-    await this.sendQueue.add('send', { surveyId }, {
-      jobId: `survey-send-${surveyId}`,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    });
+    try {
+      await this.sendQueue.add('send', { surveyId }, {
+        jobId: `survey-send-${surveyId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+    } catch (error) {
+      if (error instanceof Error && /already exists/i.test(error.message)) return;
+      throw error;
+    }
   }
 
   async enqueueSurveyInsight(surveyId: number): Promise<void> {
-    await this.insightQueue.add('insight', { surveyId }, {
-      jobId: `survey-insight-${surveyId}`,
-      attempts: 3,
-      backoff: { type: 'exponential', delay: 2000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    });
+    try {
+      await this.insightQueue.add('insight', { surveyId }, {
+        jobId: `survey-insight-${surveyId}`,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 },
+        removeOnComplete: true,
+        removeOnFail: true,
+      });
+    } catch (error) {
+      if (error instanceof Error && /already exists/i.test(error.message)) return;
+      throw error;
+    }
   }
 
   /** Idempotent: BullMQ dedupes repeatable jobs with the same name+pattern, safe to call on every worker boot. */

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { InvalidSurveyLinkError, validateSurveyAnswers } from './survey-response.service.js';
 import type { SubmittedAnswer } from '../database/survey-response.js';
-import type { SurveyQuestionRow } from '../database/survey.js';
+import type { SurveyQuestion } from '../database/survey.js';
 
-const questions: SurveyQuestionRow[] = [
-  { id: 1, survey_id: 10, category: 'delivery', question_text: 'How is delivery?', question_type: 'scale', order_index: 0 },
-  { id: 2, survey_id: 10, category: 'blockers', question_text: 'What is blocking you?', question_type: 'text', order_index: 1 },
+const questions: SurveyQuestion[] = [
+  { id: 1, category: 'delivery', questionText: 'How is delivery?', questionType: 'scale' },
+  { id: 2, category: 'blockers', questionText: 'What is blocking you?', questionType: 'text' },
 ];
 
 describe('validateSurveyAnswers', () => {

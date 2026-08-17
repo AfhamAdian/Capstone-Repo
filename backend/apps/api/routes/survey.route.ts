@@ -7,6 +7,8 @@ import {
   listGlobalSurveys,
   getSurveyDetail,
   completeSurvey,
+  closeSurveyForm,
+  remindSurveyForm,
   updateSurveyQuestions,
   changeSurveyLifecycle,
 } from '../controllers/survey.controller.js';
@@ -25,6 +27,12 @@ surveyRouter.patch('/:surveyId/questions', asyncHandler(updateSurveyQuestions));
 
 /** PATCH /api/v1/surveys/:surveyId/complete */
 surveyRouter.patch('/:surveyId/complete', asyncHandler(completeSurvey));
+
+/** POST /api/v1/surveys/:surveyId/close */
+surveyRouter.post('/:surveyId/close', asyncHandler(closeSurveyForm));
+
+/** POST /api/v1/surveys/:surveyId/remind */
+surveyRouter.post('/:surveyId/remind', asyncHandler(remindSurveyForm));
 
 /** PATCH /api/v1/surveys/:surveyId/lifecycle */
 surveyRouter.patch('/:surveyId/lifecycle', asyncHandler(changeSurveyLifecycle));

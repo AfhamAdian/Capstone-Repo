@@ -6,11 +6,11 @@ export interface SubmittedAnswer {
   answerScale?: number;
 }
 
-export async function insertResponse(bundleId: number, submissionKey: string, answers: SubmittedAnswer[]): Promise<number> {
+export async function insertResponse(surveyId: number, submissionKey: string, answers: SubmittedAnswer[]): Promise<number> {
   const client = assertSupabaseClient();
 
   const { data, error } = await client.rpc('submit_survey_response', {
-    p_bundle_id: bundleId,
+    p_survey_id: surveyId,
     p_submission_key: submissionKey,
     p_answers: answers,
   });
@@ -19,4 +19,3 @@ export async function insertResponse(bundleId: number, submissionKey: string, an
   }
   return data;
 }
-

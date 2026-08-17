@@ -15,6 +15,21 @@ import type {
 
 const log = logger.child({ module: 'gemini-ai-client' });
 
+function describeGeminiError(error: unknown, action: string): Error {
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: string; status?: string; code?: number } };
+    const nested = parsed.error;
+    if (nested) {
+      const detail = nested.message?.trim() || nested.status || `HTTP ${nested.code ?? 'error'}`;
+      return new Error(`Gemini ${action} failed (${detail}). Check GEMINI_MODEL.`);
+    }
+  } catch {
+    // The SDK sometimes throws a plain string, not JSON.
+  }
+  return error instanceof Error ? error : new Error(raw);
+}
+
 /** Strips markdown fences the model sometimes adds despite instructions not to. */
 function extractJson(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -100,11 +115,16 @@ export class GeminiAiClient implements AiClient {
 
   async generateSurveyQuestions(input: GenerateSurveyQuestionsInput): Promise<GeneratedSurveyQuestion[]> {
     const prompt = buildSurveyQuestionsPrompt(input);
-    const response = await this.client.models.generateContent({
-      model: this.model,
-      contents: prompt,
-      config: { responseMimeType: 'application/json' },
-    });
+    let response;
+    try {
+      response = await this.client.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
+    } catch (error) {
+      throw describeGeminiError(error, 'question generation');
+    }
     const text = response.text;
     if (!text) {
       throw new Error('Gemini returned an empty response for survey question generation');
@@ -121,11 +141,16 @@ export class GeminiAiClient implements AiClient {
   async scoreSurveyQuestions(input: ScoreSurveyQuestionsInput): Promise<QuestionScore[]> {
     if (input.questions.length === 0) return [];
     const prompt = buildSurveyQuestionScoringPrompt(input);
-    const response = await this.client.models.generateContent({
-      model: this.model,
-      contents: prompt,
-      config: { responseMimeType: 'application/json' },
-    });
+    let response;
+    try {
+      response = await this.client.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
+    } catch (error) {
+      throw describeGeminiError(error, 'question scoring');
+    }
     const text = response.text;
     if (!text) {
       throw new Error('Gemini returned an empty response for survey question scoring');
@@ -141,11 +166,16 @@ export class GeminiAiClient implements AiClient {
 
   async analyzeSurveyResponses(input: AnalyzeSurveyResponsesInput): Promise<AnalyzeSurveyResponsesOutput> {
     const prompt = buildSurveyAnalysisPrompt(input);
-    const response = await this.client.models.generateContent({
-      model: this.model,
-      contents: prompt,
-      config: { responseMimeType: 'application/json' },
-    });
+    let response;
+    try {
+      response = await this.client.models.generateContent({
+        model: this.model,
+        contents: prompt,
+        config: { responseMimeType: 'application/json' },
+      });
+    } catch (error) {
+      throw describeGeminiError(error, 'response analysis');
+    }
     const text = response.text;
     if (!text) {
       throw new Error('Gemini returned an empty response for survey response analysis');

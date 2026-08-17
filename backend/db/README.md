@@ -14,20 +14,23 @@ db/
     002_projects.sql
     003_metrics.sql
     004_risk.sql
-    005_surveys.sql   <- compact current-state survey model
+    005_surveys.sql   <- compact current-state survey model (survey + survey_response)
 
   migrations/        Individual, numbered, meant-to-be-run changes, applied in
                       order. Each one is idempotent (CREATE ... IF NOT EXISTS /
                       ADD COLUMN IF NOT EXISTS), so re-running an already-applied
                       migration is a safe no-op.
-    002_survey.sql
-    003_survey_categories.sql
-    004_survey_scheduling.sql
-    005_survey_shared_lifecycle.sql
+    002_survey.sql                    (already applied — do not edit)
+    003_survey_categories.sql         (already applied — do not edit)
+    004_survey_scheduling.sql         (already applied — do not edit)
+    005_survey_shared_lifecycle.sql   (already applied — do not edit)
+    006_survey_schema_catchup.sql     (already written — do not edit)
+    007_survey_compact.sql            <- apply this next: two-table survey model
 
-  migration.sql      All of the above migrations consolidated into ONE runnable,
-                      idempotent script - the fast path for bringing any
-                      environment's database up to date in a single command.
+  migration.sql      Consolidated 002–006 only. Leave it as historical
+                      catch-up for environments that never received those
+                      files. After it (or instead, on a database that already
+                      ran 002–006), apply 007_survey_compact.sql.
 ```
 
 ## No migration runner (yet)
@@ -39,19 +42,23 @@ manually:
 
 ```bash
 psql "$DATABASE_URL" -f db/migration.sql
+psql "$DATABASE_URL" -f db/migrations/007_survey_compact.sql
 ```
 
-or paste the file into the Supabase SQL editor. Because every statement is
+or paste each file into the Supabase SQL editor. Because every statement is
 idempotent, this is safe to run repeatedly and safe to run against a database
 that's only partially migrated.
 
+On the live Supabase project that already ran the older survey migrations,
+apply **only** `007_survey_compact.sql`. Do not rewrite 002–006.
+
 ## Adding a new migration
 
-1. Add a new numbered file to `db/migrations/` (e.g. `005_your_change.sql`),
+1. Add a new numbered file to `db/migrations/` (e.g. `008_your_change.sql`),
    using `IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` guards so it stays
-   idempotent.
-2. Append the same statements to the end of `db/migration.sql`.
-3. Update (or add) the matching file in `db/schema/` so it reflects the new
+   idempotent. Never edit a numbered file that has already been applied.
+2. Do not rewrite `db/migration.sql` (it is the frozen 002–006 consolidation).
+3. Update the matching file in `db/schema/` so it reflects the new
    "current shape" - `db/migrations/*.sql` documents *how you get there*,
    `db/schema/*.sql` documents *what it looks like once you have*.
 

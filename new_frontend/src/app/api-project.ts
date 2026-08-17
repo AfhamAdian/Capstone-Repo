@@ -14,6 +14,20 @@ export interface HealthSeriesPoint {
   score: number;
 }
 
+export interface OpsMetrics {
+  commits: number | null;
+  ticketsClosed: number | null;
+  sprintVelocity: number | null;
+  openBlockers: number | null;
+  deployments: number | null;
+  prCycleTime: number | null;
+}
+
+export type OpsMetricSeries = Record<
+  "commits" | "tickets" | "velocity" | "blockers" | "deployments" | "prCycleTime",
+  { v: number; label: string }[]
+>;
+
 export interface ProjectHealth {
   id: number;
   name: string;
@@ -25,11 +39,15 @@ export interface ProjectHealth {
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
   subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string }[]>;
+  metrics: OpsMetrics | null;
+  metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;
   pendingSurveyTrigger: string | null;
   lastUpdated: string | null;
   /** False if this project has never been synced - score/subscores/series are all empty/zeroed, not "genuinely zero". */
   hasData: boolean;
+  /** False if no snapshot metric rows exist yet - keep the mock ops cards until then. */
+  hasMetrics: boolean;
 }
 
 async function request<T>(path: string): Promise<T> {

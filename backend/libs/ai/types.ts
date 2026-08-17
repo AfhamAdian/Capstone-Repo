@@ -4,7 +4,7 @@
  * implementation (Gemini today) can be swapped via client-factory.ts.
  */
 
-/** The 5 built-in rubric buckets that scoring/blending is fixed to. Every category (built-in or custom) maps to one of these - see database/survey-category.ts::getRubricCategoryMap. */
+/** The 5 rubric buckets that scoring/blending is fixed to. */
 export type SurveyQuestionCategory = 'delivery' | 'codeQuality' | 'cicd' | 'teamHealth' | 'blockers';
 export type SurveyQuestionType = 'text' | 'scale';
 
@@ -29,7 +29,7 @@ export interface SurveyHealthContext {
 }
 
 export interface GeneratedSurveyQuestion {
-  /** A category KEY (data-driven - may be a custom category, not necessarily one of the 5 rubric buckets). Translated to a SurveyQuestionCategory before analysis. */
+  /** One of the five rubric keys: delivery, codeQuality, cicd, teamHealth, blockers. */
   category: string;
   questionText: string;
   questionType: SurveyQuestionType;

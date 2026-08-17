@@ -5,8 +5,8 @@ import { SurveyFlow } from "../components/SurveyFlow";
 
 /**
  * Standalone, unauthenticated page for `/survey/:token` - the link developers
- * receive by email/Slack/Telegram/Discord. Loads the real question set for
- * the bundle behind the token and renders the same SurveyFlow wizard used for
+ * receive by Slack/Telegram/Discord. Loads the real question set for
+ * the survey behind the token and renders the same SurveyFlow wizard used for
  * the in-app demo preview, just wired to the real public submit endpoint.
  */
 export function PublicSurveyPage({ token }: { token: string }) {
