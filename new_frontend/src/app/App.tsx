@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
   BarChart2, Activity, AlertTriangle, Clock, Users,
@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
-import type { SyncRiskKey } from "./api";
+import { listProjects, type SyncRiskKey, type ProjectListItem } from "./api";
 import { LoginView } from "./pages/LoginView";
 import { RegisterView } from "./pages/RegisterView";
 import { ForgotPasswordView } from "./pages/ForgotPasswordView";
@@ -780,11 +780,12 @@ function SyncBtn() {
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,onAddProject,isAdmin}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
+  onAddProject?:()=>void;isAdmin?:boolean;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -831,6 +832,13 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               style={{fontFamily:"var(--font-display)"}}>
               <Plus size={17}/> Log Action
             </button>
+            {isAdmin&&onAddProject&&(
+              <button onClick={onAddProject}
+                className="flex items-center gap-2.5 border border-primary text-primary text-[15px] font-bold px-7 py-3 hover:bg-primary hover:text-primary-foreground transition-colors"
+                style={{fontFamily:"var(--font-display)"}}>
+                <Plus size={17}/> Add Project
+              </button>
+            )}
           </div>
         </div>
 
@@ -2497,6 +2505,38 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
+// Maps a real backend project into the rich Project shape. Score + subscores are real;
+// fields the backend doesn't produce yet (metrics, series, surveys) are left empty/0 — never fabricated.
+function realToProject(p: ProjectListItem): Project {
+  const s = p.score;
+  return {
+    id: String(p.id),
+    backendProjectId: String(p.id),
+    name: p.name,
+    team: p.vcs ?? "",
+    status: "active",
+    tracked: false,
+    score: s?.overallRisk ?? 0,
+    scoreTrend: 0,
+    sparkline: [],
+    timeSeries: [],
+    subscores: {
+      delivery: s?.subscores.delivery ?? 0,
+      codeQuality: s?.subscores.codeQuality ?? 0,
+      cicd: s?.subscores.cicd ?? 0,
+      teamHealth: s?.subscores.teamHealth ?? 0,
+      blockers: s?.subscores.blockers ?? 0,
+    },
+    metrics: { commits: 0, ticketsClosed: 0, sprintVelocity: 0, openBlockers: 0, deployments: 0, prCycleTime: 0 },
+    metricSeries: {},
+    subscoreSeries: {},
+    pendingSurvey: false,
+    pendingReview: 0,
+    lastUpdated: p.createdAt ?? "",
+    description: p.description ?? "",
+  };
+}
+
 export default function App() {
   const {user,isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const [dark,setDark]=useState(false);
@@ -2512,14 +2552,14 @@ export default function App() {
     if(typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")) return "reset-password";
     if(params?.get("invite")) return "register";
     if(!isAuthenticated) return "login";
-    return "projects";
+    return "portfolio";
   });
   // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
   useEffect(()=>{
     if(isAuthLoading) return;
     const authScreens:Screen[]=["login","register","forgot-password","reset-password"];
     if(isAuthenticated && (screen==="login" || screen==="register")){
-      setScreen("projects");
+      setScreen("portfolio");
     } else if(!isAuthenticated && !authScreens.includes(screen)){
       setScreen("login");
     }
@@ -2528,10 +2568,15 @@ export default function App() {
   const [activeId,setActiveId]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
-  const [projects,setProjects]=useState<Project[]>(PROJECTS);
-  const [trackedIds,setTrackedIds]=useState<Set<string>>(
-    ()=>new Set(PROJECTS.filter(p=>p.tracked).map(p=>p.id))
-  );
+  const [projects,setProjects]=useState<Project[]>([]);
+  const [trackedIds,setTrackedIds]=useState<Set<string>>(()=>new Set<string>());
+  // Load real projects (with their real scores) and map them into the rich Project shape.
+  const loadProjects=useCallback(()=>{
+    listProjects()
+      .then(rows=>setProjects(rows.map(realToProject)))
+      .catch(()=>setProjects([]));
+  },[]);
+  useEffect(()=>{ if(isAuthenticated) loadProjects(); },[isAuthenticated,loadProjects]);
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
@@ -2566,6 +2611,7 @@ export default function App() {
         onViewSurveys={()=>setScreen("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onAddProject={()=>setScreen("add-project")} isAdmin={user?.role==="admin"}
       />;
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk}/>;
@@ -2587,7 +2633,7 @@ export default function App() {
     }
   };
   const goToLogin=()=>{cleanUrl();setScreen("login");};
-  const goToApp=()=>{cleanUrl();setScreen("projects");};
+  const goToApp=()=>{cleanUrl();setScreen("portfolio");};
   if(screen==="login"){
     return <LoginView onSuccess={goToApp} onNavigateToRegister={()=>setScreen("register")} onNavigateToForgot={()=>setScreen("forgot-password")}/>;
   }
@@ -2606,7 +2652,7 @@ export default function App() {
   if(screen==="add-project"){
     // Only admins can create projects — members never reach the form.
     if(user?.role!=="admin") return <ProjectsView onAddProject={()=>setScreen("add-project")}/>;
-    return <AddProjectView onCreated={()=>setScreen("projects")} onCancel={()=>setScreen("projects")}/>;
+    return <AddProjectView onCreated={()=>{loadProjects();setScreen("portfolio");}} onCancel={()=>setScreen("portfolio")}/>;
   }
   if(screen==="workspaces"){
     return (

@@ -74,12 +74,28 @@ export async function resetPassword(token: string, password: string): Promise<st
 
 export type ToolCategory = "vcs" | "projectManagement" | "cicd" | "codeQuality";
 
+export interface ProjectRiskScore {
+  snapshotId: number;
+  snapshotTime: string | null;
+  overallRisk: number | null;
+  subscores: {
+    delivery: number | null;
+    codeQuality: number | null;
+    cicd: number | null;
+    engineeringProcess: number | null;
+    teamHealth: number | null;
+    security: number | null;
+    blockers: number | null;
+  };
+}
+
 export interface ProjectListItem {
   id: number;
   name: string;
   description: string | null;
   createdAt: string | null;
   vcs: string | null;
+  score: ProjectRiskScore | null;
 }
 
 export interface ToolIntegrationView {
