@@ -1,21 +1,36 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { getInvite } from "../api";
 
 export function RegisterView({
   onSuccess,
   onNavigateToLogin,
+  inviteToken,
 }: {
   onSuccess: () => void;
   onNavigateToLogin?: () => void;
+  inviteToken?: string;
 }) {
   const { register } = useWorkspace();
+  const isInvite = Boolean(inviteToken);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
+
+  // For an invite, prefill and lock the email from the token.
+  useEffect(() => {
+    if (!inviteToken) return;
+    getInvite(inviteToken)
+      .then((invite) => {
+        if (invite) setEmail(invite.email);
+        else setErrors({ form: "This invitation is invalid or has expired." });
+      })
+      .catch(() => setErrors({ form: "Could not load the invitation." }));
+  }, [inviteToken]);
 
   const clearError = (field: string) =>
     setErrors((prev) => (prev[field] ? { ...prev, [field]: "" } : prev));
@@ -29,7 +44,7 @@ export function RegisterView({
     else if (!/\S+@\S+\.\S+/.test(email)) newErrors.email = "Email is invalid";
     if (!password) newErrors.password = "Password is required";
     else if (password.length < 8) newErrors.password = "Password must be at least 8 characters";
-    if (!companyName.trim()) newErrors.companyName = "Company name is required";
+    if (!isInvite && !companyName.trim()) newErrors.companyName = "Company name is required";
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
@@ -39,7 +54,9 @@ export function RegisterView({
     setIsLoading(true);
     setErrors({});
     try {
-      await register({ name, email, password, companyName });
+      await register(
+        isInvite ? { name, email, password, inviteToken } : { name, email, password, companyName },
+      );
       onSuccess();
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : "Registration failed" });
@@ -74,7 +91,9 @@ export function RegisterView({
           <span className="text-xl font-bold tracking-widest uppercase" style={labelStyle}>
             Pulse
           </span>
-          <p className="text-sm text-muted-foreground text-center">Create your account and workspace</p>
+          <p className="text-sm text-muted-foreground text-center">
+            {isInvite ? "Accept your invitation and join the project" : "Create your account and workspace"}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -105,32 +124,35 @@ export function RegisterView({
               type="email"
               placeholder="you@company.com"
               value={email}
+              readOnly={isInvite}
               onChange={(e) => {
                 setEmail(e.target.value);
                 clearError("email");
               }}
-              className={inputClass("email")}
+              className={`${inputClass("email")}${isInvite ? " opacity-60 cursor-not-allowed" : ""}`}
             />
             {fieldError("email")}
           </div>
 
-          <div>
-            <label htmlFor="companyName" className={labelClass} style={labelStyle}>
-              Company Name
-            </label>
-            <input
-              id="companyName"
-              type="text"
-              placeholder="Acme Inc."
-              value={companyName}
-              onChange={(e) => {
-                setCompanyName(e.target.value);
-                clearError("companyName");
-              }}
-              className={inputClass("companyName")}
-            />
-            {fieldError("companyName")}
-          </div>
+          {!isInvite && (
+            <div>
+              <label htmlFor="companyName" className={labelClass} style={labelStyle}>
+                Company Name
+              </label>
+              <input
+                id="companyName"
+                type="text"
+                placeholder="Acme Inc."
+                value={companyName}
+                onChange={(e) => {
+                  setCompanyName(e.target.value);
+                  clearError("companyName");
+                }}
+                className={inputClass("companyName")}
+              />
+              {fieldError("companyName")}
+            </div>
+          )}
 
           <div>
             <label htmlFor="password" className={labelClass} style={labelStyle}>

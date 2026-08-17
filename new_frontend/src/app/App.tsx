@@ -19,6 +19,8 @@ import { LoginView } from "./pages/LoginView";
 import { RegisterView } from "./pages/RegisterView";
 import { ForgotPasswordView } from "./pages/ForgotPasswordView";
 import { ResetPasswordView } from "./pages/ResetPasswordView";
+import { ProjectsView } from "./pages/ProjectsView";
+import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
@@ -71,7 +73,7 @@ interface Survey {
   rawResponses: { question: string; answers: string[] }[];
 }
 
-type Screen = "login" | "register" | "forgot-password" | "reset-password" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+type Screen = "login" | "register" | "forgot-password" | "reset-password" | "projects" | "add-project" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
@@ -2498,24 +2500,26 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 export default function App() {
   const {isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const [dark,setDark]=useState(false);
-  // Reset link is /reset-password?token=...; capture the token once on first load.
+  // Links carry tokens: /reset-password?token=... and /register?invite=... — capture both once on load.
+  const params=typeof window!=="undefined" ? new URLSearchParams(window.location.search) : null;
   const [resetToken]=useState<string|null>(()=>
     typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")
-      ? new URLSearchParams(window.location.search).get("token")
+      ? (params?.get("token") ?? null)
       : null
   );
+  const [inviteToken]=useState<string|null>(()=> params?.get("invite") ?? null);
   const [screen,setScreen]=useState<Screen>(()=>{
     if(typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")) return "reset-password";
+    if(params?.get("invite")) return "register";
     if(!isAuthenticated) return "login";
-    if(!activeWorkspace) return "workspaces";
-    return "portfolio";
+    return "projects";
   });
   // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
   useEffect(()=>{
     if(isAuthLoading) return;
     const authScreens:Screen[]=["login","register","forgot-password","reset-password"];
     if(isAuthenticated && (screen==="login" || screen==="register")){
-      setScreen(activeWorkspace ? "portfolio" : "workspaces");
+      setScreen("projects");
     } else if(!isAuthenticated && !authScreens.includes(screen)){
       setScreen("login");
     }
@@ -2576,24 +2580,31 @@ export default function App() {
   if(isAuthLoading || (isAuthenticated && (screen==="login" || screen==="register"))){
     return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
-  // Return to login and drop any /reset-password?token=... from the address bar.
-  const goToLogin=()=>{
-    if(typeof window!=="undefined" && window.location.pathname!=="/"){
+  // Clean any ?token=/?invite= out of the address bar when leaving an auth screen.
+  const cleanUrl=()=>{
+    if(typeof window!=="undefined" && (window.location.search || window.location.pathname!=="/")){
       window.history.replaceState(null,"","/");
     }
-    setScreen("login");
   };
+  const goToLogin=()=>{cleanUrl();setScreen("login");};
+  const goToApp=()=>{cleanUrl();setScreen("projects");};
   if(screen==="login"){
-    return <LoginView onSuccess={()=>setScreen("workspaces")} onNavigateToRegister={()=>setScreen("register")} onNavigateToForgot={()=>setScreen("forgot-password")}/>;
+    return <LoginView onSuccess={goToApp} onNavigateToRegister={()=>setScreen("register")} onNavigateToForgot={()=>setScreen("forgot-password")}/>;
   }
   if(screen==="register"){
-    return <RegisterView onSuccess={()=>setScreen("workspaces")} onNavigateToLogin={()=>setScreen("login")}/>;
+    return <RegisterView onSuccess={goToApp} onNavigateToLogin={()=>setScreen("login")} inviteToken={inviteToken ?? undefined}/>;
   }
   if(screen==="forgot-password"){
     return <ForgotPasswordView onBackToLogin={()=>setScreen("login")}/>;
   }
   if(screen==="reset-password"){
     return <ResetPasswordView token={resetToken} onSuccess={goToLogin} onBackToLogin={goToLogin}/>;
+  }
+  if(screen==="projects"){
+    return <ProjectsView onAddProject={()=>setScreen("add-project")}/>;
+  }
+  if(screen==="add-project"){
+    return <AddProjectView onCreated={()=>setScreen("projects")} onCancel={()=>setScreen("projects")}/>;
   }
   if(screen==="workspaces"){
     return (

@@ -27,7 +27,8 @@ export interface RegisterInput {
   name: string;
   email: string;
   password: string;
-  companyName: string;
+  companyName?: string;
+  inviteToken?: string;
 }
 
 export async function register(input: RegisterInput): Promise<AuthUser> {
@@ -66,6 +67,89 @@ export async function resetPassword(token: string, password: string): Promise<st
     body: JSON.stringify({ token, password }),
   });
   return message;
+}
+
+// ---- Projects & invites ----
+
+export type ToolCategory = "vcs" | "projectManagement" | "cicd" | "codeQuality";
+
+export interface ProjectListItem {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string | null;
+  vcs: string | null;
+}
+
+export interface ToolIntegrationView {
+  category: ToolCategory;
+  toolName: string;
+  externalProjectId: string;
+  config: Record<string, unknown>;
+  isActive: boolean | null;
+}
+
+export interface ProjectMemberView {
+  userId: number;
+  name: string | null;
+  email: string | null;
+  role: string;
+}
+
+export interface ProjectDetail extends ProjectListItem {
+  integrations: ToolIntegrationView[];
+  members: ProjectMemberView[];
+  pendingInvites?: string[];
+}
+
+export interface IntegrationInput {
+  category: ToolCategory;
+  toolName: string;
+  externalProjectId: string;
+  config: Record<string, string>;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  vcs: { toolName: string; externalProjectId: string; config: Record<string, string> };
+  integrations?: IntegrationInput[];
+  invites?: string[];
+}
+
+// Company projects, optionally filtered by version-control tool (the "workspace").
+export async function listProjects(vcs?: string): Promise<ProjectListItem[]> {
+  const query = vcs ? `?vcs=${encodeURIComponent(vcs)}` : "";
+  const { projects } = await apiRequest<{ projects: ProjectListItem[] }>(`/projects${query}`);
+  return projects;
+}
+
+// Admin-only; returns the full project (integrations + members + which invites were emailed).
+export async function createProject(input: CreateProjectInput): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>("/projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return project;
+}
+
+export async function getProject(id: number): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${id}`);
+  return project;
+}
+
+export interface InvitePreview {
+  email: string;
+  projectId: number;
+}
+
+// Resolves an invite token for prefilling the registration form; null when not found/expired.
+export async function getInvite(token: string): Promise<InvitePreview | null> {
+  const response = await fetch(`${API_BASE_URL}/auth/invite/${token}`, { credentials: "include" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Failed to load invite (${response.status})`);
+  const { invite } = (await response.json()) as { invite: InvitePreview };
+  return invite;
 }
 
 // Returns null when not authenticated (401), instead of throwing.
