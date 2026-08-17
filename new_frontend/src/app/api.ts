@@ -21,6 +21,7 @@ export interface AuthUser {
   companyId: number;
   name: string;
   email: string;
+  role: "admin" | "member";
 }
 
 export interface RegisterInput {

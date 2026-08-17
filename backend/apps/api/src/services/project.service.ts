@@ -19,6 +19,11 @@ import {
 } from '../database/project-tool-integration.js';
 import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
+import {
+  getLatestScoreForProject,
+  getLatestScoresForProjects,
+  type ProjectRiskScore,
+} from '../database/score.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 
@@ -100,6 +105,7 @@ export interface ProjectListItem {
   description: string | null;
   createdAt: string | null;
   vcs: SupportedTool | null;
+  score: ProjectRiskScore | null;
 }
 
 export interface ProjectDetail extends ProjectListItem {
@@ -124,9 +130,10 @@ function redactConfig(config: Record<string, unknown>): Record<string, unknown> 
 }
 
 async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Promise<ProjectDetail> {
-  const [integrations, members] = await Promise.all([
+  const [integrations, members, score] = await Promise.all([
     listIntegrations(project.id),
     listProjectMembers(project.id),
+    getLatestScoreForProject(project.id),
   ]);
   const vcs = integrations.find((i) => i.tool_category === 'vcs')?.tool_name ?? null;
 
@@ -140,6 +147,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     description: project.description,
     createdAt: project.created_at,
     vcs,
+    score,
     integrations: integrations.map((i) => ({
       category: i.tool_category,
       toolName: i.tool_name,
@@ -162,7 +170,11 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
       ? await listProjectsByCompany(auth.companyId)
       : await listProjectsForMember(auth.companyId, auth.userId);
 
-  const integrations = await listIntegrationsForProjects(projects.map((p) => p.id));
+  const projectIds = projects.map((p) => p.id);
+  const [integrations, scores] = await Promise.all([
+    listIntegrationsForProjects(projectIds),
+    getLatestScoresForProjects(projectIds),
+  ]);
   const vcsByProject = new Map<number, SupportedTool>();
   for (const i of integrations) {
     if (i.tool_category === 'vcs') vcsByProject.set(i.project_id, i.tool_name);
@@ -175,6 +187,7 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
       description: p.description,
       createdAt: p.created_at,
       vcs: vcsByProject.get(p.id) ?? null,
+      score: scores.get(p.id) ?? null,
     }))
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
 }

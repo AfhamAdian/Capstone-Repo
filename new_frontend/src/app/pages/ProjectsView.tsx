@@ -11,6 +11,7 @@ import { useWorkspace } from "../context/WorkspaceContext";
 
 export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
   const { user, logout } = useWorkspace();
+  const isAdmin = user?.role === "admin";
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -70,14 +71,16 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
             Projects
           </h1>
-          <button
-            onClick={onAddProject}
-            className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2.5 hover:opacity-90 transition-opacity"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            <Plus size={16} />
-            Add Project
-          </button>
+          {isAdmin && (
+            <button
+              onClick={onAddProject}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-sm font-semibold px-4 py-2.5 hover:opacity-90 transition-opacity"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              <Plus size={16} />
+              Add Project
+            </button>
+          )}
         </div>
 
         {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
@@ -86,9 +89,13 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
         {!loading && !error && projects.length === 0 && (
           <div className="text-center py-16 border border-dashed border-border">
             <p className="text-muted-foreground text-sm mb-4">No projects yet.</p>
-            <button onClick={onAddProject} className="text-primary font-semibold text-sm hover:underline">
-              Create your first project
-            </button>
+            {isAdmin ? (
+              <button onClick={onAddProject} className="text-primary font-semibold text-sm hover:underline">
+                Create your first project
+              </button>
+            ) : (
+              <p className="text-muted-foreground text-xs">Ask an admin to add a project.</p>
+            )}
           </div>
         )}
 

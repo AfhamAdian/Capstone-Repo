@@ -2498,7 +2498,7 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const {isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
+  const {user,isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const [dark,setDark]=useState(false);
   // Links carry tokens: /reset-password?token=... and /register?invite=... — capture both once on load.
   const params=typeof window!=="undefined" ? new URLSearchParams(window.location.search) : null;
@@ -2604,6 +2604,8 @@ export default function App() {
     return <ProjectsView onAddProject={()=>setScreen("add-project")}/>;
   }
   if(screen==="add-project"){
+    // Only admins can create projects — members never reach the form.
+    if(user?.role!=="admin") return <ProjectsView onAddProject={()=>setScreen("add-project")}/>;
     return <AddProjectView onCreated={()=>setScreen("projects")} onCancel={()=>setScreen("projects")}/>;
   }
   if(screen==="workspaces"){
