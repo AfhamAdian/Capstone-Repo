@@ -19,6 +19,7 @@ import {
 } from '../database/project-tool-integration.js';
 import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail } from '../database/user.js';
+import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 
 const log = logger.child({ component: 'project-service' });
@@ -152,6 +153,8 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
     description: input.description ?? null,
   });
 
+  const pendingInvites: string[] = [];
+
   try {
     // Version control — the workspace; always exactly one.
     await addIntegration({
@@ -179,8 +182,7 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
       });
     }
 
-    // Invites: assign existing company members now; unknown emails are pending the email flow (M3).
-    const pendingInvites: string[] = [];
+    // Invites: assign existing company members now; unknown emails get an email invite below.
     for (const rawEmail of input.invites ?? []) {
       const email = rawEmail?.trim().toLowerCase();
       if (!email) continue;
@@ -191,14 +193,24 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
         pendingInvites.push(email);
       }
     }
-
-    log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
-    return toDetail(project, pendingInvites);
   } catch (error) {
     await deleteProject(project.id);
     log.error({ err: error, projectId: project.id }, 'project creation failed, rolled back');
     throw error;
   }
+
+  // Project committed — email the unknown invitees a registration link (best-effort).
+  if (pendingInvites.length > 0) {
+    await sendProjectInvites({
+      companyId: auth.companyId,
+      projectId: project.id,
+      projectName: project.name,
+      emails: pendingInvites,
+    });
+  }
+
+  log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
+  return toDetail(project, pendingInvites);
 }
 
 // M2.3 — project detail, authorized (company match; non-admins must be assigned).

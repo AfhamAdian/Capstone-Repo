@@ -6,6 +6,7 @@ import {
   AuthError,
   forgotPassword,
   getCurrentUser,
+  getInvite,
   login,
   logout,
   register,
@@ -36,8 +37,8 @@ function handleAuthError(error: unknown, response: Response): void {
 // POST /api/v1/auth/register
 export async function registerHandler(request: Request, response: Response): Promise<void> {
   try {
-    const { name, email, password, companyName } = request.body ?? {};
-    const result = await register({ name, email, password, companyName });
+    const { name, email, password, companyName, inviteToken } = request.body ?? {};
+    const result = await register({ name, email, password, companyName, inviteToken });
     response.cookie(SESSION_COOKIE_NAME, result.sessionId, sessionCookieOptions());
     response.status(201).json({ user: result.user });
   } catch (error) {
@@ -75,6 +76,16 @@ export async function meHandler(request: Request, response: Response): Promise<v
     return;
   }
   response.status(200).json({ user });
+}
+
+// GET /api/v1/auth/invite/:token — resolves an invite for prefilling the registration form.
+export async function getInviteHandler(request: Request, response: Response): Promise<void> {
+  const invite = await getInvite(request.params.token ?? '');
+  if (!invite) {
+    response.status(404).json({ message: 'Invitation not found or expired' });
+    return;
+  }
+  response.status(200).json({ invite });
 }
 
 // POST /api/v1/auth/forgot-password — always 200 to avoid revealing whether the email is registered.

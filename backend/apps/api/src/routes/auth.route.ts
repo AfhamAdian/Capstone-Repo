@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   forgotPasswordHandler,
+  getInviteHandler,
   loginHandler,
   logoutHandler,
   meHandler,
@@ -18,3 +19,4 @@ authRouter.post('/logout', asyncHandler(logoutHandler));
 authRouter.get('/me', requireAuth, asyncHandler(meHandler));
 authRouter.post('/forgot-password', asyncHandler(forgotPasswordHandler));
 authRouter.post('/reset-password', asyncHandler(resetPasswordHandler));
+authRouter.get('/invite/:token', asyncHandler(getInviteHandler));

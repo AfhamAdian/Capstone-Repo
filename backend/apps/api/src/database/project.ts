@@ -1,5 +1,6 @@
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { assertSupabaseClient } from '../config/supabase.js';
+import { listIntegrations } from './project-tool-integration.js';
 
 type ToolIntegration = {
   credentials?: Record<string, string | undefined>;
@@ -157,7 +158,7 @@ export async function deleteProject(id: number): Promise<void> {
   await client.from('project').delete().eq('id', id);
 }
 
-//TODO: Better design. Have make it work for multipurpose use.
+// Reads a project's tool credentials for sync: projecttoolintegration.config first, legacy project columns as fallback.
 export async function getProjectIntegrationsForTools(
   projectId: string,
   tools: SyncRequestPayload['tools'],
@@ -180,73 +181,77 @@ export async function getProjectIntegrationsForTools(
     throw new Error(`Project not found: ${projectId}`);
   }
 
+  // Per-tool config from the generic integrations table (the source of truth for new projects).
+  const rows = await listIntegrations(numericProjectId);
+  const cfgByTool = new Map<string, Record<string, unknown>>(
+    rows.map((row) => [row.tool_name, row.config ?? {}]),
+  );
+  const cfg = (tool: string, key: string): string | undefined => {
+    const value = cfgByTool.get(tool)?.[key];
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  };
+
   const integrations: Record<string, ToolIntegration> = {};
 
-  const jiraToken = process.env.JIRA_TOKEN ?? data.jira_token ?? data.JIRA_TOKEN;
-  const jiraEmail = process.env.JIRA_EMAIL ?? data.jira_email ?? data.JIRA_EMAIL;
-  const jiraBaseUrl = process.env.JIRA_BASE_URL ?? data.jira_base_url ?? data.JIRA_BASE_URL;
-  const jiraProjectKey = data.jira_project_key ?? data.JIRA_PROJECT_KEY;
-  const jiraBoardId = data.jira_board_id ?? data.JIRA_BOARD_ID;
-  const githubToken = process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
-
-  const sonarToken = data.sonar_token ?? data.SONAR_TOKEN;
-  const sonarOrganization = data.sonar_organization ?? data.SONAR_ORGANIZATION;
-  const sonarProjectKey = data.sonar_project_key ?? data.SONAR_PROJECT_KEY;
-  const sonarBaseUrl = data.sonar_base_url ?? data.SONAR_BASE_URL;
-
   if (tools.includes('github')) {
-    if (!data.owner || !data.repo || !githubToken) {
-      throw new Error('Missing GitHub integration fields in project table: owner/repo/github_token');
+    const token = cfg('github', 'token') ?? process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
+    const owner = cfg('github', 'owner') ?? data.owner;
+    const repo = cfg('github', 'repo') ?? data.repo;
+    if (!token || !owner || !repo) {
+      throw new Error('Missing GitHub integration fields (need token, owner, repo)');
     }
+    integrations.github = { credentials: { token }, project: { owner, repo } };
+  }
 
-    integrations.github = {
-      credentials: {
-        token: githubToken,
-      },
-      project: {
-        owner: data.owner,
-        repo: data.repo,
-      },
-    };
+  if (tools.includes('gitlab')) {
+    const token = cfg('gitlab', 'token') ?? process.env.GITLAB_TOKEN;
+    const owner = cfg('gitlab', 'owner');
+    const repo = cfg('gitlab', 'repo');
+    if (!token || !owner || !repo) {
+      throw new Error('Missing GitLab integration fields (need token, owner, repo)');
+    }
+    integrations.gitlab = { credentials: { token }, project: { owner, repo } };
   }
 
   if (tools.includes('jira')) {
-    if (!jiraToken || !jiraEmail || !jiraBaseUrl || !jiraProjectKey) {
-      throw new Error(
-        'Missing Jira integration fields in project table: jira_token/jira_email/jira_base_url/jira_project_key',
-      );
+    const token = cfg('jira', 'token') ?? process.env.JIRA_TOKEN ?? data.jira_token ?? data.JIRA_TOKEN;
+    const email = cfg('jira', 'email') ?? process.env.JIRA_EMAIL ?? data.jira_email ?? data.JIRA_EMAIL;
+    const baseUrl = cfg('jira', 'baseUrl') ?? process.env.JIRA_BASE_URL ?? data.jira_base_url ?? data.JIRA_BASE_URL;
+    const projectKey = cfg('jira', 'projectKey') ?? data.jira_project_key ?? data.JIRA_PROJECT_KEY;
+    const boardId = cfg('jira', 'boardId') ?? data.jira_board_id ?? data.JIRA_BOARD_ID;
+    if (!token || !email || !baseUrl || !projectKey) {
+      throw new Error('Missing Jira integration fields (need token, email, baseUrl, projectKey)');
     }
-
     integrations.jira = {
-      credentials: {
-        token: jiraToken,
-        email: jiraEmail,
-        baseUrl: jiraBaseUrl,
-      },
-      project: {
-        projectKey: jiraProjectKey,
-        boardId: jiraBoardId ?? undefined,
-      },
+      credentials: { token, email, baseUrl },
+      project: { projectKey, boardId: boardId ?? undefined },
     };
   }
 
   if (tools.includes('sonarqube')) {
-    if (!sonarToken || !sonarProjectKey) {
-      throw new Error(
-        'Missing SonarQube integration fields in project table: sonar_token/sonar_project_key',
-      );
+    const token = cfg('sonarqube', 'token') ?? data.sonar_token ?? data.SONAR_TOKEN;
+    const baseUrl = cfg('sonarqube', 'baseUrl') ?? data.sonar_base_url ?? data.SONAR_BASE_URL;
+    const projectKey = cfg('sonarqube', 'projectKey') ?? data.sonar_project_key ?? data.SONAR_PROJECT_KEY;
+    const organization = cfg('sonarqube', 'organization') ?? data.sonar_organization ?? data.SONAR_ORGANIZATION;
+    if (!token || !projectKey) {
+      throw new Error('Missing SonarQube integration fields (need token, projectKey)');
     }
-
     integrations.sonarqube = {
-      credentials: {
-        token: sonarToken,
-        baseUrl: sonarBaseUrl ?? undefined,
-      },
-      project: {
-        projectKey: sonarProjectKey,
-        organization: sonarOrganization ?? undefined,
-      },
+      credentials: { token, baseUrl: baseUrl ?? undefined },
+      project: { projectKey, organization: organization ?? undefined },
     };
+  }
+
+  if (tools.includes('github-actions')) {
+    // CI runs on the GitHub repo, so it can borrow the github config when not set explicitly.
+    const token =
+      cfg('github-actions', 'token') ?? cfg('github', 'token') ?? process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
+    const owner = cfg('github-actions', 'owner') ?? cfg('github', 'owner') ?? data.owner;
+    const repo = cfg('github-actions', 'repo') ?? cfg('github', 'repo') ?? data.repo;
+    if (!token || !owner || !repo) {
+      throw new Error('Missing GitHub Actions integration fields (need token, owner, repo)');
+    }
+    integrations['github-actions'] = { credentials: { token }, project: { owner, repo } };
   }
 
   return integrations;

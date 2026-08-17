@@ -3,6 +3,7 @@
 import bcrypt from 'bcryptjs';
 import { sessionStore } from '@libs/auth/session-store.js';
 import { resetTokenStore } from '@libs/auth/reset-token-store.js';
+import { inviteTokenStore } from '@libs/auth/invite-token-store.js';
 import {
   createCompany,
   createUser,
@@ -13,6 +14,7 @@ import {
   updatePassword,
   type PublicUser,
 } from '../database/user.js';
+import { addProjectMember } from '../database/projectmember.js';
 import { sendPasswordResetEmail } from './email.service.js';
 import { env } from '../config/env.js';
 import { logger } from '@libs/logger.js';
@@ -34,7 +36,8 @@ export interface RegisterInput {
   name: string;
   email: string;
   password: string;
-  companyName: string;
+  companyName?: string;
+  inviteToken?: string;
 }
 
 export interface LoginInput {
@@ -58,8 +61,13 @@ function assertValidRegisterInput(input: RegisterInput): void {
   if (!input.companyName?.trim()) throw new AuthError('Company name is required', 400);
 }
 
-// Creates the company then its first user; rolls the company back if the user insert fails.
+// An invite token registers a member into an existing company; otherwise a new admin+company is created.
 export async function register(input: RegisterInput): Promise<AuthResult> {
+  return input.inviteToken ? registerInvitedMember(input) : registerAdmin(input);
+}
+
+// Creates the company then its first (admin) user; rolls the company back if the user insert fails.
+async function registerAdmin(input: RegisterInput): Promise<AuthResult> {
   assertValidRegisterInput(input);
 
   const existing = await findUserByEmail(input.email);
@@ -68,7 +76,7 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
   }
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
-  const companyId = await createCompany(input.companyName);
+  const companyId = await createCompany(input.companyName!);
 
   try {
     const user = await createUser({
@@ -93,6 +101,56 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
     log.error({ err: error, companyId }, 'user creation failed, rolled back company');
     throw error;
   }
+}
+
+// Registers an invited user as a member of the inviting company and assigns them to the project.
+async function registerInvitedMember(input: RegisterInput): Promise<AuthResult> {
+  if (!input.name?.trim()) throw new AuthError('Name is required', 400);
+  if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
+    throw new AuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400);
+  }
+
+  // Peek first so validation failures don't burn the single-use token.
+  const invite = await inviteTokenStore.get(input.inviteToken!);
+  if (!invite) {
+    throw new AuthError('Invalid or expired invitation', 400);
+  }
+
+  const existing = await findUserByEmail(invite.email);
+  if (existing) {
+    throw new AuthError('An account with this email already exists. Please log in.', 409);
+  }
+
+  const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+  const user = await createUser({
+    companyId: invite.companyId,
+    name: input.name,
+    email: invite.email,
+    passwordHash,
+    role: 'member',
+  });
+
+  await addProjectMember({ projectId: invite.projectId, userId: user.id });
+  await inviteTokenStore.consume(input.inviteToken!); // burn the token after success
+
+  const sessionId = await sessionStore.create({
+    userId: user.id,
+    companyId: user.company_id,
+    email: user.email,
+    role: user.role,
+  });
+
+  log.info({ userId: user.id, projectId: invite.projectId }, 'registered invited member');
+  return { user: toPublicUser(user), sessionId };
+}
+
+// Returns the invite's email/project for prefilling the registration form (non-consuming).
+export async function getInvite(
+  token: string,
+): Promise<{ email: string; projectId: number } | null> {
+  if (!token) return null;
+  const invite = await inviteTokenStore.get(token);
+  return invite ? { email: invite.email, projectId: invite.projectId } : null;
 }
 
 // Same error for unknown email and wrong password so accounts cannot be enumerated.
