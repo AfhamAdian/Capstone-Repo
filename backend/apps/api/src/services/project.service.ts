@@ -18,7 +18,7 @@ import {
   type ToolIntegrationRecord,
 } from '../database/project-tool-integration.js';
 import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
-import { findUserByEmail } from '../database/user.js';
+import { findUserByEmail, findUsersByIds } from '../database/user.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 
@@ -34,14 +34,49 @@ export class ProjectError extends Error {
   }
 }
 
-const VCS_PROVIDERS = new Set(['github', 'gitlab', 'bitbucket']);
+// Valid tool names per category (from the SupportedTool provider unions) — enforces category/tool pairing.
+const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
+  vcs: new Set(['github', 'gitlab', 'bitbucket']),
+  projectManagement: new Set(['jira', 'trello', 'asana']),
+  cicd: new Set(['jenkins', 'circleci', 'travisci', 'github-actions']),
+  codeQuality: new Set(['sonarqube', 'codeclimate', 'codacy']),
+};
+const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
 const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
+
+function assertToolInCategory(category: ToolCategory, toolName: string): void {
+  if (!CATEGORY_TOOLS[category]?.has(toolName)) {
+    throw new ProjectError(`${toolName} is not a valid ${category} tool`, 400);
+  }
+}
 // Substrings that mark a config key as secret (matches accessToken, clientSecret, apiKey, …).
 const SECRET_KEY_PATTERNS = ['token', 'secret', 'password', 'passwd', 'apikey'];
 
 function isSecretKey(key: string): boolean {
   const k = key.toLowerCase();
   return k === 'pass' || SECRET_KEY_PATTERNS.some((pattern) => k.includes(pattern));
+}
+
+// Config keys the sync pipeline requires per tool; unknown tools (e.g. bitbucket) are not yet validated.
+const REQUIRED_CONFIG_KEYS: Partial<Record<SupportedTool, string[]>> = {
+  github: ['token', 'owner', 'repo'],
+  gitlab: ['token', 'owner', 'repo'],
+  jira: ['token', 'email', 'baseUrl', 'projectKey'],
+  sonarqube: ['token', 'projectKey'],
+  'github-actions': ['token', 'owner', 'repo'],
+};
+
+// Reject at create time any tool whose config is missing the keys sync will later need.
+function assertConfigForTool(toolName: SupportedTool, config: Record<string, unknown>): void {
+  const required = REQUIRED_CONFIG_KEYS[toolName];
+  if (!required) return;
+  const missing = required.filter((key) => {
+    const value = config?.[key];
+    return typeof value !== 'string' || value.trim() === '';
+  });
+  if (missing.length > 0) {
+    throw new ProjectError(`Missing config for ${toolName}: ${missing.join(', ')}`, 400);
+  }
 }
 
 interface IntegrationInput {
@@ -75,7 +110,7 @@ export interface ProjectDetail extends ProjectListItem {
     config: Record<string, unknown>;
     isActive: boolean | null;
   }>;
-  members: Array<{ userId: number; role: string }>;
+  members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
   pendingInvites?: string[];
 }
 
@@ -95,6 +130,10 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
   ]);
   const vcs = integrations.find((i) => i.tool_category === 'vcs')?.tool_name ?? null;
 
+  // Enrich members with name/email so they read like the pending-invite emails, not bare ids.
+  const users = await findUsersByIds(members.map((m) => m.user_id));
+  const userById = new Map(users.map((u) => [u.id, u]));
+
   return {
     id: project.id,
     name: project.name,
@@ -108,7 +147,10 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
       config: redactConfig(i.config),
       isActive: i.is_active,
     })),
-    members: members.map((m) => ({ userId: m.user_id, role: m.role })),
+    members: members.map((m) => {
+      const user = userById.get(m.user_id);
+      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
+    }),
     ...(pendingInvites ? { pendingInvites } : {}),
   };
 }
@@ -151,6 +193,19 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
   if (!input.vcs.externalProjectId?.trim()) {
     throw new ProjectError('Version control project identifier is required', 400);
   }
+  assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
+
+  // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
+  for (const integration of input.integrations ?? []) {
+    if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
+      throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
+    }
+    if (!integration.toolName || !integration.externalProjectId?.trim()) {
+      throw new ProjectError('Each integration needs a toolName and externalProjectId', 400);
+    }
+    assertToolInCategory(integration.category, integration.toolName);
+    assertConfigForTool(integration.toolName, integration.config ?? {});
+  }
 
   const project = await dbCreateProject({
     companyId: auth.companyId,
@@ -170,14 +225,8 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
       config: input.vcs.config ?? {},
     });
 
-    // Other-category tools — optional.
+    // Other-category tools — optional (already validated above).
     for (const integration of input.integrations ?? []) {
-      if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
-        throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
-      }
-      if (!integration.toolName || !integration.externalProjectId?.trim()) {
-        throw new ProjectError('Each integration needs a toolName and externalProjectId', 400);
-      }
       await addIntegration({
         projectId: project.id,
         category: integration.category,

@@ -54,6 +54,21 @@ export async function findUserByEmail(email: string): Promise<UserRecord | null>
   return (data as UserRecord | null) ?? null;
 }
 
+// Batch lookup for enriching a project's member list.
+export async function findUsersByIds(ids: number[]): Promise<UserRecord[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client.from(USER_TABLE).select('*').in('id', ids);
+
+  if (error) {
+    throw new Error(`Failed to look up users by ids: ${error.message}`);
+  }
+  return (data as UserRecord[]) ?? [];
+}
+
 export async function findUserById(id: number): Promise<UserRecord | null> {
   const client = assertSupabaseClient();
 
