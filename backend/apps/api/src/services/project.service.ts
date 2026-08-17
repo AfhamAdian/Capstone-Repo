@@ -183,12 +183,19 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
     }
 
     // Invites: assign existing company members now; unknown emails get an email invite below.
+    // Dedupe emails and track added users so a repeated invitee can't hit the unique constraint.
+    const seenEmails = new Set<string>();
+    const addedUserIds = new Set<number>();
     for (const rawEmail of input.invites ?? []) {
       const email = rawEmail?.trim().toLowerCase();
-      if (!email) continue;
+      if (!email || seenEmails.has(email)) continue;
+      seenEmails.add(email);
       const user = await findUserByEmail(email);
       if (user && user.company_id === auth.companyId) {
-        await addProjectMember({ projectId: project.id, userId: user.id });
+        if (!addedUserIds.has(user.id)) {
+          await addProjectMember({ projectId: project.id, userId: user.id });
+          addedUserIds.add(user.id);
+        }
       } else {
         pendingInvites.push(email);
       }
