@@ -8,6 +8,7 @@ import {
   createCompany,
   createUser,
   deleteCompany,
+  deleteUser,
   findUserByEmail,
   findUserById,
   toPublicUser,
@@ -130,7 +131,14 @@ async function registerInvitedMember(input: RegisterInput): Promise<AuthResult> 
     role: 'member',
   });
 
-  await addProjectMember({ projectId: invite.projectId, userId: user.id });
+  try {
+    await addProjectMember({ projectId: invite.projectId, userId: user.id });
+  } catch (error) {
+    await deleteUser(user.id); // roll back the orphaned user
+    log.error({ err: error, userId: user.id }, 'member assignment failed, rolled back user');
+    throw error;
+  }
+
   await inviteTokenStore.consume(input.inviteToken!); // burn the token after success
 
   const sessionId = await sessionStore.create({

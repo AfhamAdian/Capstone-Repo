@@ -36,8 +36,13 @@ export class ProjectError extends Error {
 
 const VCS_PROVIDERS = new Set(['github', 'gitlab', 'bitbucket']);
 const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
-// Config keys never returned to the client.
-const SECRET_KEYS = new Set(['token', 'password', 'secret', 'apikey', 'pass']);
+// Substrings that mark a config key as secret (matches accessToken, clientSecret, apiKey, …).
+const SECRET_KEY_PATTERNS = ['token', 'secret', 'password', 'passwd', 'apikey'];
+
+function isSecretKey(key: string): boolean {
+  const k = key.toLowerCase();
+  return k === 'pass' || SECRET_KEY_PATTERNS.some((pattern) => k.includes(pattern));
+}
 
 interface IntegrationInput {
   category: ToolCategory;
@@ -78,7 +83,7 @@ export interface ProjectDetail extends ProjectListItem {
 function redactConfig(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(config ?? {})) {
-    out[key] = SECRET_KEYS.has(key.toLowerCase()) ? '***' : value;
+    out[key] = isSecretKey(key) ? '***' : value;
   }
   return out;
 }

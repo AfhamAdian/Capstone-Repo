@@ -105,6 +105,12 @@ export async function deleteCompany(id: number): Promise<void> {
   await client.from('company').delete().eq('id', id);
 }
 
+// Compensating delete for a user (e.g. invited registration that fails after the row is created).
+export async function deleteUser(id: number): Promise<void> {
+  const client = assertSupabaseClient();
+  await client.from(USER_TABLE).delete().eq('id', id);
+}
+
 export async function createUser(input: {
   companyId: number;
   name: string;
