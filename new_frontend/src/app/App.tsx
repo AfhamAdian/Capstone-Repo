@@ -38,6 +38,7 @@ import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { VcsWorkspaceView } from "./pages/VcsWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
+import { useDashboardSync } from "./hooks/useDashboardSync";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
 
@@ -1086,20 +1087,25 @@ function ProjectPageSkeleton() {
 
 // ─── PORTFOLIO ───────────────────────────────────────────────────────────────
 
-function SyncBtn() {
-  const [spin,setSpin]=useState(false);
+function SyncBtn({project,onSyncComplete}:{
+  project:Project;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
+}) {
+  const backendProjectId=project.backendProjectId;
+  const {active,start}=useDashboardSync(project,onSyncComplete);
   return (
     <button
-      onClick={e=>{e.stopPropagation();setSpin(true);setTimeout(()=>setSpin(false),1400);}}
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors ${spin?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}
-      title="Sync data">
-      <RefreshCw size={13} className={spin?"animate-spin":""}/>
-      <span style={{fontFamily:"var(--font-display)"}}>{spin?"Syncing…":"Sync"}</span>
+      onClick={e=>{e.stopPropagation();start();}}
+      disabled={active||!backendProjectId}
+      title={backendProjectId?"Sync data":"This project isn't linked to a backend project yet"}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${active?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}>
+      <RefreshCw size={13} className={active?"animate-spin":""}/>
+      <span style={{fontFamily:"var(--font-display)"}}>{active?"Syncing…":"Sync"}</span>
     </button>
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
@@ -1107,6 +1113,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
   loading?:boolean;
   onAddProject?:()=>void;isAdmin?:boolean;
   workspaceName?:string;onBackToWorkspaces?:()=>void;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -1243,7 +1250,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                       {p.scoreTrend>0?"+":""}{p.scoreTrend}
                     </span>
                   </div>
-                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn/></div>
+                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn project={p} onSyncComplete={onSyncComplete}/></div>
                 </div>
               </motion.div>
             ))}
@@ -3315,6 +3322,7 @@ export default function App() {
         onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onSyncComplete={updateProjectRisk}
       />;
     }
     if(projectsError && projects.length===0){
@@ -3343,6 +3351,7 @@ export default function App() {
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
         onAddProject={()=>go("add-project")} isAdmin={user?.role==="admin"}
         workspaceName={workspaceLabel} onBackToWorkspaces={()=>go("workspaces")}
+        onSyncComplete={updateProjectRisk}
       />;
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
