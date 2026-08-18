@@ -4,6 +4,8 @@ import { listProjects, type ProjectListItem } from "../api";
 import { useWorkspace } from "../context/WorkspaceContext";
 
 const VCS_LABELS: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
+// Every version-control workspace the platform supports — always shown, even with 0 projects.
+const PROVIDERS = ["github", "gitlab", "bitbucket"] as const;
 
 function VCSIcon({ vcs, className }: { vcs: string; className?: string }) {
   switch (vcs) {
@@ -50,12 +52,11 @@ export function VcsWorkspaceView({
       .finally(() => setLoading(false));
   }, []);
 
-  // Group real projects by their version-control tool — that's the "workspace".
+  // Count real projects per version-control tool — that's the "workspace".
   const counts = projects.reduce<Record<string, number>>((m, p) => {
     if (p.vcs) m[p.vcs] = (m[p.vcs] ?? 0) + 1;
     return m;
   }, {});
-  const vcsList = Object.keys(counts);
 
   return (
     <div className="h-screen overflow-y-auto bg-background text-foreground">
@@ -89,68 +90,74 @@ export function VcsWorkspaceView({
 
         {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-        {!loading && vcsList.length === 0 && (
-          <div className="border border-dashed border-border p-12 text-center">
-            <p className="text-muted-foreground text-sm mb-4">No workspaces yet — add a project to create one.</p>
-            {isAdmin ? (
-              <button onClick={onAddProject} className="text-primary font-semibold text-sm hover:underline">
-                Add your first project
-              </button>
-            ) : (
-              <p className="text-xs text-muted-foreground">Ask an admin to add a project.</p>
-            )}
-          </div>
-        )}
+        {!loading && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {PROVIDERS.map((vcs) => {
+                const count = counts[vcs] ?? 0;
+                return (
+                  <button
+                    key={vcs}
+                    onClick={() => onSelect(vcs)}
+                    className="group relative text-left border border-border bg-card hover:border-primary/50 transition-colors overflow-hidden"
+                  >
+                    <div className="h-1 w-full bg-primary" />
+                    <div className="p-5">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="h-9 w-9 bg-foreground flex items-center justify-center text-background">
+                          <VCSIcon vcs={vcs} className="h-4.5 w-4.5" />
+                        </div>
+                        <span className="text-xs font-medium px-2 py-0.5 border border-border text-muted-foreground">
+                          {VCS_LABELS[vcs]}
+                        </span>
+                      </div>
+                      <h3 className="text-[15px] font-bold truncate mb-3" style={{ fontFamily: "var(--font-display)" }}>
+                        {VCS_LABELS[vcs]}
+                      </h3>
+                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
+                        <FolderKanban size={13} />
+                        <span>{count} project{count !== 1 ? "s" : ""}</span>
+                      </div>
+                      <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground group-hover:text-primary transition-colors">
+                        Open workspace
+                        <ChevronRight size={13} />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {vcsList.map((vcs) => (
-            <button
-              key={vcs}
-              onClick={() => onSelect(vcs)}
-              className="group relative text-left border border-border bg-card hover:border-primary/50 transition-colors overflow-hidden"
-            >
-              <div className="h-1 w-full bg-primary" />
-              <div className="p-5">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="h-9 w-9 bg-foreground flex items-center justify-center text-background">
-                    <VCSIcon vcs={vcs} className="h-4.5 w-4.5" />
+              {isAdmin && (
+                <button
+                  onClick={onAddProject}
+                  className="group relative text-left border-2 border-dashed border-border hover:border-primary transition-colors"
+                >
+                  <div className="p-5 flex flex-col h-full">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="h-9 w-9 border-2 border-dashed border-border group-hover:border-primary flex items-center justify-center transition-colors">
+                        <Plus size={16} className="text-muted-foreground group-hover:text-primary transition-colors" />
+                      </div>
+                    </div>
+                    <h3 className="text-[15px] font-bold text-muted-foreground group-hover:text-foreground mb-1 transition-colors" style={{ fontFamily: "var(--font-display)" }}>
+                      Add Project
+                    </h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Connect a repository and track a new project in a workspace.
+                    </p>
+                    <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-transparent group-hover:text-primary transition-colors">
+                      Get started
+                      <ChevronRight size={13} />
+                    </div>
                   </div>
-                  <span className="text-xs font-medium px-2 py-0.5 border border-border text-muted-foreground">
-                    {VCS_LABELS[vcs] ?? vcs}
-                  </span>
-                </div>
-                <h3 className="text-[15px] font-bold truncate mb-3" style={{ fontFamily: "var(--font-display)" }}>
-                  {VCS_LABELS[vcs] ?? vcs}
-                </h3>
-                <div className="flex items-center gap-1 text-muted-foreground text-xs">
-                  <FolderKanban size={13} />
-                  <span>{counts[vcs]} project{counts[vcs] !== 1 ? "s" : ""}</span>
-                </div>
-                <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground group-hover:text-primary transition-colors">
-                  Open workspace
-                  <ChevronRight size={13} />
-                </div>
-              </div>
-            </button>
-          ))}
+                </button>
+              )}
+            </div>
 
-          {isAdmin && vcsList.length > 0 && (
-            <button
-              onClick={onAddProject}
-              className="group relative text-left border-2 border-dashed border-border hover:border-primary transition-colors"
-            >
-              <div className="p-5 flex flex-col h-full">
-                <div className="h-9 w-9 border-2 border-dashed border-border group-hover:border-primary flex items-center justify-center transition-colors mb-4">
-                  <Plus size={16} className="text-muted-foreground group-hover:text-primary transition-colors" />
-                </div>
-                <h3 className="text-[15px] font-bold text-muted-foreground group-hover:text-foreground mb-1 transition-colors" style={{ fontFamily: "var(--font-display)" }}>
-                  Add Project
-                </h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">Connect a repository and track a new project.</p>
-              </div>
-            </button>
-          )}
-        </div>
+            <p className="mt-8 text-sm text-muted-foreground">
+              {projects.length} project{projects.length !== 1 ? "s" : ""} tracked across your workspaces
+            </p>
+          </>
+        )}
       </main>
     </div>
   );
