@@ -31,6 +31,19 @@ function createApp() {
 
 const app = createApp();
 
-app.listen(env.port, () => {
+const server = app.listen(env.port, () => {
   console.log(`Server is running on port ${env.port} in ${env.nodeEnv} mode`);
+});
+
+server.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    console.error(
+      `Port ${env.port} is already in use. This API needs that port.\n` +
+        `The worker uses WORKER_PORT (4000) and is not the cause.\n` +
+        `Find what is bound:  ss -tlnp | grep ${env.port}   or   docker ps\n` +
+        `Free it, then run npm run dev again.`,
+    );
+    process.exit(1);
+  }
+  throw error;
 });
