@@ -1099,13 +1099,14 @@ function SyncBtn() {
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
   loading?:boolean;
   onAddProject?:()=>void;isAdmin?:boolean;
+  workspaceName?:string;onBackToWorkspaces?:()=>void;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -1126,6 +1127,13 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
         {/* ── Header ── */}
         <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
           <div>
+            {workspaceName&&(
+              <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm text-muted-foreground mb-1">
+                <button onClick={onBackToWorkspaces} className="font-medium hover:text-foreground transition-colors">Workspaces</button>
+                <ChevronRight size={13} className="text-border"/>
+                <span className="font-semibold text-foreground">{workspaceName}</span>
+              </nav>
+            )}
             <h1 className="text-4xl font-bold uppercase tracking-tight" style={{fontFamily:"var(--font-display)"}}>Portfolio</h1>
             <p className="text-base text-muted-foreground mt-1">
               {loading?"Loading projects from your workspace…":`${projects.length} projects · ${projects.filter(p=>p.score<60).length} need attention · ${surveys.length} total surveys`}
@@ -3226,6 +3234,7 @@ export default function App() {
       .catch(()=>{});
   },[isAuthenticated]);
   const activeVcs=activeWorkspace?.vcs ?? null;
+  const workspaceLabel=activeVcs?({github:"GitHub",gitlab:"GitLab",bitbucket:"Bitbucket"}[activeVcs]??activeVcs):undefined;
   // Portfolio is scoped to the chosen vcs workspace (and, via our company-scoped map, the user's company).
   const visibleProjects=useMemo(()=>
     activeVcs
@@ -3317,6 +3326,7 @@ export default function App() {
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
         onAddProject={()=>go("add-project")} isAdmin={user?.role==="admin"}
+        workspaceName={workspaceLabel} onBackToWorkspaces={()=>go("workspaces")}
       />;
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
