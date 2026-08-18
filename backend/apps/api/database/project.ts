@@ -173,7 +173,7 @@ export async function getProjectIntegrationsForTools(
 
   const { data, error } = await client
     .from('project')
-    .select('*')
+    .select('id')
     .eq('id', numericProjectId)
     .single();
 
@@ -181,7 +181,8 @@ export async function getProjectIntegrationsForTools(
     throw new Error(`Project not found: ${projectId}`);
   }
 
-  // Per-tool config from the generic integrations table (the source of truth for new projects).
+  // Per-tool config from the generic integrations table — the single source of truth.
+  // Credentials come from config only; projects created before this flow must be re-added.
   const rows = await listIntegrations(numericProjectId);
   const cfgByTool = new Map<string, Record<string, unknown>>(
     rows.map((row) => [row.tool_name, row.config ?? {}]),
@@ -194,9 +195,9 @@ export async function getProjectIntegrationsForTools(
   const integrations: Record<string, ToolIntegration> = {};
 
   if (tools.includes('github')) {
-    const token = cfg('github', 'token') ?? process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
-    const owner = cfg('github', 'owner') ?? data.owner;
-    const repo = cfg('github', 'repo') ?? data.repo;
+    const token = cfg('github', 'token');
+    const owner = cfg('github', 'owner');
+    const repo = cfg('github', 'repo');
     if (!token || !owner || !repo) {
       throw new Error('Missing GitHub integration fields (need token, owner, repo)');
     }
@@ -204,7 +205,7 @@ export async function getProjectIntegrationsForTools(
   }
 
   if (tools.includes('gitlab')) {
-    const token = cfg('gitlab', 'token') ?? process.env.GITLAB_TOKEN;
+    const token = cfg('gitlab', 'token');
     const owner = cfg('gitlab', 'owner');
     const repo = cfg('gitlab', 'repo');
     if (!token || !owner || !repo) {
@@ -214,11 +215,11 @@ export async function getProjectIntegrationsForTools(
   }
 
   if (tools.includes('jira')) {
-    const token = cfg('jira', 'token') ?? process.env.JIRA_TOKEN ?? data.jira_token ?? data.JIRA_TOKEN;
-    const email = cfg('jira', 'email') ?? process.env.JIRA_EMAIL ?? data.jira_email ?? data.JIRA_EMAIL;
-    const baseUrl = cfg('jira', 'baseUrl') ?? process.env.JIRA_BASE_URL ?? data.jira_base_url ?? data.JIRA_BASE_URL;
-    const projectKey = cfg('jira', 'projectKey') ?? data.jira_project_key ?? data.JIRA_PROJECT_KEY;
-    const boardId = cfg('jira', 'boardId') ?? data.jira_board_id ?? data.JIRA_BOARD_ID;
+    const token = cfg('jira', 'token');
+    const email = cfg('jira', 'email');
+    const baseUrl = cfg('jira', 'baseUrl');
+    const projectKey = cfg('jira', 'projectKey');
+    const boardId = cfg('jira', 'boardId');
     if (!token || !email || !baseUrl || !projectKey) {
       throw new Error('Missing Jira integration fields (need token, email, baseUrl, projectKey)');
     }
@@ -229,10 +230,10 @@ export async function getProjectIntegrationsForTools(
   }
 
   if (tools.includes('sonarqube')) {
-    const token = cfg('sonarqube', 'token') ?? data.sonar_token ?? data.SONAR_TOKEN;
-    const baseUrl = cfg('sonarqube', 'baseUrl') ?? data.sonar_base_url ?? data.SONAR_BASE_URL;
-    const projectKey = cfg('sonarqube', 'projectKey') ?? data.sonar_project_key ?? data.SONAR_PROJECT_KEY;
-    const organization = cfg('sonarqube', 'organization') ?? data.sonar_organization ?? data.SONAR_ORGANIZATION;
+    const token = cfg('sonarqube', 'token');
+    const baseUrl = cfg('sonarqube', 'baseUrl');
+    const projectKey = cfg('sonarqube', 'projectKey');
+    const organization = cfg('sonarqube', 'organization');
     if (!token || !projectKey) {
       throw new Error('Missing SonarQube integration fields (need token, projectKey)');
     }
@@ -244,10 +245,9 @@ export async function getProjectIntegrationsForTools(
 
   if (tools.includes('github-actions')) {
     // CI runs on the GitHub repo, so it can borrow the github config when not set explicitly.
-    const token =
-      cfg('github-actions', 'token') ?? cfg('github', 'token') ?? process.env.GITHUB_TOKEN ?? data.github_token ?? data.GITHUB_TOKEN;
-    const owner = cfg('github-actions', 'owner') ?? cfg('github', 'owner') ?? data.owner;
-    const repo = cfg('github-actions', 'repo') ?? cfg('github', 'repo') ?? data.repo;
+    const token = cfg('github-actions', 'token') ?? cfg('github', 'token');
+    const owner = cfg('github-actions', 'owner') ?? cfg('github', 'owner');
+    const repo = cfg('github-actions', 'repo') ?? cfg('github', 'repo');
     if (!token || !owner || !repo) {
       throw new Error('Missing GitHub Actions integration fields (need token, owner, repo)');
     }
