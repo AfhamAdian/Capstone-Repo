@@ -1190,7 +1190,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
             {mkeys.map(mk=>{
               const meta=MMETA[mk];
               const val=MVAL[mk](project.metrics);
-              const series=project.metricSeries[mseries[mk]];
+              const series=project.metricSeries[mseries[mk]]??[];
               const isBad=meta.invertBad&&val>(mk==="blockers"?3:36);
               const strokeColor=isBad?"var(--health-crit)":meta.color;
               const gradId=`mg-${mk}-${project.id}`;
@@ -1297,7 +1297,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
       </div>
 
       <AnimatePresence>
-        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
       </AnimatePresence>
       <AnimatePresence>
         {reviewOpen&&(
