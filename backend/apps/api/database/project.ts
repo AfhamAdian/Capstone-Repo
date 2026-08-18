@@ -268,6 +268,7 @@ export async function getProjectName(projectId: number): Promise<string> {
 
 export interface ProjectRow {
   id: number;
+  companyId: number;
   name: string;
   description: string | null;
   owner: string | null;
@@ -278,17 +279,12 @@ export interface ProjectRow {
 }
 
 /** Every project, for the dashboard's project list. No auth/company scoping yet (see authorization.service.ts's known gaps). */
-export async function listProjects(): Promise<ProjectRow[]> {
-  const client = assertSupabaseClient();
-  const { data, error } = await client
-    .from('project')
-    .select('id, name, description, owner, repo, created_at, pending_survey, pending_survey_trigger')
-    .order('name', { ascending: true });
-  if (error) {
-    throw new Error(`Failed to list projects: ${error.message}`);
-  }
-  return (data ?? []).map((p) => ({
+const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, owner, repo, created_at, pending_survey, pending_survey_trigger';
+
+function toProjectRow(p: Record<string, unknown>): ProjectRow {
+  return {
     id: p.id as number,
+    companyId: p.company_id as number,
     name: p.name as string,
     description: (p.description as string) ?? null,
     owner: (p.owner as string) ?? null,
@@ -296,30 +292,33 @@ export async function listProjects(): Promise<ProjectRow[]> {
     createdAt: (p.created_at as string) ?? null,
     pendingSurvey: Boolean(p.pending_survey),
     pendingSurveyTrigger: (p.pending_survey_trigger as string) ?? null,
-  }));
+  };
+}
+
+// Scoped to a company when companyId is given (dashboard feed); unscoped only for internal callers.
+export async function listProjects(companyId?: number): Promise<ProjectRow[]> {
+  const client = assertSupabaseClient();
+  let query = client.from('project').select(PROJECT_ROW_COLUMNS).order('name', { ascending: true });
+  if (companyId !== undefined) query = query.eq('company_id', companyId);
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(`Failed to list projects: ${error.message}`);
+  }
+  return (data ?? []).map(toProjectRow);
 }
 
 export async function getProject(projectId: number): Promise<ProjectRow | null> {
   const client = assertSupabaseClient();
   const { data, error } = await client
     .from('project')
-    .select('id, name, description, owner, repo, created_at, pending_survey, pending_survey_trigger')
+    .select(PROJECT_ROW_COLUMNS)
     .eq('id', projectId)
     .maybeSingle();
   if (error) {
     throw new Error(`Failed to load project ${projectId}: ${error.message}`);
   }
   if (!data) return null;
-  return {
-    id: data.id as number,
-    name: data.name as string,
-    description: (data.description as string) ?? null,
-    owner: (data.owner as string) ?? null,
-    repo: (data.repo as string) ?? null,
-    createdAt: (data.created_at as string) ?? null,
-    pendingSurvey: Boolean(data.pending_survey),
-    pendingSurveyTrigger: (data.pending_survey_trigger as string) ?? null,
-  };
+  return toProjectRow(data);
 }
 
 export async function setPendingSurvey(projectId: number, pending: boolean, trigger?: string): Promise<void> {

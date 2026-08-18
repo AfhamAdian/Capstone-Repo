@@ -14,8 +14,8 @@ export const projectRouter = Router();
 projectRouter.get('/', requireAuth, asyncHandler(listProjectsHandler));
 projectRouter.post('/', requireAuth, asyncHandler(createProjectHandler));
 
-// Read-only project + health-score dashboard feed (no auth scoping yet). Registered
+// Read-only project + health-score dashboard feed, scoped to the caller's company. Registered
 // before '/:id' so the literal '/health' segment isn't swallowed by the :id param.
-projectRouter.get('/health', asyncHandler(listProjectsHealthHandler));
+projectRouter.get('/health', requireAuth, asyncHandler(listProjectsHealthHandler));
 projectRouter.get('/:id', requireAuth, asyncHandler(getProjectHandler));
-projectRouter.get('/:projectId/health', asyncHandler(getProjectHealthDetail));
+projectRouter.get('/:projectId/health', requireAuth, asyncHandler(getProjectHealthDetail));
