@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Activity, ChevronRight, FolderKanban, GitBranch, LogOut, Plus, Users } from "lucide-react";
-import { useWorkspace, type VcsProvider, type Workspace } from "../context/WorkspaceContext";
+import { useWorkspace, TEMPLATE_WORKSPACES, type VcsProvider, type Workspace } from "../context/WorkspaceContext";
 
 const VCS_LABELS: Record<VcsProvider, string> = {
   github: "GitHub",
@@ -8,13 +8,6 @@ const VCS_LABELS: Record<VcsProvider, string> = {
   bitbucket: "Bitbucket",
   azure: "Azure DevOps",
 };
-
-const TEMPLATE_WORKSPACES: Workspace[] = [
-  { id: "template-github", name: "GitHub Example", vcs: "github", projectsCount: 0, membersCount: 0, isNew: true },
-  { id: "template-gitlab", name: "GitLab Example", vcs: "gitlab", projectsCount: 0, membersCount: 0, isNew: true },
-  { id: "template-bitbucket", name: "Bitbucket Example", vcs: "bitbucket", projectsCount: 0, membersCount: 0, isNew: true },
-  { id: "template-azure", name: "Azure DevOps Example", vcs: "azure", projectsCount: 0, membersCount: 0, isNew: true },
-];
 
 function VCSIcon({ vcs, className }: { vcs: VcsProvider; className?: string }) {
   switch (vcs) {

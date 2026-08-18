@@ -1,136 +1,172 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { listProjectsWithHealth, type ProjectHealth } from "../api-project";
 
-interface ProjectIdentity {
+export interface BackendProject {
   id: string;
-  backendProjectId?: string;
-}
-
-/**
- * Mirrors the subset of App.tsx's local `Project` interface that real health
- * data can fill in. Structural typing makes this assignable wherever a
- * `Project` is expected without a shared import.
- */
-interface ProjectHealthFields {
+  backendProjectId: string;
   name: string;
+  owner: string | null;
+  repo: string | null;
   team: string;
   description: string;
+  status: "active" | "maintenance";
+  tracked: boolean;
   score: number;
   scoreTrend: number;
-  subscores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
   sparkline: { v: number }[];
   timeSeries: { date: string; label: string; score: number }[];
-  subscoreSeries: Record<string, { v: number; label: string }[]>;
+  subscores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
+  subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
-  metricSeries: Record<string, { v: number; label: string }[]>;
+  metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
   pendingSurvey: boolean;
+  pendingReview: number;
   lastUpdated: string;
+  hasData: boolean;
+  hasMetrics: boolean;
 }
 
-function toFields(health: ProjectHealth): Partial<ProjectHealthFields> {
-  const base: Partial<ProjectHealthFields> = {
-    name: health.name,
-    team: health.team,
-    description: health.description,
-    pendingSurvey: health.pendingSurvey,
-  };
-  if (health.hasMetrics && health.metrics) {
-    const metrics: Partial<ProjectHealthFields["metrics"]> = {};
-    if (health.metrics.commits != null) metrics.commits = health.metrics.commits;
-    if (health.metrics.ticketsClosed != null) metrics.ticketsClosed = health.metrics.ticketsClosed;
-    if (health.metrics.sprintVelocity != null) metrics.sprintVelocity = health.metrics.sprintVelocity;
-    if (health.metrics.openBlockers != null) metrics.openBlockers = health.metrics.openBlockers;
-    if (health.metrics.deployments != null) metrics.deployments = health.metrics.deployments;
-    if (health.metrics.prCycleTime != null) metrics.prCycleTime = health.metrics.prCycleTime;
-    if (Object.keys(metrics).length > 0) base.metrics = metrics as ProjectHealthFields["metrics"];
+const EMPTY_SUBSCORES = { delivery: 0, codeQuality: 0, cicd: 0, teamHealth: 0, blockers: 0 };
+const EMPTY_METRICS = { commits: 0, ticketsClosed: 0, sprintVelocity: 0, openBlockers: 0, deployments: 0, prCycleTime: 0 };
+const EMPTY_METRIC_SERIES = {
+  commits: [],
+  tickets: [],
+  velocity: [],
+  blockers: [],
+  deployments: [],
+  prCycleTime: [],
+};
+const EMPTY_SUBSCORE_SERIES = {
+  delivery: [],
+  codeQuality: [],
+  cicd: [],
+  teamHealth: [],
+  blockers: [],
+};
 
-    const metricSeries: Record<string, { v: number; label: string }[]> = {};
-    for (const [key, series] of Object.entries(health.metricSeries ?? {})) {
-      if (series.length > 0) metricSeries[key] = series;
-    }
-    if (Object.keys(metricSeries).length > 0) base.metricSeries = metricSeries;
-  }
-  // Only overlay score/history once this project has actually been synced at least
-  // once - otherwise every value is 0/empty and would replace a perfectly good demo
-  // chart with a flat line. Keep the mock's score/subscores/series until real data exists.
-  if (!health.hasData || health.score === null || !health.subscores) return base;
+export function projectSlug(name: string, id: number): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || `project-${id}`;
+}
+
+const LEGACY_PROJECT_SLUGS: Record<string, string> = {
+  "onyx-mobile": "1",
+  "meridian-api": "2",
+};
+
+export function findProjectByPath<T extends { id: string; backendProjectId?: string; name: string; repo?: string | null }>(
+  projects: T[],
+  pathId: string | null,
+): T | null {
+  if (!pathId) return null;
+  const q = decodeURIComponent(pathId).toLowerCase();
+  const legacyBackendId = LEGACY_PROJECT_SLUGS[q];
+  return (
+    projects.find(
+      (p) =>
+        p.id === pathId ||
+        p.backendProjectId === pathId ||
+        (legacyBackendId && p.backendProjectId === legacyBackendId) ||
+        p.name.toLowerCase() === q ||
+        (p.repo && p.repo.toLowerCase() === q),
+    ) ?? null
+  );
+}
+
+function formatLastUpdated(iso: string | null): string {
+  if (!iso) return "Never synced";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  const min = Math.round(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 48) return `${hr}h ago`;
+  return `${Math.round(hr / 24)}d ago`;
+}
+
+function uniqueSlug(name: string, id: number, used: Set<string>): string {
+  let slug = projectSlug(name, id);
+  if (used.has(slug)) slug = `${slug}-${id}`;
+  used.add(slug);
+  return slug;
+}
+
+export function mapHealthToProject(health: ProjectHealth, slug: string): BackendProject {
   return {
-    ...base,
-    score: health.score,
-    scoreTrend: health.scoreTrend,
-    subscores: health.subscores,
-    sparkline: health.sparkline,
-    timeSeries: health.timeSeries,
-    subscoreSeries: health.subscoreSeries,
-    lastUpdated: health.lastUpdated ?? undefined,
+    id: slug,
+    backendProjectId: String(health.id),
+    name: health.name,
+    owner: health.owner,
+    repo: health.repo,
+    team: health.team || (health.owner && health.repo ? `${health.owner}/${health.repo}` : health.owner || ""),
+    description: health.description || "",
+    status: "active",
+    tracked: true,
+    score: health.hasData && health.score !== null ? health.score : 0,
+    scoreTrend: health.hasData ? health.scoreTrend : 0,
+    sparkline: health.hasData ? health.sparkline : [],
+    timeSeries: health.hasData ? health.timeSeries : [],
+    subscores: health.hasData && health.subscores ? health.subscores : EMPTY_SUBSCORES,
+    subscoreSeries: health.hasData ? health.subscoreSeries : EMPTY_SUBSCORE_SERIES,
+    metrics: health.hasMetrics && health.metrics
+      ? {
+          commits: health.metrics.commits ?? 0,
+          ticketsClosed: health.metrics.ticketsClosed ?? 0,
+          sprintVelocity: health.metrics.sprintVelocity ?? 0,
+          openBlockers: health.metrics.openBlockers ?? 0,
+          deployments: health.metrics.deployments ?? 0,
+          prCycleTime: health.metrics.prCycleTime ?? 0,
+        }
+      : EMPTY_METRICS,
+    metricSeries: health.hasMetrics ? health.metricSeries : EMPTY_METRIC_SERIES,
+    pendingSurvey: health.pendingSurvey,
+    pendingReview: 0,
+    lastUpdated: formatLastUpdated(health.lastUpdated),
+    hasData: health.hasData,
+    hasMetrics: health.hasMetrics,
   };
 }
 
 /**
- * Fetches real health scores and snapshot ops metrics for every backend-synced
- * project (matched via backendProjectId) and merges them into `projects` in
- * place. Demo-only projects (no backendProjectId) are left untouched. After a
- * live sync, App.tsx calls `refetch` so the metric cards update from Supabase.
+ * Loads the live project list from GET /projects. Names, owners, scores, and
+ * metric series all come from Supabase — the UI stays on a skeleton until the
+ * first response so dummy rows never flash.
  */
-export function useProjectHealthSync<T extends ProjectIdentity>(
-  projects: T[],
-  setProjects: Dispatch<SetStateAction<T[]>>,
-) {
+export function useBackendProjects() {
+  const [projects, setProjects] = useState<BackendProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const backedProjectIds = projects
-    .filter((p) => p.backendProjectId)
-    .map((p) => p.backendProjectId!)
-    .sort()
-    .join(",");
-
-  const applyHealth = useCallback(async () => {
-    if (!backedProjectIds) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
+  const refetch = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const healthList = await listProjectsWithHealth();
-      const healthByBackendId = new Map(healthList.map((h) => [String(h.id), h]));
-
-      setProjects((prev) =>
-        prev.map((p) => {
-          if (!p.backendProjectId) return p;
-          const health = healthByBackendId.get(p.backendProjectId);
-          if (!health) return p;
-          const fields = toFields(health);
-          const current = p as T & Partial<ProjectHealthFields>;
-          return {
-            ...current,
-            ...fields,
-            metrics: fields.metrics ? { ...current.metrics, ...fields.metrics } : current.metrics,
-            metricSeries: fields.metricSeries ? { ...current.metricSeries, ...fields.metricSeries } : current.metricSeries,
-          } as T;
-        }),
-      );
+      setProjects((prev) => {
+        const used = new Set<string>();
+        const previousByBackend = new Map(prev.map((p) => [p.backendProjectId, p.id]));
+        return healthList.map((health) => {
+          const existing = previousByBackend.get(String(health.id));
+          if (existing) used.add(existing);
+          const slug = existing ?? uniqueSlug(health.name, health.id, used);
+          return mapHealthToProject(health, slug);
+        });
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load project health");
+      setError(err instanceof Error ? err.message : "Failed to load projects");
     } finally {
       setLoading(false);
     }
-  }, [backedProjectIds, setProjects]);
+  }, []);
 
   useEffect(() => {
-    if (!backedProjectIds) {
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    void applyHealth().then(() => {
-      if (cancelled) return;
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [applyHealth, backedProjectIds]);
+    void refetch();
+  }, [refetch]);
 
-  return { loading, error, refetch: applyHealth };
+  return { projects, setProjects, loading, error, refetch };
 }

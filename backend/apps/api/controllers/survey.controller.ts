@@ -40,7 +40,11 @@ export async function generateSurveyQuestions(request: Request, response: Respon
   const projectId = parseProjectId(request, response);
   if (projectId === null) return;
 
-  const { trigger, customGuidance } = request.body as { trigger?: string; customGuidance?: string };
+  const { trigger, customGuidance, force } = request.body as {
+    trigger?: string;
+    customGuidance?: string;
+    force?: boolean;
+  };
   if (!trigger) {
     response.status(400).json({ message: 'trigger is required' });
     return;
@@ -48,8 +52,10 @@ export async function generateSurveyQuestions(request: Request, response: Respon
 
   try {
     await assertProjectAccess(projectId, request);
-    const questions = await surveyService.generateQuestions(projectId, trigger, customGuidance);
-    response.status(200).json({ questions });
+    const result = await surveyService.generateQuestions(projectId, trigger, customGuidance, {
+      force: force === true,
+    });
+    response.status(200).json(result);
   } catch (error) {
     if (error instanceof SurveyValidationError) {
       response.status(400).json({ message: error.message });
@@ -60,7 +66,8 @@ export async function generateSurveyQuestions(request: Request, response: Respon
       return;
     }
     const message = error instanceof Error ? error.message : 'Failed to generate survey questions';
-    response.status(500).json({ message });
+    const status = message.includes('Monthly manual survey limit') ? 429 : 500;
+    response.status(status).json({ message });
   }
 }
 
@@ -69,11 +76,12 @@ export async function sendSurvey(request: Request, response: Response): Promise<
   const projectId = parseProjectId(request, response);
   if (projectId === null) return;
 
-  const { trigger, customGuidance, questions, targetCount } = request.body as {
+  const { trigger, customGuidance, questions, targetCount, surveyId } = request.body as {
     trigger?: string;
     customGuidance?: string;
     questions?: unknown;
     targetCount?: number;
+    surveyId?: number;
   };
   if (!trigger) {
     response.status(400).json({ message: 'trigger is required' });
@@ -87,6 +95,7 @@ export async function sendSurvey(request: Request, response: Response): Promise<
   try {
     await assertProjectAccess(projectId, request);
     const result = await surveyService.createAndSendSurvey(projectId, {
+      surveyId: typeof surveyId === 'number' ? surveyId : undefined,
       trigger,
       customGuidance,
       questions: questions as GeneratedSurveyQuestion[],
@@ -100,6 +109,14 @@ export async function sendSurvey(request: Request, response: Response): Promise<
     }
     if (error instanceof ForbiddenError) {
       response.status(403).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyNotFoundError) {
+      response.status(404).json({ message: error.message });
+      return;
+    }
+    if (error instanceof SurveyLockedError) {
+      response.status(409).json({ message: error.message });
       return;
     }
     const message = error instanceof Error ? error.message : 'Failed to send survey';

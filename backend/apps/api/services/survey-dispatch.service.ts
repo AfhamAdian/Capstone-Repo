@@ -16,7 +16,7 @@ import {
   markSurveyNotified,
   type SurveyDeliveryResults,
 } from '../database/survey.js';
-import { countProjectMembers } from '../database/project-member.js';
+import { countProjectDevelopers } from '../database/project-member.js';
 import { getProjectName } from '../database/project.js';
 
 export interface DispatchSurveyInput {
@@ -62,13 +62,13 @@ export async function dispatchAnonymousSurveyBroadcast(
   if (survey.status === 'cancelled' || survey.status === 'paused') return null;
   if (survey.sent_at) return null;
 
-  const [memberCount, projectName] = await Promise.all([
-    countProjectMembers(input.projectId),
+  const [developerCount, projectName] = await Promise.all([
+    countProjectDevelopers(input.projectId),
     getProjectName(input.projectId),
   ]);
 
-  if (memberCount === 0 && !input.allowEmptyRoster) {
-    await updateSurveyStatus(input.surveyId, 'failed', { analysisError: 'no_project_members' });
+  if (developerCount === 0 && !input.allowEmptyRoster) {
+    await updateSurveyStatus(input.surveyId, 'failed', { analysisError: 'no_project_developers' });
     return null;
   }
 
@@ -99,8 +99,7 @@ export async function dispatchAnonymousSurveyBroadcast(
     await markSurveyNotified(claimedSurvey.id, delivery);
   }
 
-  const targetCount =
-    claimedSurvey.target_count > 0 ? claimedSurvey.target_count : Math.max(memberCount, 1);
+  const targetCount = developerCount;
   await setSurveyTargetCount(input.surveyId, targetCount);
   await markSurveySent(input.surveyId, new Date());
 

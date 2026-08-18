@@ -25,12 +25,14 @@ export interface OpsMetrics {
 
 export type OpsMetricSeries = Record<
   "commits" | "tickets" | "velocity" | "blockers" | "deployments" | "prCycleTime",
-  { v: number; label: string }[]
+  { v: number; label: string; date?: string }[]
 >;
 
 export interface ProjectHealth {
   id: number;
   name: string;
+  owner: string | null;
+  repo: string | null;
   team: string;
   description: string;
   score: number | null;
@@ -38,7 +40,7 @@ export interface ProjectHealth {
   subscores: HealthSubscores | null;
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
-  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string }[]>;
+  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date?: string }[]>;
   metrics: OpsMetrics | null;
   metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;

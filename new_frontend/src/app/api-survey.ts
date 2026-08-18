@@ -11,6 +11,8 @@ export type SurveyStatus =
   | "cancelled"
   | "failed";
 
+export type SurveySource = "manual" | "auto_pulse";
+
 export interface SurveyScores {
   delivery: number;
   codeQuality: number;
@@ -24,6 +26,7 @@ export interface SurveyListItem {
   projectId: number;
   projectName: string;
   status: SurveyStatus;
+  source: SurveySource;
   trigger: string;
   sentDate: string | null;
   responseCount: number;
@@ -33,6 +36,7 @@ export interface SurveyListItem {
   closedAt: string | null;
   questionVersion: number;
   questionsLocked: boolean;
+  questions: Array<{ id: number; category: string; questionText: string; questionType: "text" | "scale" }>;
   scores: SurveyScores | null;
   themes: string[];
   aiInsight: string | null;
@@ -49,7 +53,6 @@ export interface SurveyHealthContext {
 
 export interface SurveyDetail extends SurveyListItem {
   rawResponses: { question: string; answers: string[] }[];
-  questions: Array<{ id: number; category: string; questionText: string; questionType: "text" | "scale" }>;
   healthContext: SurveyHealthContext | null;
   analysisError: string | null;
   delivery: {
@@ -189,12 +192,12 @@ export async function generateSurveyQuestions(
   trigger: string,
   customGuidance: string | undefined,
   ctx?: RequesterContext,
-): Promise<ScoredSurveyQuestion[]> {
-  const data = await request<{ questions: ScoredSurveyQuestion[] }>(
+  force = false,
+): Promise<{ surveyId: number; questions: ScoredSurveyQuestion[]; scheduledSendAt: string }> {
+  return request(
     `/projects/${projectId}/surveys/generate-questions`,
-    { method: "POST", headers: requesterHeaders(ctx), body: JSON.stringify({ trigger, customGuidance }) },
+    { method: "POST", headers: requesterHeaders(ctx), body: JSON.stringify({ trigger, customGuidance, force }) },
   );
-  return data.questions;
 }
 
 export async function sendSurvey(
@@ -204,11 +207,12 @@ export async function sendSurvey(
   questions: GeneratedSurveyQuestion[],
   ctx?: RequesterContext,
   targetCount?: number,
+  surveyId?: number,
 ): Promise<{ surveyId: number }> {
   return request(`/projects/${projectId}/surveys`, {
     method: "POST",
     headers: requesterHeaders(ctx),
-    body: JSON.stringify({ trigger, customGuidance, questions, targetCount }),
+    body: JSON.stringify({ trigger, customGuidance, questions, targetCount, surveyId }),
   });
 }
 

@@ -135,7 +135,7 @@ async function processQuestionGeneration(now: Date): Promise<void> {
   }
 }
 
-/** Step 3: dispatch when the monthly send time arrives. */
+/** Step 3: dispatch when the scheduled send time arrives. */
 async function processSend(now: Date): Promise<void> {
   const log = logger.child({ component: 'survey-distribution-processor', step: 'send' });
   const due = await listDueForSend(now);
@@ -143,7 +143,11 @@ async function processSend(now: Date): Promise<void> {
 
   for (const survey of due) {
     try {
-      await dispatchMonthlyPulse(survey, now);
+      if (survey.source === 'manual') {
+        await dispatchManualDraft(survey, now);
+      } else {
+        await dispatchMonthlyPulse(survey, now);
+      }
     } catch (error) {
       await updateSurveyStatus(survey.id, 'failed', {
         analysisError: error instanceof Error ? error.message : 'Scheduled survey delivery failed',
@@ -151,6 +155,26 @@ async function processSend(now: Date): Promise<void> {
       log.error({ error, surveyId: survey.id, projectId: survey.project_id }, 'failed to dispatch scheduled survey');
     }
   }
+}
+
+async function dispatchManualDraft(survey: SurveyRow, now: Date): Promise<void> {
+  if (survey.questions.length === 0) return;
+  if (survey.status === 'paused' || survey.status === 'cancelled') return;
+  if (survey.sent_at) return;
+
+  const expiresAt = addDays(now, env.surveyResponseDeadlineDays);
+  const result = await dispatchAnonymousSurveyBroadcast({
+    surveyId: survey.id,
+    projectId: survey.project_id,
+    cycleId: `manual-${survey.id}`,
+    expiresAt,
+    allowEmptyRoster: true,
+  });
+  if (!result) return;
+
+  logger
+    .child({ component: 'survey-distribution-processor' })
+    .info({ surveyId: survey.id, projectId: survey.project_id, targetCount: result.targetCount, at: now.toISOString() }, 'broadcast scheduled manual survey');
 }
 
 async function dispatchMonthlyPulse(survey: SurveyRow, now: Date): Promise<void> {

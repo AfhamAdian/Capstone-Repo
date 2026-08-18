@@ -12,6 +12,20 @@ export async function countProjectMembers(projectId: number): Promise<number> {
   return count ?? 0;
 }
 
+/** Audience size for survey response rate: only `projectmember.role = DEVELOPER`. */
+export async function countProjectDevelopers(projectId: number): Promise<number> {
+  const client = assertSupabaseClient();
+  const { count, error } = await client
+    .from('projectmember')
+    .select('id', { count: 'exact', head: true })
+    .eq('project_id', projectId)
+    .ilike('role', 'DEVELOPER');
+  if (error) {
+    throw new Error(`Failed to count developers for project ${projectId}: ${error.message}`);
+  }
+  return count ?? 0;
+}
+
 /** Used by authorization.service.ts's project-scoped access check. */
 export async function isProjectMember(projectId: number, userId: number): Promise<boolean> {
   const client = assertSupabaseClient();

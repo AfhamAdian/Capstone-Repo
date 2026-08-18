@@ -7,7 +7,7 @@ import {
   MessageSquare, X, ChevronRight, ChevronDown, Send,
   GitCommit, ArrowRight, Check, Settings,
   ChevronLeft, Bell, Zap, Star, RefreshCw, CheckSquare,
-  Rocket, GitBranch, Bookmark, Link2, ShieldCheck, Building2
+  Rocket, GitBranch, Bookmark, Link2, ShieldCheck, Building2, Sparkles
 } from "lucide-react";
 import {
   LineChart, Line, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -19,7 +19,7 @@ import { useWorkspace } from "./context/WorkspaceContext";
 import type { SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveySettings } from "./hooks/useProjectSurveySettings";
-import { useProjectHealthSync } from "./hooks/useProjectHealth";
+import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
 import { PublicSurveyPage } from "./pages/PublicSurveyPage";
 import { SurveyFlow } from "./components/SurveyFlow";
 import {
@@ -39,6 +39,8 @@ interface Project {
   id: string;
   backendProjectId?: string;
   name: string;
+  owner?: string | null;
+  repo?: string | null;
   team: string;
   status: "active" | "maintenance";
   tracked: boolean;
@@ -48,12 +50,14 @@ interface Project {
   timeSeries: { date: string; label: string; score: number }[];
   subscores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
-  metricSeries: Record<string, { v: number; label: string }[]>;
-  subscoreSeries: Record<string, { v: number; label: string }[]>;
+  metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
+  subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
   pendingSurvey: boolean;
   pendingReview: number;
   lastUpdated: string;
   description: string;
+  hasData?: boolean;
+  hasMetrics?: boolean;
 }
 
 interface Action {
@@ -71,6 +75,7 @@ interface Survey {
   id: string;
   projectId: string;
   status: SurveyStatus;
+  source?: "manual" | "auto_pulse";
   trigger: string;
   sentDate: string;
   responseCount: number;
@@ -179,13 +184,37 @@ function surveyHasResults(s: Survey) {
   return Boolean(s.scores || s.aiInsight || s.themes.length > 0 || s.status === "completed");
 }
 
+function surveyCanExpand(s: Survey) {
+  return surveyHasResults(s) || (s.questions?.length ?? 0) > 0;
+}
+
 function surveyRowStatus(s: Survey) {
   if (s.status === "closed" && !s.scores) return { c: "text-amber-500", l: "Scoring" };
-  if (s.status === "draft") return { c: "text-slate-500", l: "Generating" };
+  if (s.status === "draft" && (s.questions?.length ?? 0) === 0) return { c: "text-slate-500", l: "Generating" };
   return SURVEY_STATUS_CONFIG[s.status];
 }
 
 const SURVEY_HISTORY_COLS = "110px 120px minmax(0,1fr) 120px 88px 56px minmax(220px,max-content)";
+
+function SurveyAskedQuestions({questions}:{questions?:GeneratedSurveyQuestion[]}) {
+  if (!questions?.length) return null;
+  return (
+    <div className="mb-4">
+      <div className="text-sm font-bold text-muted-foreground mb-3">Questions asked</div>
+      <div className="border border-border divide-y divide-border">
+        {questions.map((q,i)=>(
+          <div key={`${q.questionText}-${i}`} className="flex gap-3 px-4 py-3 items-start">
+            <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-muted text-xs font-bold mt-0.5">{i+1}</span>
+            <div className="min-w-0">
+              <div className="text-[14px] font-semibold text-foreground">{q.questionText}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{q.category} · {q.questionType==="scale"?"Scale 1–5":"Text"}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
   const keys = ["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
@@ -203,19 +232,62 @@ function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
-const sp = (vals: number[]): { v: number; label: string }[] =>
-  vals.map((v, i) => ({
-    v,
-    label: new Date(new Date("2025-09-01").getTime() + i * 7 * 86400000)
-      .toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-  }));
-
-const mkTS = (scores: number[]): { date: string; label: string; score: number }[] =>
-  scores.map((score, i) => {
-    const d = new Date("2025-09-01");
-    d.setDate(d.getDate() + i * 3);
-    return { date: d.toISOString().split("T")[0], label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), score };
+function isoDay(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function formatDayLabel(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+function interpolateSeries(vals: number[], days: number): number[] {
+  if (vals.length === 0) return [];
+  if (days <= 1) return [vals[vals.length - 1]!];
+  const out: number[] = [];
+  for (let i = 0; i < days; i++) {
+    const t = i / (days - 1);
+    const src = t * (vals.length - 1);
+    const lo = Math.floor(src);
+    const hi = Math.min(vals.length - 1, lo + 1);
+    const frac = src - lo;
+    out.push(Math.round(vals[lo]! * (1 - frac) + vals[hi]! * frac));
+  }
+  return out;
+}
+function daysEndingToday(count: number): Date[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - (count - 1 - i));
+    return d;
   });
+}
+
+/** Daily series ending today so 7D / 30D / All filters match the calendar. */
+const sp = (vals: number[], days = 90): { v: number; label: string; date: string }[] => {
+  const points = interpolateSeries(vals, days);
+  const dates = daysEndingToday(points.length);
+  return points.map((v, i) => ({ v, label: formatDayLabel(dates[i]!), date: isoDay(dates[i]!) }));
+};
+
+const mkTS = (scores: number[], days = 90): { date: string; label: string; score: number }[] => {
+  const points = interpolateSeries(scores, days);
+  const dates = daysEndingToday(points.length);
+  return points.map((score, i) => ({ date: isoDay(dates[i]!), label: formatDayLabel(dates[i]!), score }));
+};
+
+function seriesInRange<T extends { date?: string }>(series: T[], days: number | null): T[] {
+  if (days == null || series.length === 0) return series;
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  const cutoffIso = isoDay(cutoff);
+  const dated = series.filter((p) => p.date && p.date >= cutoffIso);
+  if (dated.length > 0) return dated;
+  return series.slice(-Math.min(series.length, days));
+}
 
 const PROJECTS: Project[] = [
   {
@@ -510,7 +582,7 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
     const h=(e:MouseEvent)=>{if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false);};
     document.addEventListener("mousedown",h); return ()=>document.removeEventListener("mousedown",h);
   },[]);
-  const active=projects.find(p=>p.id===activeId);
+  const active=findProjectByPath(projects,activeId);
   const filtered=projects.filter(p=>p.name.toLowerCase().includes(q.toLowerCase()));
   return (
     <header className="shrink-0 border-b border-border bg-card flex items-center px-6 gap-5 z-30" style={{height:54}}>
@@ -529,7 +601,9 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
               <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:hColor(active.score)}}/>
               <div className="text-left">
                 <div className="text-[15px] font-bold leading-tight" style={{fontFamily:"var(--font-display)"}}>{active.name}</div>
-                <div className="text-xs text-muted-foreground leading-none mt-0.5">Switch project</div>
+                <div className="text-xs text-muted-foreground leading-none mt-0.5 truncate max-w-[220px]">
+                  {active.owner && active.repo ? `${active.owner}/${active.repo}` : "Switch project"}
+                </div>
               </div>
               <ChevronDown size={13} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
             </button>
@@ -814,8 +888,8 @@ function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];
             const sTag=proj?projectTagStyle(proj.score):{bg:"bg-muted",text:"text-foreground"};
             return (
               <div key={s.id} className="border-b border-border last:border-b-0">
-                <div role={surveyHasResults(s)?"button":undefined} onClick={()=>{if(surveyHasResults(s)){setExId(isEx?null:s.id);setRawId(null);}}}
-                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${surveyHasResults(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                   style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
                   <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
@@ -839,14 +913,17 @@ function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];
                     {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onClosed}/>}
                     {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed}/>}
                     {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed} mode="score"/>}
-                    {surveyHasResults(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                    {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
                   </div>
                 </div>
 
                 <AnimatePresence>
-                  {isEx&&surveyHasResults(s)&&(
+                  {isEx&&surveyCanExpand(s)&&(
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                       <div className="border-t border-border px-5 py-4">
+                        <SurveyAskedQuestions questions={s.questions}/>
+                        {surveyHasResults(s)&&(
+                          <>
                         <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                         {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                         {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
@@ -893,6 +970,8 @@ function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];
                             </motion.div>
                           )}
                         </AnimatePresence>
+                          </>
+                        )}
                       </div>
                     </motion.div>
                   )}
@@ -901,6 +980,98 @@ function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];
             );
           })}
           {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No surveys match your filter.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PulseBar({className}:{className:string}) {
+  return <div className={`bg-muted animate-pulse ${className}`}/>;
+}
+
+function ProjectPageSkeleton() {
+  const nav=[{icon:<BarChart2 size={16}/>,label:"Dashboard",active:true},{icon:<Zap size={16}/>,label:"Actions"},{icon:<MessageSquare size={16}/>,label:"Surveys"},{icon:<Settings size={16}/>,label:"Settings"}];
+  const cats=["Delivery","Code Quality","CI/CD","Team Health","Blockers"];
+  const metrics=["Commits","Tickets Closed","Sprint Velocity","Open Blockers","Deployments / wk","PR Cycle Time"];
+  return (
+    <div className="flex flex-1 min-h-0">
+      <aside className="w-56 shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-full">
+        <div className="flex-1 py-3 overflow-y-auto">
+          {nav.map(item=>(
+            <div key={item.label}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-[15px] ${item.active?"bg-sidebar-accent text-foreground font-semibold":"text-foreground/70"}`}
+              style={item.active?{borderLeft:"3px solid var(--primary)"}:{borderLeft:"3px solid transparent"}}>
+              <span className={item.active?"text-primary":"text-foreground/50"}>{item.icon}</span>
+              <span style={{fontFamily:"var(--font-display)"}} className="font-medium">{item.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="p-4 border-t border-sidebar-border">
+          <div className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5" style={{fontFamily:"var(--font-display)"}}>
+            <Plus size={14}/> Log Action
+          </div>
+        </div>
+      </aside>
+      <div className="flex-1 overflow-y-auto bg-background">
+        <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
+          <div className="mb-2">
+            <div className="flex items-center justify-between">
+              <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Live Sync</div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 border border-border text-sm font-medium text-muted-foreground">
+                <RefreshCw size={13} className="animate-spin"/>
+                <span style={{fontFamily:"var(--font-display)"}}>Loading…</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[290px_1fr] gap-6">
+            <div className="bg-card border border-border p-6">
+              <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score</div>
+              <PulseBar className="h-20 w-28 mb-5"/>
+              <PulseBar className="h-12 w-full mb-5"/>
+              <div className="pt-5 border-t border-border space-y-3">
+                {cats.map(label=>(
+                  <div key={label} className="flex items-center justify-between">
+                    <span className="text-[15px] text-foreground/80">{label}</span>
+                    <PulseBar className="h-2 w-20"/>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-card border border-border p-6">
+              <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Category Balance</div>
+              <div className="h-[240px] flex items-center justify-center">
+                <div className="w-48 h-48 rounded-full border-2 border-dashed border-border bg-muted/40 animate-pulse"/>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
+            <div className="grid grid-cols-5 gap-3">
+              {cats.map(label=>(
+                <div key={label} className="bg-card border border-border p-4 flex flex-col">
+                  <div className="text-xs font-semibold text-foreground mb-3" style={{fontFamily:"var(--font-display)"}}>{label}</div>
+                  <PulseBar className="h-9 w-14 mb-2"/>
+                  <PulseBar className="h-[60px] w-full"/>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Metrics — click any card to expand</div>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              {metrics.map(label=>(
+                <div key={label} className="bg-card border border-border p-4">
+                  <div className="text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>{label}</div>
+                  <PulseBar className="h-9 w-16 mb-2"/>
+                  <PulseBar className="h-[52px] w-full"/>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -922,11 +1093,12 @@ function SyncBtn() {
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
+  loading?:boolean;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -934,7 +1106,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
 
   const visible=useMemo(()=>{
     let list=tab==="tracked"?projects.filter(p=>trackedIds.has(p.id)):projects;
-    if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase()));
+    if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase())||(p.owner??"").toLowerCase().includes(q.toLowerCase()));
     return [...list].sort((a,b)=>a.score-b.score);
   },[projects,tab,q,trackedIds]);
 
@@ -949,7 +1121,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
           <div>
             <h1 className="text-4xl font-bold uppercase tracking-tight" style={{fontFamily:"var(--font-display)"}}>Portfolio</h1>
             <p className="text-base text-muted-foreground mt-1">
-              {projects.length} projects · {projects.filter(p=>p.score<60).length} need attention · {surveys.length} total surveys
+              {loading?"Loading projects from your workspace…":`${projects.length} projects · ${projects.filter(p=>p.score<60).length} need attention · ${surveys.length} total surveys`}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -1000,7 +1172,18 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                 <div key={i} className={`text-sm font-semibold text-foreground ${i>=1&&i<=6?"text-center":""}`} style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
-            {visible.map((p,idx)=>(
+            {loading?(
+              Array.from({length:4}).map((_,i)=>(
+                <div key={i} className="grid items-center px-6 py-5 border-b border-border last:border-b-0" style={{gridTemplateColumns:cols}}>
+                  <div className="space-y-2">
+                    <div className="h-4 w-40 bg-muted animate-pulse"/>
+                    <div className="h-3 w-56 bg-muted animate-pulse"/>
+                  </div>
+                  {Array.from({length:7}).map((__,j)=><div key={j} className="mx-auto h-10 w-10 rounded-full bg-muted animate-pulse"/>)}
+                  <div className="h-8 w-16 bg-muted animate-pulse ml-auto"/>
+                </div>
+              ))
+            ):visible.map((p,idx)=>(
               <motion.div key={p.id} initial={{opacity:0}} animate={{opacity:1}} transition={{delay:idx*0.03,duration:0.2}}>
                 <div onClick={()=>onSelect(p.id)}
                   className="grid items-center px-6 py-4 border-b border-border hover:bg-muted/40 cursor-pointer group transition-colors"
@@ -1015,7 +1198,9 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                       </button>
                       <span className="text-[15px] font-bold group-hover:text-primary transition-colors" style={{fontFamily:"var(--font-display)"}}>{p.name}</span>
                     </div>
-                    <div className="text-sm text-muted-foreground mt-0.5 pl-5">{p.team}</div>
+                    <div className="text-sm text-muted-foreground mt-0.5 pl-5">
+                      {p.owner && p.repo ? `${p.owner}/${p.repo}` : p.owner || p.team || "No owner linked"}
+                    </div>
                     {(p.pendingSurvey||p.pendingReview>0)&&(
                       <div className="flex gap-3 mt-1 pl-5">
                         {p.pendingSurvey&&<span className="text-sm text-amber-500 flex items-center gap-1"><MessageSquare size={12}/>survey</span>}
@@ -1037,7 +1222,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                 </div>
               </motion.div>
             ))}
-            {visible.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No projects match your filter.</div>}
+            {visible.length===0&&!loading&&<div className="text-center py-16 text-base text-muted-foreground">No projects match your filter.</div>}
           </div>
         </div>
       </div>
@@ -1127,11 +1312,11 @@ const MVAL:{[k:string]:(m:Project["metrics"])=>number}={
   blockers:m=>m.openBlockers, deployments:m=>m.deployments, prCycleTime:m=>m.prCycleTime,
 };
 
-function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:string}[];val:number;onClose:()=>void;}) {
+function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:string;date?:string}[];val:number;onClose:()=>void;}) {
   const meta=MMETA[mk];
   const [ri,setRi]=useState(1);
-  const ranges=[{l:"7D",c:4},{l:"30D",c:8},{l:"All",c:999}];
-  const data=series.slice(-Math.min(series.length,ranges[ri].c));
+  const ranges=[{l:"7D",d:7 as number|null},{l:"30D",d:30},{l:"All",d:null}];
+  const data=seriesInRange(series,ranges[ri].d);
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6" onClick={onClose}>
@@ -1162,15 +1347,19 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
           </div>
         </div>
         <div className="p-6">
+          {data.length===0?(
+            <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">No data points in this range.</div>
+          ):(
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={data} margin={{top:8,right:8,bottom:8,left:8}}>
               <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
-              <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}}/>
+              <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}} interval={Math.max(0,Math.ceil(data.length/8)-1)}/>
               <YAxis tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={36}/>
               <ReTooltip contentStyle={ttStyle} formatter={(v:number)=>[`${v}${meta.unit||""}`,meta.label]}/>
-              <Line type="monotone" dataKey="v" stroke={meta.color} strokeWidth={2.5} dot={{fill:meta.color,r:3}} activeDot={{r:5}}/>
+              <Line type="monotone" dataKey="v" stroke={meta.color} strokeWidth={2.5} dot={data.length<=14?{fill:meta.color,r:3}:false} activeDot={{r:5}}/>
             </LineChart>
           </ResponsiveContainer>
+          )}
         </div>
       </motion.div>
     </motion.div>
@@ -1191,6 +1380,11 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
         <DashboardSyncBar project={project} onSyncComplete={onSyncComplete}/>
+        {project.hasData===false&&(
+          <div className="border border-border bg-muted/30 px-5 py-3 text-sm text-muted-foreground">
+            No health snapshot yet for {project.name}. Run <span className="font-semibold text-foreground">Sync</span> to pull GitHub/Jira metrics.
+          </div>
+        )}
         {pending.length>0&&(
           <button onClick={()=>setReviewOpen(true)}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
@@ -1244,7 +1438,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
         {/* 6 metric cards */}
         {/* 5 subscore area chart cards */}
         <div>
-          <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 15-week trend</div>
+          <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
           <div className="grid grid-cols-5 gap-3">
             {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>{
               const val = project.subscores[k];
@@ -1255,8 +1449,8 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
               const prev = series[series.length-2]?.v ?? last;
               const delta = last - prev;
               const trendGood = delta >= 0; // higher = better for all subscores
-              const minV = Math.min(...series.map(d=>d.v));
-              const maxV = Math.max(...series.map(d=>d.v));
+              const minV = series.length?Math.min(...series.map(d=>d.v)):val;
+              const maxV = series.length?Math.max(...series.map(d=>d.v)):val;
               const SUBSCORE_ICONS: Record<string, React.ReactNode> = {
                 delivery: <Rocket size={13}/>,
                 codeQuality: <ShieldCheck size={13}/>,
@@ -1275,7 +1469,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                   <div className="flex items-baseline gap-1.5 mb-1">
                     <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:strokeColor}}>{val}</span>
                     <span className="text-xs font-semibold" style={{color:trendGood?"var(--health-good)":"var(--health-crit)"}}>
-                      {trendGood?"↑":"↓"}{Math.abs(delta)}
+                      {delta>0?"+":""}{delta}
                     </span>
                   </div>
                   {/* min/max range */}
@@ -1845,15 +2039,27 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
   const surveyId=Number(survey.id);
   const canEdit=!survey.questionsLocked&&survey.status!=="cancelled";
 
+  const persist=async()=>{
+    if(!canEdit) return;
+    const payload=questions.filter(q=>q.text.trim()).map(q=>({
+      category:q.category||"delivery",questionText:q.text.trim(),questionType:q.questionType,
+    }));
+    if(payload.length===0) return;
+    await updateSurveyQuestions(surveyId,payload);
+  };
+
   const save=async()=>{
     setSaving(true);setError(null);
     try{
-      await updateSurveyQuestions(surveyId,questions.filter(q=>q.text.trim()).map(q=>({
-        category:q.category||"delivery",questionText:q.text.trim(),questionType:q.questionType,
-      })));
+      await persist();
       onChanged?.();onClose();
     }catch(err){setError(err instanceof Error?err.message:"Failed to save questions");}
     finally{setSaving(false);}
+  };
+  const closeReview=async()=>{
+    try{if(canEdit) await persist();}catch{/* still close */}
+    onChanged?.();
+    onClose();
   };
   const transition=async(action:"pause"|"resume"|"retry"|"cancel")=>{
     setSaving(true);setError(null);
@@ -1865,7 +2071,7 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
 
   return (
     <motion.div role="dialog" aria-modal="true" aria-labelledby="review-survey-title" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeReview();}}>
       <motion.div initial={{scale:0.97,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.97,opacity:0}}
         onClick={event=>event.stopPropagation()} className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-card border border-border shadow-2xl">
         <div className="flex items-start justify-between px-6 py-5 border-b border-border">
@@ -1873,7 +2079,7 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
             <h2 id="review-survey-title" className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Review Scheduled Survey</h2>
             <p className="text-sm text-muted-foreground mt-1">Auto-sends {fmtDate(survey.reviewDeadlineAt||survey.scheduledSendAt||"")} unless paused.</p>
           </div>
-          <button aria-label="Close review" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
+          <button aria-label="Close review" onClick={()=>{void closeReview();}} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
         </div>
         <div className="overflow-y-auto p-6 space-y-5">
           {health&&(
@@ -1926,30 +2132,59 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
   );
 }
 
-function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;audienceSize?:number;}) {
+function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize,demoOnly,draftSurvey}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;audienceSize?:number;demoOnly?:boolean;draftSurvey?:Survey|null;}) {
   const backendProjectId=project.backendProjectId;
   const isReal=Boolean(backendProjectId);
+  const hasDraft=Boolean(draftSurvey&&(draftSurvey.questions?.length??0)>0);
 
-  const [trigger,setTrigger]=useState("Manual team pulse check");
+  const [surveyId,setSurveyId]=useState<number|null>(hasDraft?Number(draftSurvey!.id):null);
+  const [scheduledSendAt,setScheduledSendAt]=useState<string|null>(draftSurvey?.scheduledSendAt??draftSurvey?.reviewDeadlineAt??null);
+  const [trigger,setTrigger]=useState(draftSurvey?.trigger||"Manual team pulse check");
   const [questions,setQuestions]=useState<EditableQuestion[]>(
-    isReal?[]:DEFAULT_QUESTIONS.map((q,i)=>({id:`q${i}`,text:q,questionType:"text"})),
+    hasDraft
+      ?(draftSurvey!.questions??[]).map((q,i)=>({id:`q${i}`,text:q.questionText,category:q.category,questionType:q.questionType}))
+      :isReal?[]:DEFAULT_QUESTIONS.map((q,i)=>({id:`q${i}`,text:q,questionType:"text"})),
   );
-  const [step,setStep]=useState<"generating"|"edit"|"preview"|"sending"|"sent"|"error">(isReal?"generating":"edit");
+  const [step,setStep]=useState<"generating"|"edit"|"preview"|"sending"|"sent"|"error">(isReal&&!hasDraft?"generating":"edit");
   const [errorMessage,setErrorMessage]=useState<string|null>(null);
   const [quota,setQuota]=useState<SurveyQuota|null>(null);
   const [sentResult,setSentResult]=useState<{queued?:boolean;questionCount?:number;url?:string;expiresAt?:string;delivery?:{slackSent?:boolean;telegramSent?:boolean;discordSent?:boolean}}|null>(null);
 
-  const generate=async()=>{
+  const questionPayload=()=>questions.filter(q=>q.text.trim()).map(q=>({
+    category:q.category||"delivery",
+    questionText:q.text.trim(),
+    questionType:q.questionType,
+  }));
+
+  const persistEdits=async()=>{
+    if(!surveyId||questionPayload().length===0) return;
+    await updateSurveyQuestions(surveyId,questionPayload());
+  };
+
+  const closeModal=async()=>{
+    try{
+      if(surveyId&&(step==="edit"||step==="preview")) await persistEdits();
+    }catch{
+      // Closing should still dismiss the window; edits can be retried from history.
+    }
+    onSent?.();
+    onClose();
+  };
+
+  const generate=async(force=false)=>{
     if(!backendProjectId) return;
     setStep("generating");
     setErrorMessage(null);
     try{
-      const [scored,q]=await Promise.all([
-        generateSurveyQuestions(backendProjectId,trigger,customGuidance),
+      const [generated,q]=await Promise.all([
+        generateSurveyQuestions(backendProjectId,trigger,customGuidance,undefined,force),
         getSurveyQuota(backendProjectId),
       ]);
-      setQuestions(scored.map((s,i)=>({id:`q${i}`,text:s.questionText,category:s.category,questionType:s.questionType,score:s.score})));
+      setSurveyId(generated.surveyId);
+      setScheduledSendAt(generated.scheduledSendAt);
+      setQuestions(generated.questions.map((s,i)=>({id:`q${i}`,text:s.questionText,category:s.category,questionType:s.questionType,score:s.score})));
       setQuota(q);
+      onSent?.();
       setStep("edit");
     }catch(err){
       setErrorMessage(err instanceof Error?err.message:"Failed to generate questions");
@@ -1962,12 +2197,8 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
     setStep("sending");
     setErrorMessage(null);
     try{
-      const payload=questions.filter(q=>q.text.trim()).map(q=>({
-        category:q.category||"delivery",
-        questionText:q.text.trim(),
-        questionType:q.questionType,
-      }));
-      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,audienceSize);
+      const payload=questionPayload();
+      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,undefined,surveyId??undefined);
       setSentResult({queued:true,questionCount:payload.length});
       onSent?.();
       setStep("sent");
@@ -1976,13 +2207,31 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
       setStep("error");
     }
   };
-  useEffect(()=>{if(isReal) void generate();},[]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(()=>{
+    if(!isReal||!backendProjectId) return;
+    if(hasDraft){
+      void getSurveyQuota(backendProjectId).then(setQuota).catch(()=>{});
+      return;
+    }
+    void generate();
+  },[]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateQ=(id:string,val:string)=>setQuestions(prev=>prev.map(q=>q.id===id?{...q,text:val}:q));
   const removeQ=(id:string)=>setQuestions(prev=>prev.filter(q=>q.id!==id));
   const addQ=()=>setQuestions(prev=>[...prev,{id:`q${Date.now()}`,text:"",questionType:"text"}]);
 
   const send=async()=>{
+    if(demoOnly){
+      try{
+        if(surveyId) await persistEdits();
+        onSent?.();
+        setStep("sent");
+      }catch(err){
+        setErrorMessage(err instanceof Error?err.message:"Failed to save questions");
+        setStep("error");
+      }
+      return;
+    }
     if(!isReal||!backendProjectId){setStep("sent");return;}
     await sendReviewed();
   };
@@ -1991,18 +2240,21 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
 
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeModal();}}>
       <motion.div initial={{scale:0.97,y:8,opacity:0}} animate={{scale:1,y:0,opacity:1}} exit={{scale:0.97,y:8,opacity:0}} transition={{duration:0.16}}
         onClick={e=>e.stopPropagation()} className="w-full max-w-2xl bg-card border border-border shadow-2xl flex flex-col max-h-[88vh]">
 
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
             <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>
-              {step==="generating"?"Generating Questions":step==="edit"?"Review & Edit Survey":step==="preview"?"Survey Preview":step==="sending"?"Sending Survey…":step==="error"?"Something Went Wrong":"Survey Sent"}
+              {step==="generating"?"Generating Questions":step==="edit"?(demoOnly?"Review generated questions":"Review & Edit Survey"):step==="preview"?"Survey Preview":step==="sending"?"Sending Survey…":step==="error"?"Something Went Wrong":demoOnly?"Generation test complete":"Survey Sent"}
             </div>
-            <div className="text-sm text-muted-foreground mt-0.5">{project.name}</div>
+            <div className="text-sm text-muted-foreground mt-0.5">
+              {project.name}
+              {scheduledSendAt&&step!=="sent"?` · Auto-sends ${fmtDate(scheduledSendAt)} unless you send now`:""}
+            </div>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
+          <button onClick={()=>{void closeModal();}} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
         </div>
 
         {step==="generating"||step==="sending"?(
@@ -2014,18 +2266,20 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
             <AlertTriangle size={28} className="text-red-500"/>
             <div className="text-base text-foreground text-center max-w-sm">{errorMessage}</div>
-            <button onClick={()=>{if(isReal) void generate(); else setStep("edit");}} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
+            <button onClick={()=>{if(isReal) void generate(true); else setStep("edit");}} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
           </div>
         ):step==="sent"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
             <div className="w-14 h-14 bg-emerald-500 flex items-center justify-center"><Check size={26} className="text-white"/></div>
-            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{isReal?"Survey queued":"Survey sent successfully"}</div>
+            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{demoOnly?"Draft saved — nothing sent":isReal?"Survey queued":"Survey sent successfully"}</div>
             <div className="text-base text-muted-foreground text-center max-w-md">
-              {isReal
+              {demoOnly
+                ? `${questions.filter(q=>q.text.trim()).length} questions stored. You can keep editing until ${scheduledSendAt?fmtDate(scheduledSendAt):"the auto-send window"}, or use Send Survey Now to broadcast now.`
+                : isReal
                 ? `${sentResult?.questionCount??questions.length} reviewed questions will be posted to team channels in the background. Watch Survey History for Active status.`
                 :`Sent to ${project.name} team · ${questions.length} questions · responses due in 48h`}
             </div>
-            <button onClick={onClose} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
+            <button onClick={()=>{void closeModal();}} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
           </div>
         ):step==="preview"?(
           <div className="flex-1 overflow-y-auto">
@@ -2070,7 +2324,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
                 <div className="flex items-center gap-2">
                   <input value={trigger} onChange={e=>setTrigger(e.target.value)} placeholder="e.g. Sprint retro follow-up"
                     className="flex-1 bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary transition-colors"/>
-                  <button onClick={generate} className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity px-2">
+                  <button onClick={()=>{void generate(true);}} className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity px-2">
                     <RefreshCw size={13}/> Regenerate
                   </button>
                 </div>
@@ -2078,7 +2332,14 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
             )}
 
             {/* Quota warning */}
-            {quota&&(
+            {demoOnly?(
+              <div className="flex items-start gap-3 px-4 py-3.5 border border-border bg-muted/30">
+                <Sparkles size={16} className="shrink-0 mt-0.5 text-primary"/>
+                <div className="text-sm text-muted-foreground">
+                  Questions are saved as a draft{scheduledSendAt?` and auto-send ${fmtDate(scheduledSendAt)}`:""}. Edit until this window closes, then use Send Survey Now if you want to broadcast immediately.
+                </div>
+              </div>
+            ):quota&&(
               <div className={`flex items-start gap-3 px-4 py-3.5 border ${remaining<=1?"border-amber-400/50 bg-amber-50 dark:bg-amber-950/20":"border-border bg-muted/30"}`}>
                 <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${remaining<=1?"text-amber-500":"text-muted-foreground"}`}/>
                 <div>
@@ -2087,7 +2348,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
                   </div>
                   <div className="text-sm text-muted-foreground mt-0.5">
                     Quota: {quota.used} used / {quota.limit} per month
-                    {audienceSize?` · audience ${audienceSize} people from Settings → Team`:""}
+                    {audienceSize?` · Settings team is ${audienceSize}. Response rate uses developers in projectmember.`:""}
                   </div>
                 </div>
               </div>
@@ -2108,7 +2369,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
                           className="text-xs bg-card border border-border px-1.5 py-1">
                           <option value="text">Text</option><option value="scale">Scale 1–5</option>
                         </select>
-                        {q.score&&<span className="text-xs font-semibold text-primary" title="AI quality score">score {Math.round(q.score.overall)}</span>}
+                        {q.score&&q.score.overall>0&&<span className="text-xs font-semibold text-primary" title="AI quality score">score {Math.round(q.score.overall)}</span>}
                       </div>
                     )}
                     <textarea value={q.text} rows={2} onChange={e=>updateQ(q.id,e.target.value)} placeholder="Enter question…"
@@ -2134,7 +2395,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
                 <button onClick={send} disabled={questions.filter(q=>q.text.trim()).length===0}
                   className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{fontFamily:"var(--font-display)"}}>
-                  <Send size={14}/> Send to Team
+                  {demoOnly?<><Sparkles size={14}/> Save draft</>:<><Send size={14}/> Send to Team</>}
                 </button>
               </>
             ):(
@@ -2143,7 +2404,7 @@ function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize}:{o
                 <button onClick={send}
                   className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity"
                   style={{fontFamily:"var(--font-display)"}}>
-                  <Send size={14}/> Confirm &amp; Send
+                  {demoOnly?<><Sparkles size={14}/> Save draft</>:<><Send size={14}/> Confirm &amp; Send</>}
                 </button>
               </>
             )}
@@ -2220,6 +2481,7 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
   const [rawId,setRawId]=useState<string|null>(null);
   const [showRubric,setShowRubric]=useState(false);
   const [showSend,setShowSend]=useState(false);
+  const [showGenerateDemo,setShowGenerateDemo]=useState(false);
   const [reviewSurvey,setReviewSurvey]=useState<Survey|null>(null);
   const [showGuidance,setShowGuidance]=useState(false);
   const [surveySearch,setSurveySearch]=useState("");
@@ -2245,7 +2507,9 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
       teamHealth:s.scores!.teamHealth,
       blockers:s.scores!.blockers,
     })),[ps]);
-  const upcoming=ps.find(s=>["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
+  const upcomingAuto=ps.find(s=>s.source==="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
+  const manualDraft=ps.find(s=>s.source!=="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&!s.questionsLocked);
+  const reviewBanners=[manualDraft,upcomingAuto].filter((s,i,arr):s is Survey=>Boolean(s)&&arr.findIndex(x=>x?.id===s.id)===i);
   const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
   const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
   const quotaLimit=quota?quota.limit:2;
@@ -2286,20 +2550,28 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
               </button>
             </div>
           </div>
-          <button onClick={()=>setShowSend(true)}
-            className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
-            style={{fontFamily:"var(--font-display)"}}>
-            <Send size={14}/> Send Survey Now
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>setShowGenerateDemo(true)}
+              className="flex items-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Sparkles size={14}/> Test generate
+            </button>
+            <button onClick={()=>setShowSend(true)}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Send size={14}/> Send Survey Now
+            </button>
+          </div>
         </div>
 
-        {upcoming&&project.backendProjectId&&Number.isFinite(Number(upcoming.id))&&(
-          <div className="bg-card border border-violet-400/40">
+        {reviewBanners.map(upcoming=>(
+          project.backendProjectId&&Number.isFinite(Number(upcoming.id))?(
+          <div key={upcoming.id} className="bg-card border border-violet-400/40">
             <div className="flex items-center justify-between gap-4 px-5 py-4 flex-wrap">
               <div>
                 <div className="flex items-center gap-2">
                   <span className={`text-sm font-bold ${SURVEY_STATUS_CONFIG[upcoming.status].c}`}>{SURVEY_STATUS_CONFIG[upcoming.status].l}</span>
-                  <span className="text-base font-bold" style={{fontFamily:"var(--font-display)"}}>{upcoming.status==="failed"?"Survey needs attention":"Monthly survey review"}</span>
+                  <span className="text-base font-bold" style={{fontFamily:"var(--font-display)"}}>{upcoming.status==="failed"?"Survey needs attention":upcoming.source==="auto_pulse"?"Monthly survey review":"Draft questions ready"}</span>
                 </div>
                 <p className="text-sm text-muted-foreground mt-1">
                   {upcoming.status==="paused"
@@ -2307,7 +2579,7 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
                     :upcoming.status==="failed"
                       ?`Delivery failed: ${upcoming.analysisError||"retry available"}.`
                       :`Auto-sends ${fmtDate(upcoming.reviewDeadlineAt||upcoming.scheduledSendAt||"")}.`}
-                  {" "}{upcoming.questions?.length??0} questions · health context captured
+                  {" "}{upcoming.questions?.length??0} questions · edit until then
                 </p>
               </div>
               <button onClick={()=>setReviewSurvey(upcoming)}
@@ -2316,7 +2588,8 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
               </button>
             </div>
           </div>
-        )}
+          ):null
+        ))}
 
         {/* ── Score summary ── */}
         {latest?.scores&&(
@@ -2430,6 +2703,8 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
                   {completed[iIdx].aiInsight}
                 </div>
 
+                <SurveyAskedQuestions questions={completed[iIdx].questions}/>
+
                 {/* Themes */}
                 {completed[iIdx].themes.length>0&&(
                   <div className="border border-border divide-y divide-border">
@@ -2538,8 +2813,8 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
               return (
                 <div key={s.id} className="border-b border-border last:border-b-0">
                   {/* Row */}
-                  <div role={surveyHasResults(s)?"button":undefined} onClick={()=>{if(surveyHasResults(s)){setExId(isEx?null:s.id);setRawId(null);}}}
-                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${surveyHasResults(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                  <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                     style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
                     {/* Project */}
@@ -2580,17 +2855,25 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
                       {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onSurveySent}/>}
                       {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent}/>}
                       {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
-                      {surveyHasResults(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                      {!s.questionsLocked&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&(
+                        <button type="button" onClick={()=>setReviewSurvey(s)}
+                          className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary">
+                          Review
+                        </button>
+                      )}
+                      {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
                     </div>
                   </div>
 
                   {/* Expanded */}
                   <AnimatePresence>
-                    {isEx&&surveyHasResults(s)&&(
+                    {isEx&&surveyCanExpand(s)&&(
                       <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                         <div className="border-t border-border">
-                          {/* AI Summary */}
                           <div className="px-5 py-4 border-b border-border">
+                            <SurveyAskedQuestions questions={s.questions}/>
+                            {surveyHasResults(s)&&(
+                              <>
                             <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                             {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                             {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
@@ -2606,6 +2889,8 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
                                 </div>
                               ))}
                             </div>}
+                              </>
+                            )}
                           </div>
                           {/* Raw responses */}
                           {s.rawResponses.length>0&&(
@@ -2657,9 +2942,17 @@ function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:P
         {showRubric&&<SurveyRubricPanel key="rubric" onClose={()=>setShowRubric(false)}/>}
       </AnimatePresence>
       <AnimatePresence>
+        {showGenerateDemo&&<SendSurveyModal key="gen-demo" onClose={()=>setShowGenerateDemo(false)} project={project}
+          customGuidance={customGuidance}
+          draftSurvey={manualDraft}
+          onSent={onSurveySent}
+          demoOnly/>}
+      </AnimatePresence>
+      <AnimatePresence>
         {showSend&&<SendSurveyModal key="send" onClose={()=>setShowSend(false)} project={project}
           customGuidance={customGuidance}
           audienceSize={audienceSize}
+          draftSurvey={manualDraft}
           onSent={onSurveySent}/>}
       </AnimatePresence>
       <AnimatePresence>
@@ -2810,8 +3103,8 @@ function SettingsView({project}:{project:Project;}) {
           <div>
             <div className="flex items-center justify-between mb-5">
               <div>
-                <div className="text-[15px] font-bold text-foreground">Survey Recipients — {team.length} members</div>
-                <p className="text-sm text-muted-foreground mt-1">Audience size is used for response rate. The public form stays anonymous — this list is not sent to respondents.</p>
+                <div className="text-[15px] font-bold text-foreground">Team directory — {team.length} members</div>
+                <p className="text-sm text-muted-foreground mt-1">This list is local notes only. Survey response rate (`1 of N`) uses how many `projectmember` rows have role DEVELOPER. The public form stays anonymous.</p>
               </div>
             </div>
             <div className="border border-border bg-card mb-4">
@@ -2902,26 +3195,32 @@ export default function App() {
   const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
   const screen=parsed.screen;
   const activeId=parsed.projectId;
-  const go=useCallback((next:Screen)=>{
-    navigate(pathFromScreen(next, parsed.projectId));
-  },[navigate,parsed.projectId]);
   const [dark,setDark]=useState(false);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
-  const [projects,setProjects]=useState<Project[]>(PROJECTS);
-  const [trackedIds,setTrackedIds]=useState<Set<string>>(
-    ()=>new Set(PROJECTS.filter(p=>p.tracked).map(p=>p.id))
-  );
+  const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
+  const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
+  useEffect(()=>{
+    if(projects.length===0) return;
+    setTrackedIds(prev=>{
+      if(prev.size>0) return prev;
+      return new Set(projects.map(p=>p.id));
+    });
+  },[projects]);
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
-  const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
-  // Real health scores for backend-synced projects, merged into `projects` in place so
-  // the SSE-driven updateProjectRisk (below) keeps building on top of real data once loaded.
-  const {refetch:refetchHealth}=useProjectHealthSync(projects,setProjects);
+  const active=useMemo(()=>findProjectByPath(projects,activeId),[activeId,projects]);
+  const go=useCallback((next:Screen)=>{
+    navigate(pathFromScreen(next, active?.id ?? activeId));
+  },[navigate,active?.id,activeId]);
+  useEffect(()=>{
+    if(!active || !activeId || active.id===activeId) return;
+    navigate(pathFromScreen(screen, active.id), { replace: true });
+  },[active,activeId,screen,navigate]);
   // Real survey data for backend-synced projects; demo-only projects (no backendProjectId) keep their static mock surveys.
   const {surveys:realSurveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
   const surveys=useMemo(()=>{
-    const mockOnly=SURVEYS.filter(s=>!projects.find(p=>p.id===s.projectId)?.backendProjectId);
+    const mockOnly=SURVEYS.filter(s=>projects.some(p=>p.id===s.projectId&&!p.backendProjectId));
     return [...mockOnly,...realSurveys];
   },[realSurveys,projects]);
   const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
@@ -2937,13 +3236,36 @@ export default function App() {
       if(typeof riskScore!=="number") return {...p,subscores};
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
-    void refetchHealth();
+    void refetchHealth({ silent: true });
   },[refetchHealth]);
   const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
   const [ratingOpen,setRatingOpen]=useState(false);
   const sel=(id:string)=>{navigate(pathFromScreen("dashboard", id));};
   const home=()=>{navigate(pathFromScreen("portfolio"));};
   const renderContent=()=>{
+    if(projectsLoading){
+      if(parsed.projectId) return <ProjectPageSkeleton/>;
+      return <PortfolioView
+        projects={[]} actions={ACTIONS} surveys={surveys} loading
+        onSelect={sel} onLogAction={()=>setLogOpen(true)}
+        onViewActions={()=>go("global-actions")}
+        onViewSurveys={()=>go("global-surveys")}
+        onRatingOpen={()=>setRatingOpen(true)}
+        trackedIds={trackedIds} onToggleTracked={toggleTracked}
+      />;
+    }
+    if(projectsError && projects.length===0){
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center max-w-md">
+            <AlertTriangle size={28} className="mx-auto text-amber-500 mb-3"/>
+            <div className="text-lg font-bold mb-1" style={{fontFamily:"var(--font-display)"}}>Couldn’t load projects</div>
+            <p className="text-sm text-muted-foreground mb-4">{projectsError}</p>
+            <button onClick={()=>void refetchHealth()} className="bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold">Try again</button>
+          </div>
+        </div>
+      );
+    }
     if(screen==="global-actions")
       return <GlobalActionsView actions={ACTIONS} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)}/>;
     if(screen==="global-surveys")
@@ -2971,8 +3293,7 @@ export default function App() {
     return <PublicSurveyPage token={parsed.surveyToken}/>;
   }
   if(!isAuthenticated){
-    if(screen!=="login") return <Navigate to="/login" replace/>;
-    return <LoginView onSuccess={()=>navigate("/workspaces")}/>;
+    return <LoginView onSuccess={()=>{if(screen==="login") navigate("/workspaces");}}/>;
   }
   if(!activeWorkspace){
     if(screen==="create-workspace"){
@@ -2983,10 +3304,9 @@ export default function App() {
         />
       );
     }
-    if(screen!=="workspaces") return <Navigate to="/workspaces" replace/>;
     return (
       <WorkspaceSelectionView
-        onSelect={()=>navigate("/")}
+        onSelect={()=>{if(screen==="login"||screen==="workspaces") navigate("/");}}
         onCreateNew={()=>navigate("/workspaces/new")}
         onLogout={()=>{logout();navigate("/login");}}
       />
@@ -3021,7 +3341,10 @@ export default function App() {
         <div className="border-t border-border bg-card px-6 py-2.5 flex items-center gap-6 text-sm text-muted-foreground">
           <span className="text-xs uppercase font-bold text-foreground/40" style={{fontFamily:"var(--font-display)"}}>Demo</span>
           <button onClick={()=>setSurveyDemo(true)} className="hover:text-primary transition-colors flex items-center gap-1.5"><MessageSquare size={13}/>Preview survey flow</button>
-          <button onClick={()=>sel("onyx-mobile")} className="hover:text-primary transition-colors flex items-center gap-1.5"><AlertTriangle size={13}/>Open critical project</button>
+          <button onClick={()=>{
+            const critical=projects.filter(p=>p.hasData).sort((a,b)=>a.score-b.score)[0];
+            if(critical) sel(critical.id);
+          }} className="hover:text-primary transition-colors flex items-center gap-1.5"><AlertTriangle size={13}/>Open critical project</button>
         </div>
       )}
       <AnimatePresence>

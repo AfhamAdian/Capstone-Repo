@@ -10,6 +10,9 @@ import { logger } from '@libs/logger.js';
 import {
   createSurvey,
   replaceSurveyQuestions,
+  findOpenManualDraft,
+  updateUnsentSurveyDraft,
+  withQuestionIds,
   getSurveyById,
   listSurveysForProject,
   listSurveysGlobal,
@@ -22,6 +25,7 @@ import {
   listMonthlyPulse,
   updateSurveyDelivery,
   type SurveyStatus,
+  type SurveySource,
   type SurveyRow,
 } from '../database/survey.js';
 import { getProjectName, getPendingSurvey as getPendingSurveyFromDb } from '../database/project.js';
@@ -95,6 +99,7 @@ export interface SurveyListItem {
   projectId: number;
   projectName: string;
   status: SurveyStatus;
+  source: SurveySource;
   trigger: string;
   sentDate: string | null;
   responseCount: number;
@@ -105,6 +110,7 @@ export interface SurveyListItem {
   questionVersion: number;
   /** Questions are immutable once their shared link has been broadcast. */
   questionsLocked: boolean;
+  questions: { id: number; category: string; questionText: string; questionType: 'text' | 'scale' }[];
   scores: SurveyScores | null;
   themes: string[];
   aiInsight: string | null;
@@ -113,7 +119,6 @@ export interface SurveyListItem {
 
 export interface SurveyDetail extends SurveyListItem {
   rawResponses: { question: string; answers: string[] }[];
-  questions: { id: number; category: string; questionText: string; questionType: 'text' | 'scale' }[];
   healthContext: SurveyRow['health_context'];
   analysisError: string | null;
   delivery: {
@@ -135,18 +140,42 @@ export class SurveyService {
   constructor(private deps: SurveyServiceDependencies) {}
 
   /**
-   * Generates candidate questions, removes near-duplicates deterministically,
-   * then has the AI score each on relevance/clarity/importance/diversity. Only
-   * questions clearing the quality gate survive; the rest are dropped, and the
-   * best `SURVEY_QUESTION_MAX_COUNT` are returned (with scores, for the modal).
+   * Generates candidate questions, persists them as an unsent manual draft, and
+   * schedules auto-send after `SURVEY_QUESTION_GEN_LEAD_DAYS`. Reuses the open
+   * draft for this project so Test generate / Send Survey Now share one row.
    */
-  async generateQuestions(projectId: number, trigger: string, customGuidance?: string): Promise<ScoredSurveyQuestion[]> {
+  async generateQuestions(
+    projectId: number,
+    trigger: string,
+    customGuidance?: string,
+    options: { force?: boolean } = {},
+  ): Promise<{ surveyId: number; questions: ScoredSurveyQuestion[]; scheduledSendAt: string }> {
+    const existing = await findOpenManualDraft(projectId);
+    if (!options.force && existing && existing.questions.length > 0) {
+      return {
+        surveyId: existing.id,
+        questions: existing.questions.map((question) => ({
+          category: question.category,
+          questionText: question.questionText,
+          questionType: question.questionType,
+          score: {
+            relevance: 0,
+            clarity: 0,
+            importance: 0,
+            diversity: 0,
+            overall: 0,
+          },
+        })),
+        scheduledSendAt: existing.scheduled_send_at ?? keepOrAssignReviewWindow(existing.scheduled_send_at).toISOString(),
+      };
+    }
+
     const normalized = normalizeSurveyText(trigger, customGuidance);
     const [projectName, healthContext] = await Promise.all([
       getProjectName(projectId),
       captureSurveyHealthContext(projectId),
     ]);
-    return generateQualityQuestions({
+    const questions = await generateQualityQuestions({
       aiClient: this.deps.aiClient,
       projectName,
       trigger: normalized.trigger,
@@ -154,6 +183,40 @@ export class SurveyService {
       categories: listCategoryKeys(),
       healthContext,
     });
+    const storedQuestions = withQuestionIds(questions);
+    const scheduledSendAt = keepOrAssignReviewWindow(existing?.scheduled_send_at);
+
+    if (existing) {
+      await updateUnsentSurveyDraft(existing.id, {
+        questions: storedQuestions,
+        trigger: normalized.trigger,
+        customGuidance: normalized.customGuidance ?? null,
+        healthContext,
+        scheduledSendAt,
+        status: 'draft',
+        analysisError: null,
+      });
+      this.log.info({ surveyId: existing.id, projectId }, 'manual draft questions replaced');
+      return { surveyId: existing.id, questions, scheduledSendAt: scheduledSendAt.toISOString() };
+    }
+
+    const used = await countManualSurveysThisMonth(projectId);
+    if (used >= env.manualSurveyMonthlyLimit) {
+      throw new Error(`Monthly manual survey limit reached (${env.manualSurveyMonthlyLimit}/month)`);
+    }
+
+    const surveyId = await createSurvey({
+      projectId,
+      source: 'manual',
+      trigger: normalized.trigger,
+      customGuidance: normalized.customGuidance,
+      status: 'draft',
+      scheduledSendAt,
+      healthContext,
+      questions: storedQuestions,
+    });
+    this.log.info({ surveyId, projectId, scheduledSendAt }, 'manual draft created with generated questions');
+    return { surveyId, questions, scheduledSendAt: scheduledSendAt.toISOString() };
   }
 
   /**
@@ -179,15 +242,48 @@ export class SurveyService {
 
   async createAndSendSurvey(
     projectId: number,
-    input: { trigger: string; customGuidance?: string; questions: GeneratedSurveyQuestion[]; targetCount?: number },
+    input: {
+      surveyId?: number;
+      trigger: string;
+      customGuidance?: string;
+      questions: GeneratedSurveyQuestion[];
+      targetCount?: number;
+    },
   ): Promise<{ surveyId: number }> {
+    const normalized = normalizeSurveyText(input.trigger, input.customGuidance);
+    const validatedQuestions = await validateSurveyQuestions(input.questions);
+    const storedQuestions = withQuestionIds(validatedQuestions);
+
+    const existing = input.surveyId
+      ? await getSurveyById(input.surveyId)
+      : await findOpenManualDraft(projectId);
+
+    if (existing) {
+      if (existing.project_id !== projectId) {
+        throw new SurveyNotFoundError(`Survey ${existing.id} does not belong to project ${projectId}`);
+      }
+      if (existing.sent_at) {
+        throw new SurveyLockedError('This survey has been sent and cannot be dispatched again');
+      }
+      await updateUnsentSurveyDraft(existing.id, {
+        questions: storedQuestions,
+        trigger: normalized.trigger,
+        customGuidance: normalized.customGuidance ?? null,
+        scheduledSendAt: new Date(),
+        status: 'draft',
+        analysisError: null,
+        targetCount: input.targetCount,
+      });
+      await this.deps.surveyQueueManager.enqueueSurveySend(existing.id);
+      this.log.info({ surveyId: existing.id, projectId }, 'existing draft queued for send');
+      return { surveyId: existing.id };
+    }
+
     const used = await countManualSurveysThisMonth(projectId);
     if (used >= env.manualSurveyMonthlyLimit) {
       throw new Error(`Monthly manual survey limit reached (${env.manualSurveyMonthlyLimit}/month)`);
     }
 
-    const normalized = normalizeSurveyText(input.trigger, input.customGuidance);
-    const validatedQuestions = await validateSurveyQuestions(input.questions);
     const healthContext = await captureSurveyHealthContext(projectId);
     const surveyId = await createSurvey({
       projectId,
@@ -197,7 +293,7 @@ export class SurveyService {
       status: 'draft',
       scheduledSendAt: new Date(),
       healthContext,
-      questions: validatedQuestions.map((question, index) => ({ id: index + 1, ...question })),
+      questions: storedQuestions,
       targetCount: input.targetCount,
     });
 
@@ -214,6 +310,19 @@ export class SurveyService {
     projectId: number,
     input: { trigger?: string; customGuidance?: string; targetCount?: number } = {},
   ): Promise<{ surveyId: number; queued: true }> {
+    const existing = await findOpenManualDraft(projectId);
+    if (existing && existing.questions.length > 0) {
+      await updateUnsentSurveyDraft(existing.id, {
+        scheduledSendAt: new Date(),
+        status: 'draft',
+        analysisError: null,
+        targetCount: input.targetCount,
+      });
+      await this.deps.surveyQueueManager.enqueueSurveySend(existing.id);
+      this.log.info({ surveyId: existing.id, projectId }, 'existing draft queued for send-now');
+      return { surveyId: existing.id, queued: true };
+    }
+
     const used = await countManualSurveysThisMonth(projectId);
     if (used >= env.manualSurveyMonthlyLimit) {
       throw new Error(`Monthly manual survey limit reached (${env.manualSurveyMonthlyLimit}/month)`);
@@ -421,6 +530,7 @@ export class SurveyService {
       projectId: survey.project_id,
       projectName,
       status: survey.status,
+      source: survey.source ?? 'manual',
       trigger: survey.trigger,
       sentDate: survey.sent_at,
       responseCount: derived.responseCount,
@@ -430,6 +540,7 @@ export class SurveyService {
       closedAt: survey.closed_at,
       questionVersion: 1,
       questionsLocked: survey.sent_at !== null,
+      questions: survey.questions,
       scores: insight?.scores
         ? {
             delivery: insight.scores.delivery ?? 0,
@@ -452,4 +563,14 @@ function safePublicSurveyUrl(survey: SurveyRow): string | null {
   } catch {
     return null;
   }
+}
+
+function keepOrAssignReviewWindow(existingScheduledSendAt: string | null | undefined): Date {
+  if (existingScheduledSendAt) {
+    const existing = new Date(existingScheduledSendAt);
+    if (!Number.isNaN(existing.getTime()) && existing.getTime() > Date.now()) {
+      return existing;
+    }
+  }
+  return new Date(Date.now() + env.surveyQuestionGenLeadDays * 24 * 60 * 60 * 1000);
 }

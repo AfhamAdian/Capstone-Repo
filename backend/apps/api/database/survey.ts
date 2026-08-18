@@ -205,6 +205,59 @@ export async function replaceSurveyQuestions(surveyId: number, questions: Genera
   }
 }
 
+/** Latest unsent manual survey that an admin can still edit (draft or failed). */
+export async function findOpenManualDraft(projectId: number): Promise<SurveyRow | null> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('survey')
+    .select('*')
+    .eq('project_id', projectId)
+    .eq('source', 'manual')
+    .is('sent_at', null)
+    .in('status', ['draft', 'failed', 'paused'])
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to find open manual draft for project ${projectId}: ${error.message}`);
+  }
+  return data ? normalizeRow(data as SurveyRow) : null;
+}
+
+export async function updateUnsentSurveyDraft(
+  surveyId: number,
+  patch: {
+    questions?: SurveyQuestion[];
+    trigger?: string;
+    customGuidance?: string | null;
+    healthContext?: SurveyHealthContext | null;
+    scheduledSendAt?: Date;
+    status?: SurveyStatus;
+    analysisError?: string | null;
+    targetCount?: number;
+  },
+): Promise<void> {
+  const values: Record<string, unknown> = {};
+  if (patch.questions) values.questions = patch.questions;
+  if (patch.trigger !== undefined) values.trigger = patch.trigger;
+  if (patch.customGuidance !== undefined) values.custom_guidance = patch.customGuidance;
+  if (patch.healthContext !== undefined) values.health_context = patch.healthContext;
+  if (patch.scheduledSendAt) values.scheduled_send_at = patch.scheduledSendAt.toISOString();
+  if (patch.status) values.status = patch.status;
+  if (patch.analysisError !== undefined) values.analysis_error = patch.analysisError;
+  if (typeof patch.targetCount === 'number') values.target_count = Math.max(0, patch.targetCount);
+  if (Object.keys(values).length === 0) return;
+
+  const { error } = await updateMatching(
+    'survey',
+    values,
+    (query) => query.eq('id', surveyId).is('sent_at', null),
+  );
+  if (error) {
+    throw new Error(`Failed to update unsent survey ${surveyId}: ${formatSupabaseError(error)}`);
+  }
+}
+
 /** Atomically opens a survey the first time its shared link is broadcast. */
 export async function markSurveySent(surveyId: number, sentAt: Date = new Date()): Promise<void> {
   const { error } = await updateMatching(
@@ -518,14 +571,13 @@ export async function listDueForQuestionGeneration(now: Date, leadDays: number):
     .filter((survey) => survey.questions.length === 0);
 }
 
-/** Auto-pulse rows whose send time has arrived but have not been dispatched yet. */
+/** Unsent drafts (auto-pulse or manual) whose send time has arrived. */
 export async function listDueForSend(now: Date): Promise<SurveyRow[]> {
   const client = assertSupabaseClient();
 
   const { data, error } = await client
     .from('survey')
     .select('*')
-    .eq('source', 'auto_pulse')
     .is('sent_at', null)
     .in('status', ['draft'])
     .lte('scheduled_send_at', now.toISOString());

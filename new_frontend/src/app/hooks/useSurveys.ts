@@ -5,6 +5,7 @@ import {
   type GeneratedSurveyQuestion,
   type SurveyDetail,
   type SurveyHealthContext,
+  type SurveySource,
   type SurveyStatus,
 } from "../api-survey";
 
@@ -17,6 +18,7 @@ export interface FrontendSurvey {
   id: string;
   projectId: string;
   status: SurveyStatus;
+  source: SurveySource;
   trigger: string;
   sentDate: string;
   responseCount: number;
@@ -92,6 +94,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
             id: String(s.id),
             projectId: backendToFrontend.get(String(s.projectId))!,
             status: detail?.status ?? s.status,
+            source: detail?.source ?? s.source ?? "manual",
             trigger: s.trigger,
             sentDate: s.sentDate ?? s.scheduledSendAt ?? s.reviewDeadlineAt ?? "",
             responseCount: detail?.responseCount ?? s.responseCount,
@@ -100,7 +103,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
             themes: detail?.themes ?? s.themes ?? [],
             aiInsight: detail?.aiInsight ?? s.aiInsight ?? "",
             rawResponses: detail?.rawResponses ?? [],
-            questions: detail?.questions ?? [],
+            questions: detail?.questions ?? s.questions ?? [],
             reviewDeadlineAt: s.reviewDeadlineAt,
             scheduledSendAt: s.scheduledSendAt,
             closedAt: s.closedAt,
@@ -124,9 +127,16 @@ export function useSurveys(projects: ProjectIdentity[]) {
     void fetchSurveys();
   }, [fetchSurveys]);
 
-  const waitingForBackground = surveys.some(
-    (s) => s.status === "draft" || s.status === "active" || (s.status === "closed" && !s.scores),
-  );
+  const waitingForBackground = surveys.some((s) => {
+    if (s.status === "active") return true;
+    if (s.status === "closed" && !s.scores) return true;
+    if (s.status === "draft" && s.questions.length === 0) return true;
+    if (s.status === "draft" && s.scheduledSendAt) {
+      const sendAt = new Date(s.scheduledSendAt).getTime();
+      return Number.isFinite(sendAt) && sendAt <= Date.now() + 60_000;
+    }
+    return false;
+  });
   useEffect(() => {
     if (!waitingForBackground) return;
     const timer = window.setInterval(() => {

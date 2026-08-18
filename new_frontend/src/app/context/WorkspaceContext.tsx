@@ -11,6 +11,13 @@ export interface Workspace {
   isNew?: boolean;
 }
 
+export const TEMPLATE_WORKSPACES: Workspace[] = [
+  { id: "template-github", name: "GitHub Example", vcs: "github", projectsCount: 0, membersCount: 0, isNew: true },
+  { id: "template-gitlab", name: "GitLab Example", vcs: "gitlab", projectsCount: 0, membersCount: 0, isNew: true },
+  { id: "template-bitbucket", name: "Bitbucket Example", vcs: "bitbucket", projectsCount: 0, membersCount: 0, isNew: true },
+  { id: "template-azure", name: "Azure DevOps Example", vcs: "azure", projectsCount: 0, membersCount: 0, isNew: true },
+];
+
 export interface AuthUser {
   name: string;
   email: string;
@@ -83,7 +90,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(() => {
     const id = loadActiveWorkspaceId();
     if (!id) return null;
-    return loadWorkspaces().find((ws) => ws.id === id) ?? null;
+    return loadWorkspaces().find((ws) => ws.id === id)
+      ?? TEMPLATE_WORKSPACES.find((ws) => ws.id === id)
+      ?? null;
   });
 
   useEffect(() => {
@@ -119,7 +128,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   };
 
   const setActiveWorkspace = (ws: Workspace) => {
-    setActiveWorkspaceState(ws);
+    const stored = { ...ws, isNew: false };
+    setWorkspaces((prev) => (prev.some((item) => item.id === stored.id) ? prev : [...prev, stored]));
+    setActiveWorkspaceState(stored);
   };
 
   return (

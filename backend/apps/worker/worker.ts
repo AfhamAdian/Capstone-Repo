@@ -16,27 +16,42 @@ import { updateSurveyStatus } from '../api/database/survey.js';
 dotenv.config();
 
 const redisUrl = process.env.REDIS_URL;
-const port = process.env.PORT || 4000;
+// Never reuse the API's PORT locally — both processes load the same .env.
+// Render web services inject PORT; local / dedicated workers use WORKER_PORT (default 4000).
+const port = Number(
+  process.env.WORKER_PORT
+    ?? (process.env.RENDER ? process.env.PORT : undefined)
+    ?? 4000,
+);
 
 if (!redisUrl) {
   console.error('REDIS_URL is required to start the worker');
   process.exit(1);
 }
 
-// Express server setup to fool Render into thinking this is a web service
+// Optional health server (Render web-service probes). Queue workers still run if this bind fails.
 const app = express();
 
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.send('Hello World!');
 });
 
-// BUG: Health endpoint returns undefined status code (will cause issues)
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-app.listen(port, () => {
-  console.log(`Express server listening on port ${port}`);
+const healthServer = app.listen(port, () => {
+  logger.info({ component: 'worker-health', port }, 'worker health server listening');
+});
+healthServer.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    logger.warn(
+      { component: 'worker-health', port },
+      'worker health port is already in use; queue workers will still run',
+    );
+    return;
+  }
+  throw error;
 });
 
 async function startWorker() {

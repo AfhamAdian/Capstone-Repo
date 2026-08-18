@@ -36,12 +36,14 @@ export interface OpsMetrics {
 
 export type OpsMetricSeries = Record<
   'commits' | 'tickets' | 'velocity' | 'blockers' | 'deployments' | 'prCycleTime',
-  { v: number; label: string }[]
+  { v: number; label: string; date: string }[]
 >;
 
 export interface ProjectHealth {
   id: number;
   name: string;
+  owner: string | null;
+  repo: string | null;
   team: string;
   description: string;
   score: number | null;
@@ -49,7 +51,7 @@ export interface ProjectHealth {
   subscores: HealthSubscores | null;
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
-  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string }[]>;
+  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]>;
   metrics: OpsMetrics | null;
   metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;
@@ -78,18 +80,31 @@ function lastKnown(rows: SnapshotOpsMetricsRow[], pick: (row: SnapshotOpsMetrics
   return null;
 }
 
+function isoDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function carryForwardSeries(
   rows: SnapshotOpsMetricsRow[],
   pick: (row: SnapshotOpsMetricsRow) => number | null,
   decimals = 0,
-): { v: number; label: string }[] {
+): { v: number; label: string; date: string }[] {
   let last: number | null = null;
-  const series: { v: number; label: string }[] = [];
+  const series: { v: number; label: string; date: string }[] = [];
   for (const row of rows) {
     const value = pick(row);
     if (value !== null) last = value;
     if (last !== null) {
-      series.push({ v: roundMetric(last, decimals), label: formatLabel(row.snapshotTime) });
+      series.push({
+        v: roundMetric(last, decimals),
+        label: formatLabel(row.snapshotTime),
+        date: isoDate(row.snapshotTime),
+      });
     }
   }
   return series;
@@ -165,17 +180,17 @@ function buildProjectHealth(
 
   const sparkline = history.map((h) => ({ v: Math.round(h.overall_score ?? 0) }));
   const timeSeries = history.map((h) => ({
-    date: h.computed_at,
+    date: isoDate(h.computed_at),
     label: formatLabel(h.computed_at),
     score: Math.round(h.overall_score ?? 0),
   }));
 
-  const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string }[]> = {
-    delivery: history.map((h) => ({ v: Math.round(h.delivery_score ?? 0), label: formatLabel(h.computed_at) })),
-    codeQuality: history.map((h) => ({ v: Math.round(h.code_quality_score ?? 0), label: formatLabel(h.computed_at) })),
-    cicd: history.map((h) => ({ v: Math.round(h.cicd_score ?? 0), label: formatLabel(h.computed_at) })),
-    teamHealth: history.map((h) => ({ v: Math.round(h.team_health_score ?? 0), label: formatLabel(h.computed_at) })),
-    blockers: history.map((h) => ({ v: Math.round(h.blockers_score ?? 0), label: formatLabel(h.computed_at) })),
+  const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]> = {
+    delivery: history.map((h) => ({ v: Math.round(h.delivery_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    codeQuality: history.map((h) => ({ v: Math.round(h.code_quality_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    cicd: history.map((h) => ({ v: Math.round(h.cicd_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    teamHealth: history.map((h) => ({ v: Math.round(h.team_health_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    blockers: history.map((h) => ({ v: Math.round(h.blockers_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
   };
 
   const ops = buildOpsMetrics(opsHistory);
@@ -183,6 +198,8 @@ function buildProjectHealth(
   return {
     id: project.id,
     name: project.name,
+    owner: project.owner,
+    repo: project.repo,
     team,
     description: project.description ?? '',
     score: score !== null ? Math.round(score) : null,
