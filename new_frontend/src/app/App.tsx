@@ -15,8 +15,8 @@ import {
   Brush, XAxis, YAxis, ComposedChart, CartesianGrid, ReferenceLine
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { useWorkspace } from "./context/WorkspaceContext";
-import type { SyncRiskKey } from "./api";
+import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
+import { listProjects, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveySettings } from "./hooks/useProjectSurveySettings";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
@@ -36,6 +36,7 @@ import { ProjectsView } from "./pages/ProjectsView";
 import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
+import { VcsWorkspaceView } from "./pages/VcsWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
@@ -3202,7 +3203,7 @@ function SettingsView({project}:{project:Project;}) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const {user,isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
+  const {user,isAuthenticated,isAuthLoading,activeWorkspace,setActiveWorkspace,logout}=useWorkspace();
   const location=useLocation();
   const navigate=useNavigate();
   const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
@@ -3216,6 +3217,26 @@ export default function App() {
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
+  // Real vcs per project (company-scoped) from our own API — used to group workspaces and filter the portfolio.
+  const [vcsById,setVcsById]=useState<Map<number,string>>(new Map());
+  useEffect(()=>{
+    if(!isAuthenticated) return;
+    listProjects()
+      .then(rows=>setVcsById(new Map(rows.filter(r=>r.vcs).map(r=>[r.id,r.vcs as string]))))
+      .catch(()=>{});
+  },[isAuthenticated]);
+  const activeVcs=activeWorkspace?.vcs ?? null;
+  // Portfolio is scoped to the chosen vcs workspace (and, via our company-scoped map, the user's company).
+  const visibleProjects=useMemo(()=>
+    activeVcs
+      ? projects.filter(p=>p.backendProjectId && vcsById.get(Number(p.backendProjectId))===activeVcs)
+      : projects
+  ,[projects,activeVcs,vcsById]);
+  // Selecting a vcs workspace sets it active (localStorage) and lands on the portfolio.
+  const selectVcsWorkspace=useCallback((vcs:string)=>{
+    setActiveWorkspace({id:`ws-${vcs}`,name:vcs,vcs:vcs as VcsProvider,projectsCount:0,membersCount:0});
+    navigate("/");
+  },[setActiveWorkspace,navigate]);
   const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
   useEffect(()=>{
     if(projects.length===0) return;
@@ -3289,7 +3310,7 @@ export default function App() {
       return <GlobalSurveysView surveys={surveys} projects={projects} onBack={home} onClosed={refetchSurveys}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
-        projects={projects} actions={ACTIONS} surveys={surveys}
+        projects={visibleProjects} actions={ACTIONS} surveys={surveys}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>go("global-actions")}
         onViewSurveys={()=>go("global-surveys")}
@@ -3326,19 +3347,15 @@ export default function App() {
     return <LoginView onSuccess={()=>navigate("/workspaces")} onNavigateToRegister={()=>navigate("/register")} onNavigateToForgot={()=>navigate("/forgot-password")}/>;
   }
   if(!activeWorkspace){
-    if(screen==="create-workspace"){
-      return (
-        <CreateWorkspaceView
-          onBack={()=>navigate("/workspaces")}
-          onCreated={()=>navigate("/")}
-        />
-      );
+    // Admins can create a project directly from the workspace chooser.
+    if(screen==="add-project" && user?.role==="admin"){
+      return <AddProjectView onCreated={()=>{void refetchHealth();navigate("/workspaces");}} onCancel={()=>navigate("/workspaces")}/>;
     }
     return (
-      <WorkspaceSelectionView
-        onSelect={()=>{if(screen==="login"||screen==="workspaces") navigate("/");}}
-        onCreateNew={()=>navigate("/workspaces/new")}
-        onLogout={()=>{logout();navigate("/login");}}
+      <VcsWorkspaceView
+        onSelect={selectVcsWorkspace}
+        onAddProject={()=>navigate("/projects/new")}
+        isAdmin={user?.role==="admin"}
       />
     );
   }
@@ -3355,10 +3372,10 @@ export default function App() {
   }
   if(screen==="workspaces"){
     return (
-      <WorkspaceSelectionView
-        onSelect={()=>navigate("/")}
-        onCreateNew={()=>navigate("/workspaces/new")}
-        onLogout={()=>{logout();navigate("/login");}}
+      <VcsWorkspaceView
+        onSelect={selectVcsWorkspace}
+        onAddProject={()=>navigate("/projects/new")}
+        isAdmin={user?.role==="admin"}
       />
     );
   }
