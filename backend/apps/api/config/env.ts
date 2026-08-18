@@ -32,10 +32,19 @@ if (hasAnySupabaseValue && !hasBothSupabaseValues) {
 const redisUrl = process.env.REDIS_URL;
 const databaseUrl = process.env.DATABASE_URL;
 
+// Frontend origin allowed to send credentialed (cookie) requests
+const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
+
 // Connector credentials (may be provided per-project in DB, but these can be defaults)
 const githubToken = process.env.GITHUB_TOKEN;
 const jiraBaseUrl = process.env.JIRA_BASE_URL;
 const jiraToken = process.env.JIRA_TOKEN;
+
+// Email (Gmail SMTP via Nodemailer) + frontend base URL used to build password-reset links
+const smtpUser = process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASS;
+const smtpFrom = process.env.SMTP_FROM ?? smtpUser;
+const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
 // Survey feature: AI question generation/analysis (Gemini)
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -93,9 +102,14 @@ export const env = {
   isSupabaseConfigured: hasBothSupabaseValues && hasValidSupabaseUrl,
   redisUrl,
   databaseUrl,
+  frontendOrigin,
   githubToken,
   jiraBaseUrl,
   jiraToken,
+  smtpUser,
+  smtpPass,
+  smtpFrom,
+  frontendUrl,
   geminiApiKey,
   geminiModel,
   slackBotToken,

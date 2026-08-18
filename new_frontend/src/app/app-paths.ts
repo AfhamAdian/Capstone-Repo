@@ -1,8 +1,13 @@
 export const paths = {
   login: "/login",
+  register: "/register",
+  forgotPassword: "/forgot-password",
+  resetPassword: "/reset-password",
   workspaces: "/workspaces",
   createWorkspace: "/workspaces/new",
   portfolio: "/",
+  projectsAdmin: "/projects",
+  addProject: "/projects/new",
   globalActions: "/actions",
   globalSurveys: "/surveys",
   publicSurvey: (token: string) => `/survey/${encodeURIComponent(token)}`,
@@ -15,9 +20,14 @@ export const paths = {
 
 export type AppScreen =
   | "login"
+  | "register"
+  | "forgot-password"
+  | "reset-password"
   | "workspaces"
   | "create-workspace"
   | "portfolio"
+  | "projects"
+  | "add-project"
   | "global-actions"
   | "global-surveys"
   | "dashboard"
@@ -28,8 +38,13 @@ export type AppScreen =
 
 export function screenFromPath(pathname: string): { screen: AppScreen; projectId: string | null; surveyToken: string | null } {
   if (pathname === "/login" || pathname === "/login/") return { screen: "login", projectId: null, surveyToken: null };
+  if (pathname === "/register" || pathname === "/register/") return { screen: "register", projectId: null, surveyToken: null };
+  if (pathname === "/forgot-password" || pathname === "/forgot-password/") return { screen: "forgot-password", projectId: null, surveyToken: null };
+  if (pathname === "/reset-password" || pathname === "/reset-password/") return { screen: "reset-password", projectId: null, surveyToken: null };
   if (pathname === "/workspaces" || pathname === "/workspaces/") return { screen: "workspaces", projectId: null, surveyToken: null };
   if (pathname === "/workspaces/new" || pathname === "/workspaces/new/") return { screen: "create-workspace", projectId: null, surveyToken: null };
+  if (pathname === "/projects/new" || pathname === "/projects/new/") return { screen: "add-project", projectId: null, surveyToken: null };
+  if (pathname === "/projects" || pathname === "/projects/") return { screen: "projects", projectId: null, surveyToken: null };
   if (pathname === "/actions" || pathname === "/actions/") return { screen: "global-actions", projectId: null, surveyToken: null };
   if (pathname === "/surveys" || pathname === "/surveys/") return { screen: "global-surveys", projectId: null, surveyToken: null };
 
@@ -53,9 +68,14 @@ export function screenFromPath(pathname: string): { screen: AppScreen; projectId
 export function pathFromScreen(screen: AppScreen, projectId?: string | null): string {
   switch (screen) {
     case "login": return paths.login;
+    case "register": return paths.register;
+    case "forgot-password": return paths.forgotPassword;
+    case "reset-password": return paths.resetPassword;
     case "workspaces": return paths.workspaces;
     case "create-workspace": return paths.createWorkspace;
     case "portfolio": return paths.portfolio;
+    case "projects": return paths.projectsAdmin;
+    case "add-project": return paths.addProject;
     case "global-actions": return paths.globalActions;
     case "global-surveys": return paths.globalSurveys;
     case "dashboard": return projectId ? paths.project(projectId) : paths.portfolio;

@@ -1,0 +1,111 @@
+// HTTP handlers for auth: parses requests, sets/clears the session cookie, maps AuthError to status codes.
+
+import type { CookieOptions, Request, Response } from 'express';
+import { sessionStore } from '@libs/auth/session-store.js';
+import {
+  AuthError,
+  forgotPassword,
+  getCurrentUser,
+  getInvite,
+  login,
+  logout,
+  register,
+  resetPassword,
+} from '../services/auth.service.js';
+import { SESSION_COOKIE_NAME, readSessionId } from '../middlewares/auth.middleware.js';
+import { env } from '../config/env.js';
+
+function sessionCookieOptions(): CookieOptions {
+  return {
+    httpOnly: true,
+    secure: env.nodeEnv === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: sessionStore.maxAgeMs,
+  };
+}
+
+function handleAuthError(error: unknown, response: Response): void {
+  if (error instanceof AuthError) {
+    response.status(error.status).json({ message: error.message });
+    return;
+  }
+  const message = error instanceof Error ? error.message : 'Authentication failed';
+  response.status(500).json({ message });
+}
+
+// POST /api/v1/auth/register
+export async function registerHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { name, email, password, companyName, inviteToken } = request.body ?? {};
+    const result = await register({ name, email, password, companyName, inviteToken });
+    response.cookie(SESSION_COOKIE_NAME, result.sessionId, sessionCookieOptions());
+    response.status(201).json({ user: result.user });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}
+
+// POST /api/v1/auth/login
+export async function loginHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { email, password } = request.body ?? {};
+    const result = await login({ email, password });
+    response.cookie(SESSION_COOKIE_NAME, result.sessionId, sessionCookieOptions());
+    response.status(200).json({ user: result.user });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}
+
+// POST /api/v1/auth/logout
+export async function logoutHandler(request: Request, response: Response): Promise<void> {
+  const sessionId = request.auth?.sessionId ?? readSessionId(request);
+  if (sessionId) {
+    await logout(sessionId);
+  }
+  response.clearCookie(SESSION_COOKIE_NAME, { ...sessionCookieOptions(), maxAge: undefined });
+  response.status(200).json({ message: 'Logged out' });
+}
+
+// GET /api/v1/auth/me
+export async function meHandler(request: Request, response: Response): Promise<void> {
+  const user = await getCurrentUser(request.auth!.userId);
+  if (!user) {
+    response.status(401).json({ message: 'Authentication required' });
+    return;
+  }
+  response.status(200).json({ user });
+}
+
+// GET /api/v1/auth/invite/:token — resolves an invite for prefilling the registration form.
+export async function getInviteHandler(request: Request, response: Response): Promise<void> {
+  const invite = await getInvite(request.params.token ?? '');
+  if (!invite) {
+    response.status(404).json({ message: 'Invitation not found or expired' });
+    return;
+  }
+  response.status(200).json({ invite });
+}
+
+// POST /api/v1/auth/forgot-password — always 200 to avoid revealing whether the email is registered.
+export async function forgotPasswordHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { email } = request.body ?? {};
+    await forgotPassword(email);
+    response.status(200).json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}
+
+// POST /api/v1/auth/reset-password
+export async function resetPasswordHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { token, password } = request.body ?? {};
+    await resetPassword(token, password);
+    response.status(200).json({ message: 'Password reset successful. Please log in.' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}

@@ -1,3 +1,10 @@
+# Dependencies
+node_modules/
+
+# Root-only: supabase CLI install artifacts (used once to dump schema.sql)
+/package.json
+/package-lock.json
+
 # Claude Code local files
 .claude/
 CLAUDE.md

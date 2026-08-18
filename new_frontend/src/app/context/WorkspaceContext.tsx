@@ -1,4 +1,14 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  getMe,
+  login as apiLogin,
+  logout as apiLogout,
+  register as apiRegister,
+  type AuthUser,
+  type RegisterInput,
+} from "../api";
+
+export type { AuthUser };
 
 export type VcsProvider = "github" | "gitlab" | "bitbucket" | "azure";
 
@@ -18,44 +28,22 @@ export const TEMPLATE_WORKSPACES: Workspace[] = [
   { id: "template-azure", name: "Azure DevOps Example", vcs: "azure", projectsCount: 0, membersCount: 0, isNew: true },
 ];
 
-export interface AuthUser {
-  name: string;
-  email: string;
-}
 
 interface WorkspaceContextType {
-  isAuthenticated: boolean;
   user: AuthUser | null;
-  login: (email: string) => void;
-  logout: () => void;
+  isAuthenticated: boolean;
+  isAuthLoading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (input: RegisterInput) => Promise<void>;
+  logout: () => Promise<void>;
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
   setActiveWorkspace: (ws: Workspace) => void;
   addWorkspace: (ws: Workspace) => void;
 }
 
-const AUTH_STORAGE_KEY = "pulse.auth.v1";
 const WORKSPACES_STORAGE_KEY = "pulse.workspaces.v1";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "pulse.activeWorkspaceId.v1";
-
-interface StoredAuth {
-  isAuthenticated: boolean;
-  user: AuthUser | null;
-}
-
-function loadAuth(): StoredAuth {
-  const fallback: StoredAuth = { isAuthenticated: false, user: null };
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as Partial<StoredAuth>;
-    if (typeof parsed.isAuthenticated !== "boolean") return fallback;
-    return { isAuthenticated: parsed.isAuthenticated, user: parsed.user ?? null };
-  } catch {
-    return fallback;
-  }
-}
 
 function loadWorkspaces(): Workspace[] {
   if (typeof window === "undefined") return [];
@@ -85,7 +73,10 @@ function loadActiveWorkspaceId(): string | null {
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [{ isAuthenticated, user }, setAuth] = useState<StoredAuth>(loadAuth);
+  // Auth is server-owned: user comes from the session, not localStorage.
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
   const [workspaces, setWorkspaces] = useState<Workspace[]>(loadWorkspaces);
   const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(() => {
     const id = loadActiveWorkspaceId();
@@ -95,10 +86,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ?? null;
   });
 
+  // On mount, ask the backend who we are (validates the session cookie).
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify({ isAuthenticated, user }));
-  }, [isAuthenticated, user]);
+    let cancelled = false;
+    getMe()
+      .then((me) => {
+        if (!cancelled) setUser(me);
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsAuthLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -114,13 +118,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [activeWorkspace]);
 
-  const login = (email: string) => {
-    setAuth({ isAuthenticated: true, user: { name: email.split("@")[0], email } });
+  const login = async (email: string, password: string) => {
+    setUser(await apiLogin(email, password));
   };
 
-  const logout = () => {
-    setAuth({ isAuthenticated: false, user: null });
-    setActiveWorkspaceState(null);
+  const register = async (input: RegisterInput) => {
+    setUser(await apiRegister(input));
+  };
+
+  const logout = async () => {
+    try {
+      await apiLogout();
+    } finally {
+      setUser(null);
+      setActiveWorkspaceState(null);
+    }
   };
 
   const addWorkspace = (ws: Workspace) => {
@@ -136,9 +148,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return (
     <WorkspaceContext.Provider
       value={{
-        isAuthenticated,
         user,
+        isAuthenticated: user !== null,
+        isAuthLoading,
         login,
+        register,
         logout,
         workspaces,
         activeWorkspace,

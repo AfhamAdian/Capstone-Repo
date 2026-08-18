@@ -29,6 +29,11 @@ import {
   type QuestionScore, type SurveyStatus,
 } from "./api-survey";
 import { LoginView } from "./pages/LoginView";
+import { RegisterView } from "./pages/RegisterView";
+import { ForgotPasswordView } from "./pages/ForgotPasswordView";
+import { ResetPasswordView } from "./pages/ResetPasswordView";
+import { ProjectsView } from "./pages/ProjectsView";
+import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
@@ -1093,12 +1098,13 @@ function SyncBtn() {
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
   loading?:boolean;
+  onAddProject?:()=>void;isAdmin?:boolean;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -1145,6 +1151,13 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               style={{fontFamily:"var(--font-display)"}}>
               <Plus size={17}/> Log Action
             </button>
+            {isAdmin&&onAddProject&&(
+              <button onClick={onAddProject}
+                className="flex items-center gap-2.5 border border-primary text-primary text-[15px] font-bold px-7 py-3 hover:bg-primary hover:text-primary-foreground transition-colors"
+                style={{fontFamily:"var(--font-display)"}}>
+                <Plus size={17}/> Add Project
+              </button>
+            )}
           </div>
         </div>
 
@@ -1517,7 +1530,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
             {mkeys.map(mk=>{
               const meta=MMETA[mk];
               const val=MVAL[mk](project.metrics);
-              const series=project.metricSeries[mseries[mk]];
+              const series=project.metricSeries[mseries[mk]]??[];
               const isBad=meta.invertBad&&val>(mk==="blockers"?3:36);
               const strokeColor=isBad?"var(--health-crit)":meta.color;
               const gradId=`mg-${mk}-${project.id}`;
@@ -1625,7 +1638,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
       </div>
 
       <AnimatePresence>
-        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
       </AnimatePresence>
       <AnimatePresence>
         {reviewOpen&&(
@@ -3189,12 +3202,16 @@ function SettingsView({project}:{project:Project;}) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const {isAuthenticated,activeWorkspace,logout}=useWorkspace();
+  const {user,isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
   const location=useLocation();
   const navigate=useNavigate();
   const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
   const screen=parsed.screen;
   const activeId=parsed.projectId;
+  // Links carry tokens: /reset-password?token=... and /register?invite=... — read them off the URL.
+  const searchParams=useMemo(()=>new URLSearchParams(location.search),[location.search]);
+  const resetToken=screen==="reset-password" ? searchParams.get("token") : null;
+  const inviteToken=screen==="register" ? searchParams.get("invite") : null;
   const [dark,setDark]=useState(false);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
@@ -3278,6 +3295,7 @@ export default function App() {
         onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onAddProject={()=>go("add-project")} isAdmin={user?.role==="admin"}
       />;
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
@@ -3292,8 +3310,20 @@ export default function App() {
   if(parsed.surveyToken){
     return <PublicSurveyPage token={parsed.surveyToken}/>;
   }
+  if(isAuthLoading){
+    return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
+  }
   if(!isAuthenticated){
-    return <LoginView onSuccess={()=>{if(screen==="login") navigate("/workspaces");}}/>;
+    if(screen==="register"){
+      return <RegisterView onSuccess={()=>navigate("/workspaces")} onNavigateToLogin={()=>navigate("/login")} inviteToken={inviteToken ?? undefined}/>;
+    }
+    if(screen==="forgot-password"){
+      return <ForgotPasswordView onBackToLogin={()=>navigate("/login")}/>;
+    }
+    if(screen==="reset-password"){
+      return <ResetPasswordView token={resetToken} onSuccess={()=>navigate("/login")} onBackToLogin={()=>navigate("/login")}/>;
+    }
+    return <LoginView onSuccess={()=>navigate("/workspaces")} onNavigateToRegister={()=>navigate("/register")} onNavigateToForgot={()=>navigate("/forgot-password")}/>;
   }
   if(!activeWorkspace){
     if(screen==="create-workspace"){
@@ -3312,8 +3342,16 @@ export default function App() {
       />
     );
   }
-  if(screen==="login"){
+  if(screen==="login"||screen==="register"||screen==="forgot-password"||screen==="reset-password"){
     return <Navigate to="/" replace/>;
+  }
+  if(screen==="projects"){
+    return <ProjectsView onAddProject={()=>go("add-project")}/>;
+  }
+  if(screen==="add-project"){
+    // Only admins can create projects — members never reach the form.
+    if(user?.role!=="admin") return <ProjectsView onAddProject={()=>go("add-project")}/>;
+    return <AddProjectView onCreated={()=>{void refetchHealth();go("portfolio");}} onCancel={()=>go("portfolio")}/>;
   }
   if(screen==="workspaces"){
     return (

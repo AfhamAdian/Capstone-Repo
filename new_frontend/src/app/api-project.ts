@@ -61,9 +61,9 @@ async function request<T>(path: string): Promise<T> {
   return response.json();
 }
 
-/** GET /api/v1/projects - every backend-tracked project with its current health score + history. */
+/** GET /api/v1/projects/health - every backend-tracked project with its current health score + history. */
 export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
-  const data = await request<{ projects: ProjectHealth[] }>("/projects");
+  const data = await request<{ projects: ProjectHealth[] }>("/projects/health");
   return data.projects;
 }
 
