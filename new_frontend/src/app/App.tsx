@@ -21,6 +21,7 @@ import { ForgotPasswordView } from "./pages/ForgotPasswordView";
 import { ResetPasswordView } from "./pages/ResetPasswordView";
 import { ProjectsView } from "./pages/ProjectsView";
 import { AddProjectView } from "./pages/AddProjectView";
+import { VcsWorkspaceView } from "./pages/VcsWorkspaceView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
@@ -2552,20 +2553,21 @@ export default function App() {
     if(typeof window!=="undefined" && window.location.pathname.startsWith("/reset-password")) return "reset-password";
     if(params?.get("invite")) return "register";
     if(!isAuthenticated) return "login";
-    return "portfolio";
+    return "workspaces";
   });
   // Redirect once the server auth check resolves: into the app if signed in, back to login on logout.
   useEffect(()=>{
     if(isAuthLoading) return;
     const authScreens:Screen[]=["login","register","forgot-password","reset-password"];
     if(isAuthenticated && (screen==="login" || screen==="register")){
-      setScreen("portfolio");
+      setScreen("workspaces");
     } else if(!isAuthenticated && !authScreens.includes(screen)){
       setScreen("login");
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[isAuthLoading,isAuthenticated]);
   const [activeId,setActiveId]=useState<string|null>(null);
+  const [activeVcs,setActiveVcs]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const [projects,setProjects]=useState<Project[]>([]);
@@ -2605,7 +2607,7 @@ export default function App() {
       return <GlobalSurveysView surveys={SURVEYS} projects={projects} onBack={home}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
-        projects={projects} actions={ACTIONS} surveys={SURVEYS}
+        projects={activeVcs?projects.filter(p=>p.team===activeVcs):projects} actions={ACTIONS} surveys={SURVEYS}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>setScreen("global-actions")}
         onViewSurveys={()=>setScreen("global-surveys")}
@@ -2633,7 +2635,7 @@ export default function App() {
     }
   };
   const goToLogin=()=>{cleanUrl();setScreen("login");};
-  const goToApp=()=>{cleanUrl();setScreen("portfolio");};
+  const goToApp=()=>{cleanUrl();setScreen("workspaces");};
   if(screen==="login"){
     return <LoginView onSuccess={goToApp} onNavigateToRegister={()=>setScreen("register")} onNavigateToForgot={()=>setScreen("forgot-password")}/>;
   }
@@ -2656,10 +2658,10 @@ export default function App() {
   }
   if(screen==="workspaces"){
     return (
-      <WorkspaceSelectionView
-        onSelect={()=>setScreen("portfolio")}
-        onCreateNew={()=>setScreen("create-workspace")}
-        onLogout={()=>{logout();setScreen("login");}}
+      <VcsWorkspaceView
+        onSelect={(vcs)=>{setActiveVcs(vcs);setScreen("portfolio");}}
+        onAddProject={()=>setScreen("add-project")}
+        isAdmin={user?.role==="admin"}
       />
     );
   }
