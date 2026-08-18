@@ -1136,7 +1136,10 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
             )}
             <h1 className="text-4xl font-bold uppercase tracking-tight" style={{fontFamily:"var(--font-display)"}}>Portfolio</h1>
             <p className="text-base text-muted-foreground mt-1">
-              {loading?"Loading projects from your workspace…":`${projects.length} projects · ${projects.filter(p=>p.score<60).length} need attention · ${surveys.length} total surveys`}
+              {loading?"Loading projects from your workspace…":(()=>{
+                const attention=projects.filter(p=>p.score<60).length;
+                return `${projects.length} project${projects.length!==1?"s":""} · ${attention} need${attention===1?"s":""} attention · ${surveys.length} total survey${surveys.length!==1?"s":""}`;
+              })()}
             </p>
           </div>
           <div className="flex items-center gap-3">
