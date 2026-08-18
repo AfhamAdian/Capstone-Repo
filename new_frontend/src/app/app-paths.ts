@@ -5,6 +5,7 @@ export const paths = {
   resetPassword: "/reset-password",
   workspaces: "/workspaces",
   createWorkspace: "/workspaces/new",
+  workspacePortfolio: (vcs: string) => `/workspaces/${encodeURIComponent(vcs)}`,
   portfolio: "/",
   projectsAdmin: "/projects",
   addProject: "/projects/new",
@@ -36,33 +37,49 @@ export type AppScreen =
   | "surveys"
   | "settings";
 
-export function screenFromPath(pathname: string): { screen: AppScreen; projectId: string | null; surveyToken: string | null } {
-  if (pathname === "/login" || pathname === "/login/") return { screen: "login", projectId: null, surveyToken: null };
-  if (pathname === "/register" || pathname === "/register/") return { screen: "register", projectId: null, surveyToken: null };
-  if (pathname === "/forgot-password" || pathname === "/forgot-password/") return { screen: "forgot-password", projectId: null, surveyToken: null };
-  if (pathname === "/reset-password" || pathname === "/reset-password/") return { screen: "reset-password", projectId: null, surveyToken: null };
-  if (pathname === "/workspaces" || pathname === "/workspaces/") return { screen: "workspaces", projectId: null, surveyToken: null };
-  if (pathname === "/workspaces/new" || pathname === "/workspaces/new/") return { screen: "create-workspace", projectId: null, surveyToken: null };
-  if (pathname === "/projects/new" || pathname === "/projects/new/") return { screen: "add-project", projectId: null, surveyToken: null };
-  if (pathname === "/projects" || pathname === "/projects/") return { screen: "projects", projectId: null, surveyToken: null };
-  if (pathname === "/actions" || pathname === "/actions/") return { screen: "global-actions", projectId: null, surveyToken: null };
-  if (pathname === "/surveys" || pathname === "/surveys/") return { screen: "global-surveys", projectId: null, surveyToken: null };
+export interface ParsedPath {
+  screen: AppScreen;
+  projectId: string | null;
+  surveyToken: string | null;
+  vcs: string | null;
+}
+
+// Small helper so every branch returns the full shape with sensible defaults.
+function parsed(screen: AppScreen, extra: Partial<ParsedPath> = {}): ParsedPath {
+  return { screen, projectId: null, surveyToken: null, vcs: null, ...extra };
+}
+
+export function screenFromPath(pathname: string): ParsedPath {
+  if (pathname === "/login" || pathname === "/login/") return parsed("login");
+  if (pathname === "/register" || pathname === "/register/") return parsed("register");
+  if (pathname === "/forgot-password" || pathname === "/forgot-password/") return parsed("forgot-password");
+  if (pathname === "/reset-password" || pathname === "/reset-password/") return parsed("reset-password");
+  if (pathname === "/workspaces" || pathname === "/workspaces/") return parsed("workspaces");
+  if (pathname === "/workspaces/new" || pathname === "/workspaces/new/") return parsed("create-workspace");
+  if (pathname === "/projects/new" || pathname === "/projects/new/") return parsed("add-project");
+  if (pathname === "/projects" || pathname === "/projects/") return parsed("projects");
+  if (pathname === "/actions" || pathname === "/actions/") return parsed("global-actions");
+  if (pathname === "/surveys" || pathname === "/surveys/") return parsed("global-surveys");
+
+  // A single segment under /workspaces (other than "new") is a workspace portfolio, scoped to that vcs.
+  const workspace = pathname.match(/^\/workspaces\/([^/]+)\/?$/);
+  if (workspace) return parsed("portfolio", { vcs: decodeURIComponent(workspace[1]!) });
 
   const publicSurvey = pathname.match(/^\/survey\/([^/]+)\/?$/);
-  if (publicSurvey) return { screen: "login", projectId: null, surveyToken: decodeURIComponent(publicSurvey[1]!) };
+  if (publicSurvey) return parsed("login", { surveyToken: decodeURIComponent(publicSurvey[1]!) });
 
   const project = pathname.match(/^\/projects\/([^/]+)(?:\/(.*))?$/);
   if (project) {
     const projectId = decodeURIComponent(project[1]!);
     const rest = (project[2] ?? "").replace(/\/$/, "");
-    if (rest === "surveys") return { screen: "surveys", projectId, surveyToken: null };
-    if (rest === "settings") return { screen: "settings", projectId, surveyToken: null };
-    if (rest === "actions/library") return { screen: "actions-library", projectId, surveyToken: null };
-    if (rest === "actions") return { screen: "actions-timeline", projectId, surveyToken: null };
-    return { screen: "dashboard", projectId, surveyToken: null };
+    if (rest === "surveys") return parsed("surveys", { projectId });
+    if (rest === "settings") return parsed("settings", { projectId });
+    if (rest === "actions/library") return parsed("actions-library", { projectId });
+    if (rest === "actions") return parsed("actions-timeline", { projectId });
+    return parsed("dashboard", { projectId });
   }
 
-  return { screen: "portfolio", projectId: null, surveyToken: null };
+  return parsed("portfolio");
 }
 
 export function pathFromScreen(screen: AppScreen, projectId?: string | null): string {

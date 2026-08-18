@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback, type MouseEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
-import { pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
+import { paths, pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
   BarChart2, Activity, AlertTriangle, Users,
@@ -3210,6 +3210,9 @@ function SettingsView({project}:{project:Project;}) {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
+const VCS_PROVIDERS:VcsProvider[]=["github","gitlab","bitbucket"];
+const VCS_LABELS:Record<string,string>={github:"GitHub",gitlab:"GitLab",bitbucket:"Bitbucket"};
+
 export default function App() {
   const {user,isAuthenticated,isAuthLoading,activeWorkspace,setActiveWorkspace,logout}=useWorkspace();
   const location=useLocation();
@@ -3233,19 +3236,27 @@ export default function App() {
       .then(rows=>setVcsById(new Map(rows.filter(r=>r.vcs).map(r=>[r.id,r.vcs as string]))))
       .catch(()=>{});
   },[isAuthenticated]);
-  const activeVcs=activeWorkspace?.vcs ?? null;
-  const workspaceLabel=activeVcs?({github:"GitHub",gitlab:"GitLab",bitbucket:"Bitbucket"}[activeVcs]??activeVcs):undefined;
+  // The URL is the source of truth for the active workspace; the context value is a remembered fallback (used on project pages, which carry no vcs in the path).
+  const urlVcs=parsed.vcs;
+  const activeVcs=urlVcs ?? activeWorkspace?.vcs ?? null;
+  const isValidVcs=(v:string|null|undefined):v is VcsProvider=>v!=null&&VCS_PROVIDERS.includes(v as VcsProvider);
+  const workspaceLabel=activeVcs?(VCS_LABELS[activeVcs]??activeVcs):undefined;
+  const portfolioPath=isValidVcs(activeVcs)?paths.workspacePortfolio(activeVcs):paths.portfolio;
+  // Keep the context/localStorage preference in sync with whatever workspace the URL currently points at.
+  useEffect(()=>{
+    if(!isValidVcs(urlVcs)||activeWorkspace?.vcs===urlVcs) return;
+    setActiveWorkspace({id:`ws-${urlVcs}`,name:urlVcs,vcs:urlVcs,projectsCount:0,membersCount:0});
+  },[urlVcs,activeWorkspace,setActiveWorkspace]);
   // Portfolio is scoped to the chosen vcs workspace (and, via our company-scoped map, the user's company).
   const visibleProjects=useMemo(()=>
     activeVcs
       ? projects.filter(p=>p.backendProjectId && vcsById.get(Number(p.backendProjectId))===activeVcs)
       : projects
   ,[projects,activeVcs,vcsById]);
-  // Selecting a vcs workspace sets it active (localStorage) and lands on the portfolio.
+  // Selecting a vcs workspace navigates to its portfolio URL — the route drives the rest.
   const selectVcsWorkspace=useCallback((vcs:string)=>{
-    setActiveWorkspace({id:`ws-${vcs}`,name:vcs,vcs:vcs as VcsProvider,projectsCount:0,membersCount:0});
-    navigate("/");
-  },[setActiveWorkspace,navigate]);
+    navigate(paths.workspacePortfolio(vcs));
+  },[navigate]);
   const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
   useEffect(()=>{
     if(projects.length===0) return;
@@ -3258,8 +3269,10 @@ export default function App() {
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const active=useMemo(()=>findProjectByPath(projects,activeId),[activeId,projects]);
   const go=useCallback((next:Screen)=>{
+    // "portfolio" is workspace-scoped, so route it to the active workspace's url rather than bare "/".
+    if(next==="portfolio"){navigate(portfolioPath);return;}
     navigate(pathFromScreen(next, active?.id ?? activeId));
-  },[navigate,active?.id,activeId]);
+  },[navigate,active?.id,activeId,portfolioPath]);
   useEffect(()=>{
     if(!active || !activeId || active.id===activeId) return;
     navigate(pathFromScreen(screen, active.id), { replace: true });
@@ -3288,7 +3301,7 @@ export default function App() {
   const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
   const [ratingOpen,setRatingOpen]=useState(false);
   const sel=(id:string)=>{navigate(pathFromScreen("dashboard", id));};
-  const home=()=>{navigate(pathFromScreen("portfolio"));};
+  const home=()=>{navigate(portfolioPath);};
   const renderContent=()=>{
     if(projectsLoading){
       if(parsed.projectId) return <ProjectPageSkeleton/>;
@@ -3356,21 +3369,13 @@ export default function App() {
     }
     return <LoginView onSuccess={()=>navigate("/workspaces")} onNavigateToRegister={()=>navigate("/register")} onNavigateToForgot={()=>navigate("/forgot-password")}/>;
   }
-  if(!activeWorkspace){
-    // Admins can create a project directly from the workspace chooser.
-    if(screen==="add-project" && user?.role==="admin"){
-      return <AddProjectView onCreated={()=>{void refetchHealth();navigate("/workspaces");}} onCancel={()=>navigate("/workspaces")}/>;
-    }
-    return (
-      <VcsWorkspaceView
-        onSelect={selectVcsWorkspace}
-        onAddProject={()=>navigate("/projects/new")}
-        isAdmin={user?.role==="admin"}
-      />
-    );
-  }
   if(screen==="login"||screen==="register"||screen==="forgot-password"||screen==="reset-password"){
-    return <Navigate to="/" replace/>;
+    return <Navigate to={portfolioPath} replace/>;
+  }
+  // Bare "/" (or an unknown workspace) resolves to the remembered workspace, else the chooser — the url stays the source of truth.
+  if(screen==="portfolio" && !isValidVcs(urlVcs)){
+    const remembered=activeWorkspace?.vcs;
+    return <Navigate to={isValidVcs(remembered)?paths.workspacePortfolio(remembered):paths.workspaces} replace/>;
   }
   if(screen==="projects"){
     return <ProjectsView onAddProject={()=>go("add-project")}/>;
