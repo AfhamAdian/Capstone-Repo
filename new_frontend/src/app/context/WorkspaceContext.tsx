@@ -14,12 +14,13 @@ export interface Workspace {
 export interface AuthUser {
   name: string;
   email: string;
+  level: number;
 }
 
 interface WorkspaceContextType {
   isAuthenticated: boolean;
   user: AuthUser | null;
-  login: (email: string) => void;
+  login: (email: string, level?: number) => void;
   logout: () => void;
   workspaces: Workspace[];
   activeWorkspace: Workspace | null;
@@ -44,7 +45,9 @@ function loadAuth(): StoredAuth {
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Partial<StoredAuth>;
     if (typeof parsed.isAuthenticated !== "boolean") return fallback;
-    return { isAuthenticated: parsed.isAuthenticated, user: parsed.user ?? null };
+    // Normalize older stored sessions that predate the `level` field
+    const user = parsed.user ? { ...parsed.user, level: parsed.user.level ?? 1 } : null;
+    return { isAuthenticated: parsed.isAuthenticated, user };
   } catch {
     return fallback;
   }
@@ -105,8 +108,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [activeWorkspace]);
 
-  const login = (email: string) => {
-    setAuth({ isAuthenticated: true, user: { name: email.split("@")[0], email } });
+  const login = (email: string, level: number = 1) => {
+    setAuth({ isAuthenticated: true, user: { name: email.split("@")[0], email, level } });
   };
 
   const logout = () => {

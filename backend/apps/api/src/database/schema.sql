@@ -164,6 +164,22 @@ CREATE TABLE public.riskscore (
   CONSTRAINT riskscore_pkey PRIMARY KEY (id),
   CONSTRAINT riskscore_project_snapshot_id_fkey FOREIGN KEY (project_snapshot_id) REFERENCES public.projectsnapshot(id)
 );
+CREATE TABLE public.actions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  project_ids text[] NOT NULL,
+  problem text NOT NULL,
+  reason text NOT NULL,
+  action_taken text NOT NULL,
+  action_date date NOT NULL DEFAULT CURRENT_DATE,
+  effectiveness integer,
+  logged_by text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT actions_pkey PRIMARY KEY (id),
+  CONSTRAINT actions_effectiveness_check CHECK (effectiveness >= 1 AND effectiveness <= 5)
+);
+CREATE INDEX idx_actions_project_ids ON public.actions USING GIN (project_ids);
+CREATE INDEX idx_actions_action_date ON public.actions (action_date DESC);
+CREATE INDEX idx_actions_pending ON public.actions (effectiveness) WHERE effectiveness IS NULL;
 CREATE TABLE public.versioncontrolmetrics (
   id integer NOT NULL DEFAULT nextval('versioncontrolmetrics_id_seq'::regclass),
   snapshot_id integer NOT NULL UNIQUE,

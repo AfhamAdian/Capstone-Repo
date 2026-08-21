@@ -1,11 +1,18 @@
 import { useState } from "react";
-import { Activity, AlertCircle } from "lucide-react";
+import { Activity, AlertCircle, Eye, ClipboardList, Star } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
+
+const ROLE_OPTIONS = [
+  { level: 0, label: "Viewer", description: "View only", icon: Eye },
+  { level: 1, label: "Manager", description: "Can log actions", icon: ClipboardList },
+  { level: 2, label: "Executive", description: "Can rate actions", icon: Star },
+] as const;
 
 export function LoginView({ onSuccess }: { onSuccess: () => void }) {
   const { login } = useWorkspace();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [level, setLevel] = useState<number>(1);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
 
@@ -24,7 +31,7 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
 
     setIsLoading(true);
     setTimeout(() => {
-      login(email);
+      login(email, level);
       onSuccess();
     }, 1300);
   };
@@ -91,6 +98,36 @@ export function LoginView({ onSuccess }: { onSuccess: () => void }) {
                 {errors.password}
               </p>
             )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-semibold text-foreground mb-1.5" style={{ fontFamily: "var(--font-display)" }}>
+              Sign in as
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {ROLE_OPTIONS.map((opt) => {
+                const Icon = opt.icon;
+                const selected = level === opt.level;
+                return (
+                  <button
+                    key={opt.level}
+                    type="button"
+                    onClick={() => setLevel(opt.level)}
+                    className={`flex flex-col items-center gap-1.5 border px-2 py-3 transition-colors ${
+                      selected
+                        ? "border-primary bg-primary/5 text-primary"
+                        : "border-border bg-input-background text-muted-foreground hover:border-primary/50"
+                    }`}
+                  >
+                    <Icon size={16} />
+                    <span className="text-[13px] font-semibold" style={{ fontFamily: "var(--font-display)" }}>
+                      {opt.label}
+                    </span>
+                    <span className="text-[11px] leading-tight text-center opacity-70">{opt.description}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <button

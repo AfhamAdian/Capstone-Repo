@@ -85,3 +85,103 @@ export function subscribeToProgress(sessionId: string, handlers: ProgressHandler
 
   return () => source.close();
 }
+
+// ─── ACTIONS API ────────────────────────────────────────────────────────────
+
+/** Frontend shape of a management action (camelCase). */
+export interface ApiAction {
+  id: string;
+  projectIds: string[];
+  problem: string;
+  reason: string;
+  actionTaken: string;
+  timestamp: string;
+  effectiveness: number | null;
+  loggedBy: string;
+}
+
+/** Raw row shape returned by the backend (snake_case). */
+interface ActionRow {
+  id: string;
+  project_ids: string[];
+  problem: string;
+  reason: string;
+  action_taken: string;
+  action_date: string;
+  effectiveness: number | null;
+  logged_by: string;
+  created_at: string;
+}
+
+function rowToAction(row: ActionRow): ApiAction {
+  return {
+    id: row.id,
+    projectIds: row.project_ids,
+    problem: row.problem,
+    reason: row.reason,
+    actionTaken: row.action_taken,
+    timestamp: row.action_date,
+    effectiveness: row.effectiveness,
+    loggedBy: row.logged_by,
+  };
+}
+
+/** Placeholder auth: the backend reads the user's level from this header. */
+function authHeaders(): Record<string, string> {
+  try {
+    const raw = window.localStorage.getItem("pulse.auth.v1");
+    const level = raw ? (JSON.parse(raw) as { user?: { level?: number } }).user?.level ?? 0 : 0;
+    return { "x-user-level": String(level) };
+  } catch {
+    return { "x-user-level": "0" };
+  }
+}
+
+async function parseError(response: Response, fallback: string): Promise<Error> {
+  const err = await response.json().catch(() => ({}) as { message?: string });
+  return new Error(err.message || `${fallback} (${response.status})`);
+}
+
+export async function listActions(): Promise<ApiAction[]> {
+  const response = await fetch(`${API_BASE_URL}/actions`, { headers: authHeaders() });
+  if (!response.ok) throw await parseError(response, "Failed to load actions");
+  const rows = (await response.json()) as ActionRow[];
+  return rows.map(rowToAction);
+}
+
+export interface CreateActionInput {
+  projectIds: string[];
+  problem: string;
+  reason: string;
+  actionTaken: string;
+  loggedBy: string;
+  timestamp?: string;
+}
+
+export async function createAction(input: CreateActionInput): Promise<ApiAction> {
+  const response = await fetch(`${API_BASE_URL}/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw await parseError(response, "Failed to log action");
+  return rowToAction((await response.json()) as ActionRow);
+}
+
+export async function searchActions(query: string, limit = 5): Promise<ApiAction[]> {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const response = await fetch(`${API_BASE_URL}/actions/search?${params}`, { headers: authHeaders() });
+  if (!response.ok) throw await parseError(response, "Failed to search actions");
+  const rows = (await response.json()) as ActionRow[];
+  return rows.map(rowToAction);
+}
+
+export async function rateAction(id: string, effectiveness: number): Promise<ApiAction> {
+  const response = await fetch(`${API_BASE_URL}/actions/${id}/effectiveness`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ effectiveness }),
+  });
+  if (!response.ok) throw await parseError(response, "Failed to rate action");
+  return rowToAction((await response.json()) as ActionRow);
+}

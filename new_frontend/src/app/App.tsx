@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
-  BarChart2, Activity, AlertTriangle, Clock, Users,
+  BarChart2, Activity, AlertTriangle, AlertCircle, Clock, Users,
   MessageSquare, X, ChevronRight, ChevronDown, Send,
   GitCommit, ArrowRight, Check, Settings,
   ChevronLeft, Bell, Zap, Star, RefreshCw, CheckSquare,
@@ -15,6 +15,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
 import type { SyncRiskKey } from "./api";
+import { listActions, createAction, searchActions, rateAction } from "./api";
 import { LoginView } from "./pages/LoginView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
@@ -233,16 +234,7 @@ const PROJECTS: Project[] = [
   },
 ];
 
-const ACTIONS: Action[] = [
-  { id:"a1", projectIds:["onyx-mobile"], problem:"Sprint velocity collapsed after team reorganization", reason:"Two senior engineers moved to Helix team mid-sprint without adequate handoff", actionTaken:"Capacity buffer added; sprint scope reduced 30%; knowledge transfer sessions scheduled", timestamp:"2025-11-15", effectiveness:null, loggedBy:"Sarah Chen" },
-  { id:"a2", projectIds:["onyx-mobile","meridian-api"], problem:"Blocked dependency from Backend Services unresolved for 3 weeks", reason:"API contract changes not communicated through standard channels", actionTaken:"Weekly cross-team sync established; dependency tracking board added", timestamp:"2025-10-28", effectiveness:3, loggedBy:"Marcus Webb" },
-  { id:"a3", projectIds:["onyx-mobile"], problem:"Critical bug count in checkout flow up 40% week-over-week", reason:"Rushed feature launch skipped full QA cycle under deadline pressure", actionTaken:"Hotfix shipped; mandatory QA gate reinstated for all checkout-path changes", timestamp:"2025-10-10", effectiveness:4, loggedBy:"Sarah Chen" },
-  { id:"a4", projectIds:["meridian-api"], problem:"P2 bug count in auth module rising over 4 sprints", reason:"Technical debt accumulated in auth layer during Q3 feature push", actionTaken:"Two-sprint stabilization declared; no new feature work in auth module", timestamp:"2025-11-10", effectiveness:null, loggedBy:"James Okafor" },
-  { id:"a5", projectIds:["meridian-api"], problem:"Team morale survey flagged communication issues", reason:"Product direction changes communicated via Slack only, not in sprint planning", actionTaken:"Weekly all-hands reinstated; roadmap shared before each sprint", timestamp:"2025-10-15", effectiveness:4, loggedBy:"Sarah Chen" },
-  { id:"a6", projectIds:["nexus-infra"], problem:"CI pipeline failure rate exceeded 15% of builds", reason:"Flaky integration tests accumulated over 6 months", actionTaken:"Reliability sprint allocated; 23 flaky tests fixed; build time reduced 18%", timestamp:"2025-10-22", effectiveness:5, loggedBy:"Priya Nair" },
-  { id:"a7", projectIds:["forge-devtools"], problem:"Internal developer portal adoption stalled at 34%", reason:"Onboarding too complex; missing integrations with primary internal tools", actionTaken:"Onboarding redesign shipped; Jira and GitHub Actions integrations added", timestamp:"2025-11-01", effectiveness:null, loggedBy:"Marcus Webb" },
-  { id:"a8", projectIds:["helix-platform"], problem:"Latency spike in tenant provisioning reported by 3 enterprise customers", reason:"Database query not optimized for new multi-region topology in v4.2", actionTaken:"Query optimization deployed; provisioning latency reduced 65%", timestamp:"2025-10-05", effectiveness:5, loggedBy:"James Okafor" },
-];
+// Actions are loaded from the backend API (see App component below).
 
 const SURVEYS: Survey[] = [
   {
@@ -371,6 +363,8 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
   dark:boolean;onToggle:()=>void;projects:Project[];activeId:string|null;onSelect:(id:string)=>void;onHome:()=>void;
   pendingCount:number;onRatingOpen:()=>void;onManageWorkspaces:()=>void;
 }) {
+  const {user}=useWorkspace();
+  const canRate=(user?.level??0)>=2;
   const [open,setOpen]=useState(false);
   const [q,setQ]=useState("");
   const ref=useRef<HTMLDivElement>(null);
@@ -436,8 +430,8 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
         </>
       )}
       <div className="ml-auto flex items-center gap-1">
-        {/* Rating reminder icon */}
-        {pendingCount>0&&(
+        {/* Rating reminder icon — only relevant for Executives who can rate */}
+        {canRate&&pendingCount>0&&(
           <button onClick={onRatingOpen}
             className="relative p-2 text-amber-500 hover:text-amber-400 transition-colors"
             title={`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`}>
@@ -465,17 +459,29 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
 
 // ─── INLINE RATING ────────────────────────────────────────────────────────────
 
-function InlineRating({effectiveness}:{effectiveness:number|null}) {
+function InlineRating({effectiveness,onRate}:{effectiveness:number|null;onRate?:(n:number)=>void}) {
+  const {user}=useWorkspace();
+  const canRate=(user?.level??0)>=2;
   const [hover,setHover]=useState(0);
   const [saved,setSaved]=useState(effectiveness);
   const [flash,setFlash]=useState(false);
-  const rate=(n:number)=>{setSaved(n);setFlash(true);setTimeout(()=>setFlash(false),800);};
+  useEffect(()=>{setSaved(effectiveness);},[effectiveness]);
+  const rate=(n:number)=>{setSaved(n);setFlash(true);setTimeout(()=>setFlash(false),800);onRate?.(n);};
+  if(!canRate) return (
+    <div className="flex gap-0.5 items-center">
+      {saved!==null
+        ?Array.from({length:5}).map((_,i)=><Star key={i} size={13} className={i<saved?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>)
+        :<span className="text-sm text-muted-foreground">unrated</span>}
+    </div>
+  );
   if(saved!==null) return (
-    <div className={`flex gap-0.5 items-center transition-opacity ${flash?"opacity-60":""}`}>
+    <div className={`flex gap-0.5 items-center transition-opacity ${flash?"opacity-60":""}`} onMouseLeave={()=>setHover(0)} onClick={e=>e.stopPropagation()}>
       {Array.from({length:5}).map((_,i)=>(
-        <button key={i} onClick={e=>{e.stopPropagation();setSaved(null);}}
+        <button key={i}
+          onMouseEnter={()=>setHover(i+1)}
+          onClick={()=>rate(i+1)}
           className="transition-transform hover:scale-110" title="Click to re-rate">
-          <Star size={13} className={i<saved?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
+          <Star size={13} className={i<(hover||saved)?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
         </button>
       ))}
     </div>
@@ -496,9 +502,12 @@ function InlineRating({effectiveness}:{effectiveness:number|null}) {
 
 // ─── GLOBAL ACTIONS VIEW ─────────────────────────────────────────────────────
 
-function GlobalActionsView({actions,projects,onBack,onLogAction}:{
+function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
   actions:Action[];projects:Project[];onBack:()=>void;onLogAction:()=>void;
+  onRateAction:(id:string,rating:number)=>void;
 }) {
+  const {user}=useWorkspace();
+  const canLog=(user?.level??0)>=1;
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
@@ -523,13 +532,15 @@ function GlobalActionsView({actions,projects,onBack,onLogAction}:{
           </button>
           <h1 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>All Actions</h1>
           <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} records</span>
-          <div className="ml-auto">
-            <button onClick={onLogAction}
-              className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg"
-              style={{fontFamily:"var(--font-display)"}}>
-              <Plus size={16}/> Log Action
-            </button>
-          </div>
+          {canLog&&(
+            <div className="ml-auto">
+              <button onClick={onLogAction}
+                className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg"
+                style={{fontFamily:"var(--font-display)"}}>
+                <Plus size={16}/> Log Action
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Filters */}
@@ -578,7 +589,7 @@ function GlobalActionsView({actions,projects,onBack,onLogAction}:{
                     })}
                   </div>
                   <div className="text-sm font-medium text-foreground bg-muted px-2 py-1 w-fit" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</div>
-                  <InlineRating effectiveness={a.effectiveness}/>
+                  <InlineRating effectiveness={a.effectiveness} onRate={n=>onRateAction(a.id,n)}/>
                   <ChevronDown size={14} className={`text-muted-foreground transition-transform ${ex===a.id?"rotate-180":""}`}/>
                 </button>
                 <AnimatePresence>
@@ -781,6 +792,9 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
 }) {
+  const {user}=useWorkspace();
+  const canLog=(user?.level??0)>=1;
+  const canRate=(user?.level??0)>=2;
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
   const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
@@ -811,7 +825,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               className="flex items-center gap-2 border border-border bg-card text-[15px] font-semibold px-4 py-2.5 text-foreground hover:border-primary hover:text-primary transition-colors"
               style={{fontFamily:"var(--font-display)"}}>
               <Zap size={14}/> All Actions
-              {pendingRatings.length>0&&(
+              {canRate&&pendingRatings.length>0&&(
                 <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingRatings.length}</span>
               )}
             </button>
@@ -820,12 +834,14 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               style={{fontFamily:"var(--font-display)"}}>
               <MessageSquare size={14}/> All Surveys
             </button>
-            {/* Log Action — primary, large */}
-            <button onClick={onLogAction}
-              className="flex items-center gap-2.5 bg-primary text-primary-foreground text-[15px] font-bold px-7 py-3 hover:opacity-90 transition-opacity shadow-lg"
-              style={{fontFamily:"var(--font-display)"}}>
-              <Plus size={17}/> Log Action
-            </button>
+            {/* Log Action — primary, large (Level 1+ only) */}
+            {canLog&&(
+              <button onClick={onLogAction}
+                className="flex items-center gap-2.5 bg-primary text-primary-foreground text-[15px] font-bold px-7 py-3 hover:opacity-90 transition-opacity shadow-lg"
+                style={{fontFamily:"var(--font-display)"}}>
+                <Plus size={17}/> Log Action
+              </button>
+            )}
           </div>
         </div>
 
@@ -899,11 +915,11 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
   );
 }
 
-function GlobalEffRow({action}:{action:Action}) {
+function GlobalEffRow({action,onRate}:{action:Action;onRate:(id:string,rating:number)=>void}) {
   return (
     <div className="flex items-center gap-3">
       <span className="text-sm text-muted-foreground">Rate:</span>
-      <InlineRating effectiveness={action.effectiveness}/>
+      <InlineRating effectiveness={action.effectiveness} onRate={n=>onRate(action.id,n)}/>
     </div>
   );
 }
@@ -911,6 +927,9 @@ function GlobalEffRow({action}:{action:Action}) {
 // ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 
 function Sidebar({screen,onNavigate,project,onLogAction}:{screen:Screen;onNavigate:(s:Screen)=>void;project:Project;onLogAction:()=>void;}) {
+  const {user}=useWorkspace();
+  const canLog=(user?.level??0)>=1;
+  const canRate=(user?.level??0)>=2;
   const [actOpen,setActOpen]=useState(screen.startsWith("actions"));
   useEffect(()=>{if(screen.startsWith("actions"))setActOpen(true);},[screen]);
   const item=(s:Screen,icon:React.ReactNode,label:string)=>{
@@ -952,10 +971,12 @@ function Sidebar({screen,onNavigate,project,onLogAction}:{screen:Screen;onNaviga
         {item("settings",<Settings size={16}/>,"Settings")}
       </div>
       <div className="p-4 border-t border-sidebar-border space-y-2">
-        <button onClick={onLogAction} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5 hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
-          <Plus size={14}/> Log Action
-        </button>
-        {project.pendingReview>0&&(
+        {canLog&&(
+          <button onClick={onLogAction} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5 hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
+            <Plus size={14}/> Log Action
+          </button>
+        )}
+        {canRate&&project.pendingReview>0&&(
           <button className="w-full text-sm text-amber-500 text-center hover:text-amber-400 transition-colors flex items-center justify-center gap-1.5 py-1">
             <Star size={12}/>{project.pendingReview} action{project.pendingReview>1?"s":""} need review
           </button>
@@ -1032,7 +1053,9 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
-function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
+function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateAction}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRateAction:(id:string,rating:number)=>void;}) {
+  const {user}=useWorkspace();
+  const canRate=(user?.level??0)>=2;
   const [expanded,setExpanded]=useState<string|null>(null);
   const [reviewOpen,setReviewOpen]=useState(false);
   const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:project.subscores[k]}));
@@ -1044,7 +1067,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
         <DashboardSyncBar project={project} onSyncComplete={onSyncComplete}/>
-        {pending.length>0&&(
+        {canRate&&pending.length>0&&(
           <button onClick={()=>setReviewOpen(true)}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
             <span className="text-base font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2.5">
@@ -1293,7 +1316,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                 <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Effectiveness Review</div>
                 <button onClick={()=>setReviewOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
               </div>
-              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a}/>)}</div>
+              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a} onRate={onRateAction}/>)}</div>
             </motion.div>
           </motion.div>
         )}
@@ -1302,8 +1325,9 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
   );
 }
 
-function EffRow({action}:{action:Action}) {
+function EffRow({action,onRate}:{action:Action;onRate:(id:string,rating:number)=>void}) {
   const [r,setR]=useState(0), [done,setDone]=useState(false);
+  const handleRate=(n:number)=>{setR(n);onRate(action.id,n);setTimeout(()=>setDone(true),300);};
   return (
     <div className={`border border-border p-4 transition-opacity ${done?"opacity-40":""}`}>
       <div className="text-[15px] font-semibold text-foreground mb-1">{action.problem}</div>
@@ -1311,7 +1335,7 @@ function EffRow({action}:{action:Action}) {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {Array.from({length:5}).map((_,i)=>(
-            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>{setR(i+1);setTimeout(()=>setDone(true),300)}} className="transition-transform hover:scale-110">
+            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>!done&&handleRate(i+1)} className="transition-transform hover:scale-110">
               <Star size={22} className={i<r?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
             </button>
           ))}
@@ -1478,22 +1502,43 @@ function ActionsLibrary({actions}:{actions:Action[];}) {
 
 // ─── LOG ACTION MODAL ─────────────────────────────────────────────────────────
 
-function LogActionModal({onClose,preId,projects,actions}:{onClose:()=>void;preId?:string;projects:Project[];actions:Action[];}) {
-  const [problemAndCause,setProblemAndCause]=useState("");
+function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];
+  onSubmit:(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>Promise<void>;
+}) {
+  const [problem,setProblem]=useState("");
+  const [reason,setReason]=useState("");
   const [actionTaken,setActionTaken]=useState("");
+  const [date,setDate]=useState(()=>new Date().toISOString().slice(0,10));
   const [sel,setSel]=useState<string[]>(preId?[preId]:[]);
   const [dropOpen,setDropOpen]=useState(false);
   const [submitted,setSubmitted]=useState(false);
-  const [searchTriggered,setSearchTriggered]=useState(false);
+  const [submitting,setSubmitting]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  const [similar,setSimilar]=useState<Action[]>([]);
   const dRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{const h=(e:MouseEvent)=>{if(dRef.current&&!dRef.current.contains(e.target as Node))setDropOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
-  const similar=useMemo(()=>{
-    if(problemAndCause.length<4)return[];
-    const words=problemAndCause.toLowerCase().split(/\s+/).filter(w=>w.length>3);
-    return actions.map(a=>({action:a,score:words.filter(w=>a.problem.toLowerCase().includes(w)||a.reason.toLowerCase().includes(w)).length})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,5);
-  },[problemAndCause,actions]);
+  // Debounced similar-past-problems search — surfaces matches as the user types
+  useEffect(()=>{
+    const query=problem.trim();
+    if(query.length<4){setSimilar([]);return;}
+    const t=setTimeout(()=>{
+      searchActions(query,5).then(rows=>setSimilar(rows)).catch(()=>setSimilar([]));
+    },400);
+    return()=>clearTimeout(t);
+  },[problem]);
   const toggle=(id:string)=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const canSubmit=problemAndCause.trim().length>0&&actionTaken.trim().length>0;
+  const canSubmit=sel.length>0&&problem.trim().length>0&&reason.trim().length>0&&actionTaken.trim().length>0;
+  const submit=async()=>{
+    if(!canSubmit||submitting)return;
+    setSubmitting(true);setError(null);
+    try{
+      await onSubmit({projectIds:sel,problem:problem.trim(),reason:reason.trim(),actionTaken:actionTaken.trim(),timestamp:date});
+      setSubmitted(true);setTimeout(onClose,1200);
+    }catch(e){
+      setError(e instanceof Error?e.message:"Failed to log action");
+      setSubmitting(false);
+    }
+  };
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1551,27 +1596,33 @@ function LogActionModal({onClose,preId,projects,actions}:{onClose:()=>void;preId
                 </div>
               </div>
 
-              {/* Merged Problem + Root Cause */}
+              {/* Problem */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>
-                    Problem &amp; Underlying Root Cause
-                  </label>
-                  <button
-                    onClick={()=>setSearchTriggered(true)}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors"
-                    title="Search for similar past problems">
-                    <Search size={11}/> Find Similar
-                  </button>
-                </div>
+                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>
+                  Problem
+                </label>
                 <textarea
-                  value={problemAndCause}
-                  onChange={e=>{setProblemAndCause(e.target.value);setSearchTriggered(false);}}
-                  rows={4}
-                  placeholder={"Describe what happened and why it happened.\n\nExample: Sprint velocity dropped 40% — two senior engineers were reassigned mid-sprint without handoff, leaving the iOS auth work unowned."}
+                  value={problem}
+                  onChange={e=>setProblem(e.target.value)}
+                  rows={3}
+                  placeholder={"What happened? Be specific.\n\nExample: Sprint velocity dropped 40% in two sprints."}
                   className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors leading-relaxed"
                 />
-                <div className="text-xs text-muted-foreground mt-1.5">Combine the problem statement and its root cause in one description. Be specific.</div>
+                <div className="text-xs text-muted-foreground mt-1.5">Similar past problems appear on the right as you type.</div>
+              </div>
+
+              {/* Root Cause / Reason */}
+              <div>
+                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>
+                  Root Cause
+                </label>
+                <textarea
+                  value={reason}
+                  onChange={e=>setReason(e.target.value)}
+                  rows={3}
+                  placeholder={"Why did it happen?\n\nExample: Two senior engineers were reassigned mid-sprint without handoff, leaving the iOS auth work unowned."}
+                  className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors leading-relaxed"
+                />
               </div>
 
               {/* Action Taken */}
@@ -1584,27 +1635,34 @@ function LogActionModal({onClose,preId,projects,actions}:{onClose:()=>void;preId
 
               {/* Date */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Date</label>
-                <input type="date" defaultValue={new Date().toISOString().split("T")[0]}
+                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Date of Action</label>
+                <input type="date" value={date} onChange={e=>setDate(e.target.value)}
                   className="bg-input-background border border-border px-4 py-3 text-[15px] outline-none focus:border-primary transition-colors" style={{fontFamily:"var(--font-mono)"}}/>
               </div>
             </div>
           )}
 
           {!submitted&&(
-            <div className="px-6 py-4 border-t border-border flex items-center justify-between">
-              <button onClick={onClose} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
-              <button onClick={()=>{if(!canSubmit)return;setSubmitted(true);setTimeout(onClose,1200);}}
-                disabled={!canSubmit}
-                className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{fontFamily:"var(--font-display)"}}>
-                <Send size={14}/> Log Action
-              </button>
+            <div className="px-6 py-4 border-t border-border space-y-3">
+              {error&&(
+                <div className="text-sm text-red-500 flex items-center gap-1.5 px-3 py-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+                  <AlertCircle size={13}/> {error}
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <button onClick={onClose} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+                <button onClick={submit}
+                  disabled={!canSubmit||submitting}
+                  className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{fontFamily:"var(--font-display)"}}>
+                  <Send size={14}/> {submitting?"Logging…":"Log Action"}
+                </button>
+              </div>
             </div>
           )}
         </div>
 
-        {/* ── RIGHT: similar problems ── */}
+        {/* ── RIGHT: similar past problems (API-powered search) ── */}
         <div className="w-72 border-l border-border bg-muted/20 flex flex-col shrink-0">
           <div className="px-5 py-4 border-b border-border">
             <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Similar Past Problems</div>
@@ -1615,13 +1673,13 @@ function LogActionModal({onClose,preId,projects,actions}:{onClose:()=>void;preId
           <div className="flex-1 overflow-y-auto p-4">
             {similar.length===0?(
               <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
-                {problemAndCause.length<4
+                {problem.trim().length<4
                   ?"Start describing the problem to find related past actions."
                   :"No similar problems found in the library."}
               </div>
             ):(
               <div className="space-y-3">
-                {similar.map(({action},idx)=>(
+                {similar.map((action,idx)=>(
                   <div key={action.id} className="border border-border bg-card p-3.5">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="text-[13px] font-semibold text-foreground leading-snug">{action.problem}</div>
@@ -2493,7 +2551,7 @@ function SurveyFlow({onClose}:{onClose:()=>void;}) {
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const {isAuthenticated,activeWorkspace,logout}=useWorkspace();
+  const {isAuthenticated,activeWorkspace,logout,user}=useWorkspace();
   const [dark,setDark]=useState(false);
   const [screen,setScreen]=useState<Screen>(()=>{
     if(!isAuthenticated) return "login";
@@ -2507,7 +2565,26 @@ export default function App() {
   const [trackedIds,setTrackedIds]=useState<Set<string>>(
     ()=>new Set(PROJECTS.filter(p=>p.tracked).map(p=>p.id))
   );
+  const [actions,setActions]=useState<Action[]>([]);
+  const refreshActions=()=>{
+    listActions()
+      .then(setActions)
+      .catch(err=>console.error("Failed to load actions",err));
+  };
+  useEffect(()=>{
+    if(!isAuthenticated) return;
+    refreshActions();
+  },[isAuthenticated]);
+  const handleLogAction=async(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>{
+    await createAction({...input,loggedBy:user?.name??user?.email??"unknown"});
+    await refreshActions();
+  };
+  const handleRateAction=(id:string,rating:number)=>{
+    setActions(prev=>prev.map(a=>a.id===id?{...a,effectiveness:rating}:a));
+    rateAction(id,rating).catch(err=>{console.error("Failed to rate action",err);refreshActions();});
+  };
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
   const updateProjectRisk=(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
@@ -2524,18 +2601,18 @@ export default function App() {
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
   };
-  const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
+  const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
   const [ratingOpen,setRatingOpen]=useState(false);
   const sel=(id:string)=>{setActiveId(id);setScreen("dashboard");};
   const home=()=>{setActiveId(null);setScreen("portfolio");};
   const renderContent=()=>{
     if(screen==="global-actions")
-      return <GlobalActionsView actions={ACTIONS} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)}/>;
+      return <GlobalActionsView actions={actions} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)} onRateAction={handleRateAction}/>;
     if(screen==="global-surveys")
       return <GlobalSurveysView surveys={SURVEYS} projects={projects} onBack={home}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
-        projects={projects} actions={ACTIONS} surveys={SURVEYS}
+        projects={projects} actions={actions} surveys={SURVEYS}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>setScreen("global-actions")}
         onViewSurveys={()=>setScreen("global-surveys")}
@@ -2543,9 +2620,9 @@ export default function App() {
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
       />;
     const view=()=>{switch(screen){
-      case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk}/>;
-      case"actions-timeline": return <ActionsTimeline project={active} actions={ACTIONS}/>;
-      case"actions-library": return <ActionsLibrary actions={ACTIONS}/>;
+      case"dashboard": return <Dashboard project={active} actions={actions} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk} onRateAction={handleRateAction}/>;
+      case"actions-timeline": return <ActionsTimeline project={active} actions={actions}/>;
+      case"actions-library": return <ActionsLibrary actions={actions}/>;
       case"surveys": return <SurveysView project={active} surveys={SURVEYS}/>;
       case"settings": return <SettingsView project={active}/>;
       default: return null;
@@ -2585,7 +2662,7 @@ export default function App() {
         </div>
       )}
       <AnimatePresence>
-        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={projects} actions={ACTIONS}/>}
+        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={projects} onSubmit={handleLogAction}/>}
       </AnimatePresence>
       <AnimatePresence>
         {surveyDemo&&<SurveyFlow key="sf" onClose={()=>setSurveyDemo(false)}/>}
@@ -2616,7 +2693,7 @@ export default function App() {
                       </div>
                       <div className="text-[15px] font-semibold text-foreground mb-1">{a.problem}</div>
                       <div className="text-sm text-muted-foreground mb-4 leading-relaxed">{a.actionTaken}</div>
-                      <GlobalEffRow action={a}/>
+                      <GlobalEffRow action={a} onRate={handleRateAction}/>
                     </div>
                   );
                 })}

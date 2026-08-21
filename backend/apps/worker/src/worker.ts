@@ -12,7 +12,7 @@ import { logger } from '@libs/logger.js';
 dotenv.config();
 
 const redisUrl = process.env.REDIS_URL;
-const port = process.env.PORT || 4000;
+const port = process.env.WORKER_PORT || 4000;
 
 if (!redisUrl) {
   console.error('REDIS_URL is required to start the worker');
