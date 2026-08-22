@@ -1,5 +1,182 @@
+// Relative by default so requests go through the Vite proxy (same-origin -> cookies work).
 export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://localhost:3000/api/v1";
+  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
+
+// credentials:"include" makes the browser send/receive the session cookie.
+async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+    ...options,
+  });
+  const data = (await response.json().catch(() => ({}))) as { message?: string } & T;
+  if (!response.ok) {
+    throw new Error(data.message || `Request failed (${response.status})`);
+  }
+  return data;
+}
+
+export interface AuthUser {
+  id: number;
+  companyId: number;
+  name: string;
+  email: string;
+  role: "admin" | "member";
+}
+
+export interface RegisterInput {
+  name: string;
+  email: string;
+  password: string;
+  companyName?: string;
+  inviteToken?: string;
+}
+
+export async function register(input: RegisterInput): Promise<AuthUser> {
+  const { user } = await apiRequest<{ user: AuthUser }>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return user;
+}
+
+export async function login(email: string, password: string): Promise<AuthUser> {
+  const { user } = await apiRequest<{ user: AuthUser }>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+  return user;
+}
+
+export async function logout(): Promise<void> {
+  await apiRequest("/auth/logout", { method: "POST" });
+}
+
+// Always resolves with a generic message (backend never reveals whether the email exists).
+export async function forgotPassword(email: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return message;
+}
+
+// Throws on invalid/expired token or weak password; the backend revokes all sessions on success.
+export async function resetPassword(token: string, password: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, password }),
+  });
+  return message;
+}
+
+// ---- Projects & invites ----
+
+export type ToolCategory = "vcs" | "projectManagement" | "cicd" | "codeQuality";
+
+export interface ProjectRiskScore {
+  snapshotId: number;
+  snapshotTime: string | null;
+  overallRisk: number | null;
+  subscores: {
+    delivery: number | null;
+    codeQuality: number | null;
+    cicd: number | null;
+    engineeringProcess: number | null;
+    teamHealth: number | null;
+    security: number | null;
+    blockers: number | null;
+  };
+}
+
+export interface ProjectListItem {
+  id: number;
+  name: string;
+  description: string | null;
+  createdAt: string | null;
+  vcs: string | null;
+  score: ProjectRiskScore | null;
+}
+
+export interface ToolIntegrationView {
+  category: ToolCategory;
+  toolName: string;
+  externalProjectId: string;
+  config: Record<string, unknown>;
+  isActive: boolean | null;
+}
+
+export interface ProjectMemberView {
+  userId: number;
+  name: string | null;
+  email: string | null;
+  role: string;
+}
+
+export interface ProjectDetail extends ProjectListItem {
+  integrations: ToolIntegrationView[];
+  members: ProjectMemberView[];
+  pendingInvites?: string[];
+}
+
+export interface IntegrationInput {
+  category: ToolCategory;
+  toolName: string;
+  externalProjectId: string;
+  config: Record<string, string>;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  vcs: { toolName: string; externalProjectId: string; config: Record<string, string> };
+  integrations?: IntegrationInput[];
+  invites?: string[];
+}
+
+// Company projects, optionally filtered by version-control tool (the "workspace").
+export async function listProjects(vcs?: string): Promise<ProjectListItem[]> {
+  const query = vcs ? `?vcs=${encodeURIComponent(vcs)}` : "";
+  const { projects } = await apiRequest<{ projects: ProjectListItem[] }>(`/projects${query}`);
+  return projects;
+}
+
+// Admin-only; returns the full project (integrations + members + which invites were emailed).
+export async function createProject(input: CreateProjectInput): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>("/projects", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return project;
+}
+
+export async function getProject(id: number): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${id}`);
+  return project;
+}
+
+export interface InvitePreview {
+  email: string;
+  projectId: number;
+}
+
+// Resolves an invite token for prefilling the registration form; null when not found/expired.
+export async function getInvite(token: string): Promise<InvitePreview | null> {
+  const response = await fetch(`${API_BASE_URL}/auth/invite/${token}`, { credentials: "include" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Failed to load invite (${response.status})`);
+  const { invite } = (await response.json()) as { invite: InvitePreview };
+  return invite;
+}
+
+// Returns null when not authenticated (401), instead of throwing.
+export async function getMe(): Promise<AuthUser | null> {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, { credentials: "include" });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error(`Failed to fetch current user (${response.status})`);
+  const { user } = (await response.json()) as { user: AuthUser };
+  return user;
+}
 
 export type SyncTool = "github" | "jira";
 
@@ -17,6 +194,7 @@ export async function startSync(
 ): Promise<StartSyncResponse> {
   const response = await fetch(`${API_BASE_URL}/sync`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ projectId, tools, sessionId }),
   });
@@ -63,7 +241,7 @@ export interface ProgressHandlers {
 }
 
 export function subscribeToProgress(sessionId: string, handlers: ProgressHandlers): () => void {
-  const source = new EventSource(`${API_BASE_URL}/progress/${sessionId}`);
+  const source = new EventSource(`${API_BASE_URL}/progress/${sessionId}`, { withCredentials: true });
 
   source.onmessage = (evt) => {
     try {
@@ -129,26 +307,13 @@ function rowToAction(row: ActionRow): ApiAction {
   };
 }
 
-/** Placeholder auth: the backend reads the user's level from this header. */
-function authHeaders(): Record<string, string> {
-  try {
-    const raw = window.localStorage.getItem("pulse.auth.v1");
-    const level = raw ? (JSON.parse(raw) as { user?: { level?: number } }).user?.level ?? 0 : 0;
-    return { "x-user-level": String(level) };
-  } catch {
-    return { "x-user-level": "0" };
-  }
-}
-
 async function parseError(response: Response, fallback: string): Promise<Error> {
   const err = await response.json().catch(() => ({}) as { message?: string });
   return new Error(err.message || `${fallback} (${response.status})`);
 }
 
 export async function listActions(): Promise<ApiAction[]> {
-  const response = await fetch(`${API_BASE_URL}/actions`, { headers: authHeaders() });
-  if (!response.ok) throw await parseError(response, "Failed to load actions");
-  const rows = (await response.json()) as ActionRow[];
+  const rows = await apiRequest<ActionRow[]>("/actions");
   return rows.map(rowToAction);
 }
 
@@ -162,13 +327,11 @@ export interface CreateActionInput {
 }
 
 export async function createAction(input: CreateActionInput): Promise<ApiAction> {
-  const response = await fetch(`${API_BASE_URL}/actions`, {
+  const row = await apiRequest<ActionRow>("/actions", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(input),
   });
-  if (!response.ok) throw await parseError(response, "Failed to log action");
-  return rowToAction((await response.json()) as ActionRow);
+  return rowToAction(row);
 }
 
 export interface SearchActionsOptions {
@@ -191,7 +354,7 @@ export async function searchActions(
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   if (options.projectId) params.set("projectId", options.projectId);
   const response = await fetch(`${API_BASE_URL}/actions/search?${params}`, {
-    headers: authHeaders(),
+    credentials: "include",
     signal: options.signal,
   });
   if (!response.ok) throw await parseError(response, "Failed to search actions");
@@ -204,11 +367,9 @@ export async function searchActions(
 }
 
 export async function rateAction(id: string, effectiveness: number): Promise<ApiAction> {
-  const response = await fetch(`${API_BASE_URL}/actions/${id}/effectiveness`, {
+  const row = await apiRequest<ActionRow>(`/actions/${id}/effectiveness`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ effectiveness }),
   });
-  if (!response.ok) throw await parseError(response, "Failed to rate action");
-  return rowToAction((await response.json()) as ActionRow);
+  return rowToAction(row);
 }

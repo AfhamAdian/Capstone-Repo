@@ -1,11 +1,13 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback, type MouseEvent } from "react";
+import { Navigate, useLocation, useNavigate } from "react-router";
+import { paths, pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
-  BarChart2, Activity, AlertTriangle, AlertCircle, Clock, Users,
+  BarChart2, Activity, AlertTriangle, Users,
   MessageSquare, X, ChevronRight, ChevronDown, Send,
   GitCommit, ArrowRight, Check, Settings,
   ChevronLeft, Bell, Zap, Star, RefreshCw, CheckSquare,
-  Rocket, GitBranch, Bookmark, Link2, ShieldCheck, Building2
+  Rocket, GitBranch, Bookmark, Link2, ShieldCheck, Building2, Sparkles, AlertCircle
 } from "lucide-react";
 import {
   LineChart, Line, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis,
@@ -13,13 +15,33 @@ import {
   Brush, XAxis, YAxis, ComposedChart, CartesianGrid, ReferenceLine
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { useWorkspace } from "./context/WorkspaceContext";
-import type { ActionSearchMode, SyncRiskKey } from "./api";
-import { listActions, createAction, searchActions, rateAction } from "./api";
+import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
+import {
+  createAction, listActions, listProjects, rateAction, searchActions,
+  type ActionSearchMode, type SyncRiskKey,
+} from "./api";
+import { useSurveys } from "./hooks/useSurveys";
+import { useProjectSurveySettings } from "./hooks/useProjectSurveySettings";
+import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
+import { PublicSurveyPage } from "./pages/PublicSurveyPage";
+import { SurveyFlow } from "./components/SurveyFlow";
+import {
+  changeSurveyLifecycle, generateSurveyQuestions, getSurveyQuota,
+  updateSurveyQuestions, closeSurvey, sendSurvey, remindSurvey,
+  type GeneratedSurveyQuestion, type SurveyHealthContext, type SurveyQuota,
+  type QuestionScore, type SurveyStatus,
+} from "./api-survey";
 import { LoginView } from "./pages/LoginView";
+import { RegisterView } from "./pages/RegisterView";
+import { ForgotPasswordView } from "./pages/ForgotPasswordView";
+import { ResetPasswordView } from "./pages/ResetPasswordView";
+import { ProjectsView } from "./pages/ProjectsView";
+import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
+import { VcsWorkspaceView } from "./pages/VcsWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
+import { useDashboardSync } from "./hooks/useDashboardSync";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
 
@@ -27,6 +49,8 @@ interface Project {
   id: string;
   backendProjectId?: string;
   name: string;
+  owner?: string | null;
+  repo?: string | null;
   team: string;
   status: "active" | "maintenance";
   tracked: boolean;
@@ -36,12 +60,14 @@ interface Project {
   timeSeries: { date: string; label: string; score: number }[];
   subscores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
-  metricSeries: Record<string, { v: number; label: string }[]>;
-  subscoreSeries: Record<string, { v: number; label: string }[]>;
+  metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
+  subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
   pendingSurvey: boolean;
   pendingReview: number;
   lastUpdated: string;
   description: string;
+  hasData?: boolean;
+  hasMetrics?: boolean;
 }
 
 interface Action {
@@ -59,7 +85,8 @@ interface Action {
 interface Survey {
   id: string;
   projectId: string;
-  status: "active" | "sent" | "completed";
+  status: SurveyStatus;
+  source?: "manual" | "auto_pulse";
   trigger: string;
   sentDate: string;
   responseCount: number;
@@ -68,9 +95,101 @@ interface Survey {
   themes: string[];
   aiInsight: string;
   rawResponses: { question: string; answers: string[] }[];
+  questions?: GeneratedSurveyQuestion[];
+  reviewDeadlineAt?: string | null;
+  scheduledSendAt?: string | null;
+  closedAt?: string | null;
+  questionsLocked?: boolean;
+  healthContext?: SurveyHealthContext | null;
+  analysisError?: string | null;
+  publicUrl?: string | null;
+  delivery?: {
+    notifiedAt: string | null;
+    expiresAt: string;
+    channels: { slackSent?: boolean; telegramSent?: boolean; discordSent?: boolean };
+  } | null;
 }
 
-type Screen = "login" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+const SURVEY_STATUS_CONFIG:Record<SurveyStatus,{c:string;l:string}>={
+  draft:{c:"text-slate-500",l:"Draft"},
+  active:{c:"text-amber-500",l:"Active"},
+  paused:{c:"text-orange-500",l:"Paused"},
+  closed:{c:"text-slate-500",l:"Closed"},
+  completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"},
+  cancelled:{c:"text-slate-400",l:"Cancelled"},
+  failed:{c:"text-red-500",l:"Failed"},
+};
+const surveyResponseRate=(survey:Pick<Survey,"responseCount"|"targetCount">)=>
+  survey.targetCount>0?Math.min(100,Math.round((survey.responseCount/survey.targetCount)*100)):0;
+const surveyDeliveryChannels=(survey:Survey)=>
+  Object.entries(survey.delivery?.channels??{}).filter(([,sent])=>sent).map(([channel])=>channel.replace("Sent","")).join(", ");
+
+function CloseSurveyFormButton({surveyId,onClosed,mode}:{surveyId:string;onClosed?:()=>void;mode?:"close"|"score";}) {
+  const [busy,setBusy]=useState(false);
+  const closeForm=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    setBusy(true);
+    try{
+      await closeSurvey(Number(surveyId));
+      onClosed?.();
+    }catch(error){
+      window.alert(error instanceof Error?error.message:"Failed to close survey");
+    }finally{
+      setBusy(false);
+    }
+  };
+  const idleLabel=mode==="score"?"Retry scoring":"Close form";
+  return (
+    <button type="button" disabled={busy} onClick={event=>{void closeForm(event);}}
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-amber-500/50 text-amber-700 dark:text-amber-400 px-2 py-1 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50">
+      {busy?"Closing…":idleLabel}
+    </button>
+  );
+}
+
+function CopySurveyLinkButton({url}:{url:string}) {
+  const [copied,setCopied]=useState(false);
+  const copy=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    try{
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(()=>setCopied(false),1600);
+    }catch{
+      window.alert("Could not copy the survey link");
+    }
+  };
+  return (
+    <button type="button" title={copied?"Copied":"Copy survey link"} onClick={event=>{void copy(event);}}
+      className="shrink-0 border border-border px-1.5 py-1 text-muted-foreground hover:text-primary hover:border-primary">
+      {copied?<Check size={13}/>:<Link2 size={13}/>}
+    </button>
+  );
+}
+
+function RemindSurveyButton({surveyId,onDone}:{surveyId:string;onDone?:()=>void;}) {
+  const [busy,setBusy]=useState(false);
+  const remind=async(event:MouseEvent)=>{
+    event.stopPropagation();
+    setBusy(true);
+    try{
+      await remindSurvey(Number(surveyId));
+      onDone?.();
+    }catch(error){
+      window.alert(error instanceof Error?error.message:"Failed to send reminder");
+    }finally{
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" disabled={busy} title="Post an anonymous reminder to team channels" onClick={event=>{void remind(event);}}
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary disabled:opacity-50">
+      {busy?"Sending…":"Remind"}
+    </button>
+  );
+}
+
+type Screen = AppScreen;
 
 function actionSearchModeLabel(mode:ActionSearchMode|null):string {
   if(mode==="hybrid")return "Hybrid semantic + keyword results";
@@ -84,21 +203,114 @@ function actionSimilarityLabel(similarity:number|undefined):string|null {
   return `${Math.round(Math.max(0,Math.min(1,similarity))*100)}% similar`;
 }
 
+function surveyHasResults(s: Survey) {
+  return Boolean(s.scores || s.aiInsight || s.themes.length > 0 || s.status === "completed");
+}
+
+function surveyCanExpand(s: Survey) {
+  return surveyHasResults(s) || (s.questions?.length ?? 0) > 0;
+}
+
+function surveyRowStatus(s: Survey) {
+  if (s.status === "closed" && !s.scores) return { c: "text-amber-500", l: "Scoring" };
+  if (s.status === "draft" && (s.questions?.length ?? 0) === 0) return { c: "text-slate-500", l: "Generating" };
+  return SURVEY_STATUS_CONFIG[s.status];
+}
+
+const SURVEY_HISTORY_COLS = "110px 120px minmax(0,1fr) 120px 88px 56px minmax(220px,max-content)";
+
+function SurveyAskedQuestions({questions}:{questions?:GeneratedSurveyQuestion[]}) {
+  if (!questions?.length) return null;
+  return (
+    <div className="mb-4">
+      <div className="text-sm font-bold text-muted-foreground mb-3">Questions asked</div>
+      <div className="border border-border divide-y divide-border">
+        {questions.map((q,i)=>(
+          <div key={`${q.questionText}-${i}`} className="flex gap-3 px-4 py-3 items-start">
+            <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-muted text-xs font-bold mt-0.5">{i+1}</span>
+            <div className="min-w-0">
+              <div className="text-[14px] font-semibold text-foreground">{q.questionText}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{q.category} · {q.questionType==="scale"?"Scale 1–5":"Text"}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
+  const keys = ["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
+  return (
+    <div className="grid grid-cols-5 gap-2 mb-4">
+      {keys.map((k)=>(
+        <div key={k} className="border border-border px-2 py-2 text-center">
+          <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SUBSCORE_LABELS[k]}</div>
+          <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scores[k]}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
-const sp = (vals: number[]): { v: number; label: string }[] =>
-  vals.map((v, i) => ({
-    v,
-    label: new Date(new Date("2025-09-01").getTime() + i * 7 * 86400000)
-      .toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-  }));
-
-const mkTS = (scores: number[]): { date: string; label: string; score: number }[] =>
-  scores.map((score, i) => {
-    const d = new Date("2025-09-01");
-    d.setDate(d.getDate() + i * 3);
-    return { date: d.toISOString().split("T")[0], label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), score };
+function isoDay(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+function formatDayLabel(d: Date): string {
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+function interpolateSeries(vals: number[], days: number): number[] {
+  if (vals.length === 0) return [];
+  if (days <= 1) return [vals[vals.length - 1]!];
+  const out: number[] = [];
+  for (let i = 0; i < days; i++) {
+    const t = i / (days - 1);
+    const src = t * (vals.length - 1);
+    const lo = Math.floor(src);
+    const hi = Math.min(vals.length - 1, lo + 1);
+    const frac = src - lo;
+    out.push(Math.round(vals[lo]! * (1 - frac) + vals[hi]! * frac));
+  }
+  return out;
+}
+function daysEndingToday(count: number): Date[] {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - (count - 1 - i));
+    return d;
   });
+}
+
+/** Daily series ending today so 7D / 30D / All filters match the calendar. */
+const sp = (vals: number[], days = 90): { v: number; label: string; date: string }[] => {
+  const points = interpolateSeries(vals, days);
+  const dates = daysEndingToday(points.length);
+  return points.map((v, i) => ({ v, label: formatDayLabel(dates[i]!), date: isoDay(dates[i]!) }));
+};
+
+const mkTS = (scores: number[], days = 90): { date: string; label: string; score: number }[] => {
+  const points = interpolateSeries(scores, days);
+  const dates = daysEndingToday(points.length);
+  return points.map((score, i) => ({ date: isoDay(dates[i]!), label: formatDayLabel(dates[i]!), score }));
+};
+
+function seriesInRange<T extends { date?: string }>(series: T[], days: number | null): T[] {
+  if (days == null || series.length === 0) return series;
+  const cutoff = new Date();
+  cutoff.setHours(0, 0, 0, 0);
+  cutoff.setDate(cutoff.getDate() - (days - 1));
+  const cutoffIso = isoDay(cutoff);
+  const dated = series.filter((p) => p.date && p.date >= cutoffIso);
+  if (dated.length > 0) return dated;
+  return series.slice(-Math.min(series.length, days));
+}
 
 const PROJECTS: Project[] = [
   {
@@ -247,7 +459,16 @@ const PROJECTS: Project[] = [
   },
 ];
 
-// Actions are loaded from the backend API (see App component below).
+const ACTIONS: Action[] = [
+  { id:"a1", projectIds:["onyx-mobile"], problem:"Sprint velocity collapsed after team reorganization", reason:"Two senior engineers moved to Helix team mid-sprint without adequate handoff", actionTaken:"Capacity buffer added; sprint scope reduced 30%; knowledge transfer sessions scheduled", timestamp:"2025-11-15", effectiveness:null, loggedBy:"Sarah Chen" },
+  { id:"a2", projectIds:["onyx-mobile","meridian-api"], problem:"Blocked dependency from Backend Services unresolved for 3 weeks", reason:"API contract changes not communicated through standard channels", actionTaken:"Weekly cross-team sync established; dependency tracking board added", timestamp:"2025-10-28", effectiveness:3, loggedBy:"Marcus Webb" },
+  { id:"a3", projectIds:["onyx-mobile"], problem:"Critical bug count in checkout flow up 40% week-over-week", reason:"Rushed feature launch skipped full QA cycle under deadline pressure", actionTaken:"Hotfix shipped; mandatory QA gate reinstated for all checkout-path changes", timestamp:"2025-10-10", effectiveness:4, loggedBy:"Sarah Chen" },
+  { id:"a4", projectIds:["meridian-api"], problem:"P2 bug count in auth module rising over 4 sprints", reason:"Technical debt accumulated in auth layer during Q3 feature push", actionTaken:"Two-sprint stabilization declared; no new feature work in auth module", timestamp:"2025-11-10", effectiveness:null, loggedBy:"James Okafor" },
+  { id:"a5", projectIds:["meridian-api"], problem:"Team morale survey flagged communication issues", reason:"Product direction changes communicated via Slack only, not in sprint planning", actionTaken:"Weekly all-hands reinstated; roadmap shared before each sprint", timestamp:"2025-10-15", effectiveness:4, loggedBy:"Sarah Chen" },
+  { id:"a6", projectIds:["nexus-infra"], problem:"CI pipeline failure rate exceeded 15% of builds", reason:"Flaky integration tests accumulated over 6 months", actionTaken:"Reliability sprint allocated; 23 flaky tests fixed; build time reduced 18%", timestamp:"2025-10-22", effectiveness:5, loggedBy:"Priya Nair" },
+  { id:"a7", projectIds:["forge-devtools"], problem:"Internal developer portal adoption stalled at 34%", reason:"Onboarding too complex; missing integrations with primary internal tools", actionTaken:"Onboarding redesign shipped; Jira and GitHub Actions integrations added", timestamp:"2025-11-01", effectiveness:null, loggedBy:"Marcus Webb" },
+  { id:"a8", projectIds:["helix-platform"], problem:"Latency spike in tenant provisioning reported by 3 enterprise customers", reason:"Database query not optimized for new multi-region topology in v4.2", actionTaken:"Query optimization deployed; provisioning latency reduced 65%", timestamp:"2025-10-05", effectiveness:5, loggedBy:"James Okafor" },
+];
 
 const SURVEYS: Survey[] = [
   {
@@ -273,6 +494,7 @@ const SURVEYS: Survey[] = [
     id:"s2", projectId:"onyx-mobile", status:"active",
     trigger:"Score declined >8 points in 30 days", sentDate:"2025-11-18",
     responseCount:2, targetCount:7, aiInsight:"", themes:[], rawResponses:[],
+    publicUrl:"http://localhost:5173/survey/demo-link",
   },
   {
     id:"s3", projectId:"onyx-mobile", status:"completed",
@@ -308,7 +530,7 @@ const SURVEYS: Survey[] = [
     ],
   },
   {
-    id:"s5", projectId:"helix-platform", status:"sent",
+    id:"s5", projectId:"helix-platform", status:"draft",
     trigger:"Quarterly pulse (manual)", sentDate:"2025-11-17",
     responseCount:4, targetCount:10, aiInsight:"", themes:[], rawResponses:[],
   },
@@ -376,8 +598,6 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
   dark:boolean;onToggle:()=>void;projects:Project[];activeId:string|null;onSelect:(id:string)=>void;onHome:()=>void;
   pendingCount:number;onRatingOpen:()=>void;onManageWorkspaces:()=>void;
 }) {
-  const {user}=useWorkspace();
-  const canRate=(user?.level??0)>=2;
   const [open,setOpen]=useState(false);
   const [q,setQ]=useState("");
   const ref=useRef<HTMLDivElement>(null);
@@ -385,7 +605,7 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
     const h=(e:MouseEvent)=>{if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false);};
     document.addEventListener("mousedown",h); return ()=>document.removeEventListener("mousedown",h);
   },[]);
-  const active=projects.find(p=>p.id===activeId);
+  const active=findProjectByPath(projects,activeId);
   const filtered=projects.filter(p=>p.name.toLowerCase().includes(q.toLowerCase()));
   return (
     <header className="shrink-0 border-b border-border bg-card flex items-center px-6 gap-5 z-30" style={{height:54}}>
@@ -404,7 +624,9 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
               <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:hColor(active.score)}}/>
               <div className="text-left">
                 <div className="text-[15px] font-bold leading-tight" style={{fontFamily:"var(--font-display)"}}>{active.name}</div>
-                <div className="text-xs text-muted-foreground leading-none mt-0.5">Switch project</div>
+                <div className="text-xs text-muted-foreground leading-none mt-0.5 truncate max-w-[220px]">
+                  {active.owner && active.repo ? `${active.owner}/${active.repo}` : "Switch project"}
+                </div>
               </div>
               <ChevronDown size={13} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
             </button>
@@ -443,8 +665,8 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
         </>
       )}
       <div className="ml-auto flex items-center gap-1">
-        {/* Rating reminder icon — only relevant for Executives who can rate */}
-        {canRate&&pendingCount>0&&(
+        {/* Rating reminder icon */}
+        {pendingCount>0&&(
           <button onClick={onRatingOpen}
             className="relative p-2 text-amber-500 hover:text-amber-400 transition-colors"
             title={`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`}>
@@ -472,29 +694,18 @@ function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,on
 
 // ─── INLINE RATING ────────────────────────────────────────────────────────────
 
-function InlineRating({effectiveness,onRate}:{effectiveness:number|null;onRate?:(n:number)=>void}) {
-  const {user}=useWorkspace();
-  const canRate=(user?.level??0)>=2;
+function InlineRating({effectiveness,onRate}:{effectiveness:number|null;onRate?:(rating:number)=>void}) {
   const [hover,setHover]=useState(0);
   const [saved,setSaved]=useState(effectiveness);
   const [flash,setFlash]=useState(false);
   useEffect(()=>{setSaved(effectiveness);},[effectiveness]);
   const rate=(n:number)=>{setSaved(n);setFlash(true);setTimeout(()=>setFlash(false),800);onRate?.(n);};
-  if(!canRate) return (
-    <div className="flex gap-0.5 items-center">
-      {saved!==null
-        ?Array.from({length:5}).map((_,i)=><Star key={i} size={13} className={i<saved?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>)
-        :<span className="text-sm text-muted-foreground">unrated</span>}
-    </div>
-  );
   if(saved!==null) return (
-    <div className={`flex gap-0.5 items-center transition-opacity ${flash?"opacity-60":""}`} onMouseLeave={()=>setHover(0)} onClick={e=>e.stopPropagation()}>
+    <div className={`flex gap-0.5 items-center transition-opacity ${flash?"opacity-60":""}`}>
       {Array.from({length:5}).map((_,i)=>(
-        <button key={i}
-          onMouseEnter={()=>setHover(i+1)}
-          onClick={()=>rate(i+1)}
+        <button key={i} onClick={e=>{e.stopPropagation();rate(i+1);}}
           className="transition-transform hover:scale-110" title="Click to re-rate">
-          <Star size={13} className={i<(hover||saved)?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
+          <Star size={13} className={i<saved?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
         </button>
       ))}
     </div>
@@ -516,11 +727,8 @@ function InlineRating({effectiveness,onRate}:{effectiveness:number|null;onRate?:
 // ─── GLOBAL ACTIONS VIEW ─────────────────────────────────────────────────────
 
 function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
-  actions:Action[];projects:Project[];onBack:()=>void;onLogAction:()=>void;
-  onRateAction:(id:string,rating:number)=>void;
+  actions:Action[];projects:Project[];onBack:()=>void;onLogAction:()=>void;onRateAction:(id:string,rating:number)=>void;
 }) {
-  const {user}=useWorkspace();
-  const canLog=(user?.level??0)>=1;
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
@@ -534,17 +742,11 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
     const query=q.trim();
     if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
     const controller=new AbortController();
-    setSearchResults(null);
-    setSearchMode(null);
-    setSearchError(null);
-    setSearching(true);
+    setSearching(true);setSearchError(null);
     const timer=setTimeout(()=>{
-      searchActions(query,50,{
-        projectId:filterProject!=="all"?filterProject:undefined,
-        signal:controller.signal,
-      })
+      searchActions(query,50,{projectId:filterProject!=="all"?filterProject:undefined,signal:controller.signal})
         .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError"){setSearchError("Search service unavailable. Showing local keyword matches.");setSearchResults(null);}})
+        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
         .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
     },300);
     return()=>{clearTimeout(timer);controller.abort();};
@@ -570,15 +772,13 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
           </button>
           <h1 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>All Actions</h1>
           <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} records</span>
-          {canLog&&(
-            <div className="ml-auto">
-              <button onClick={onLogAction}
-                className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg"
-                style={{fontFamily:"var(--font-display)"}}>
-                <Plus size={16}/> Log Action
-              </button>
-            </div>
-          )}
+          <div className="ml-auto">
+            <button onClick={onLogAction}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Plus size={16}/> Log Action
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
@@ -595,21 +795,16 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
             <option value="all">All Projects</option>
             {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          {q.trim().length>=3?(
-            <div className="border border-border bg-card px-3 py-2.5 text-sm font-semibold text-primary" style={{fontFamily:"var(--font-display)"}}>
-              {searching?"Searching…":searchError?"Local keyword results":actionSearchModeLabel(searchMode)}
-            </div>
-          ):(
-            <div className="flex border border-border">
-              {(["newest","oldest"] as const).map(o=>(
-                <button key={o} onClick={()=>setSortOrder(o)}
-                  className={`px-3 py-2.5 text-sm font-semibold capitalize transition-colors ${sortOrder===o?"bg-foreground text-background":"text-muted-foreground hover:text-foreground"}`}
-                  style={{fontFamily:"var(--font-display)"}}>
-                  {o}
-                </button>
-              ))}
-            </div>
-          )}
+          {q.trim().length>=3&&<div className="border border-border bg-card px-3 py-2.5 text-sm font-semibold text-primary">{searching?"Searching…":searchError?"Local keyword results":actionSearchModeLabel(searchMode)}</div>}
+          <div className="flex border border-border">
+            {(["newest","oldest"] as const).map(o=>(
+              <button key={o} onClick={()=>setSortOrder(o)}
+                className={`px-3 py-2.5 text-sm font-semibold capitalize transition-colors ${sortOrder===o?"bg-foreground text-background":"text-muted-foreground hover:text-foreground"}`}
+                style={{fontFamily:"var(--font-display)"}}>
+                {o}
+              </button>
+            ))}
+          </div>
         </div>
 
         {searchError&&q.trim().length>=3&&<div className="mb-4 flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={14}/>{searchError}</div>}
@@ -636,7 +831,7 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
                     })}
                   </div>
                   <div className="text-sm font-medium text-foreground bg-muted px-2 py-1 w-fit" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</div>
-                  <InlineRating effectiveness={a.effectiveness} onRate={n=>onRateAction(a.id,n)}/>
+                  <InlineRating effectiveness={a.effectiveness} onRate={rating=>onRateAction(a.id,rating)}/>
                   <ChevronDown size={14} className={`text-muted-foreground transition-transform ${ex===a.id?"rotate-180":""}`}/>
                 </button>
                 <AnimatePresence>
@@ -652,7 +847,7 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
               </div>
             );
           })}
-          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Searching action history…":"No actions match your filter."}</div>}
+          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No actions match your filter.</div>}
         </div>
       </div>
     </div>
@@ -661,15 +856,13 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
 
 // ─── GLOBAL SURVEYS VIEW ──────────────────────────────────────────────────────
 
-function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:Project[];onBack:()=>void;}) {
+function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];projects:Project[];onBack:()=>void;onClosed?:()=>void;}) {
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [filterStatus,setFilterStatus]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [exId,setExId]=useState<string|null>(null);
   const [rawId,setRawId]=useState<string|null>(null);
-
-  const scfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
 
   const filtered=useMemo(()=>{
     let list=[...surveys];
@@ -707,9 +900,13 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
           <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
             className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
             <option value="all">All Statuses</option>
+            <option value="draft">Draft</option>
+            <option value="paused">Paused</option>
             <option value="active">Active</option>
-            <option value="sent">Sent</option>
+            <option value="closed">Closed</option>
             <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="failed">Failed</option>
           </select>
           <div className="flex border border-border">
             {(["newest","oldest"] as const).map(o=>(
@@ -724,55 +921,71 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
 
         <div className="border border-border bg-card">
           <div className="grid px-5 py-3 border-b border-border bg-muted"
-            style={{gridTemplateColumns:"130px 130px 1fr 170px 90px 64px 32px"}}>
+            style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
             {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
               <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
             ))}
           </div>
           {filtered.map(s=>{
             const proj=projects.find(p=>p.id===s.projectId);
-            const cfg=scfg[s.status];
-            const pct=Math.round((s.responseCount/s.targetCount)*100);
+            const cfg=surveyRowStatus(s);
+            const pct=surveyResponseRate(s);
             const isEx=exId===s.id;
             const avgScore=s.scores?Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5):null;
             const sTag=proj?projectTagStyle(proj.score):{bg:"bg-muted",text:"text-foreground"};
             return (
               <div key={s.id} className="border-b border-border last:border-b-0">
-                <button onClick={()=>{if(s.status==="completed"){setExId(isEx?null:s.id);setRawId(null);}}}
-                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${s.status==="completed"?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
-                  style={{gridTemplateColumns:"130px 130px 1fr 170px 90px 64px 32px"}}>
-                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[122px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
+                <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                  style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
+                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
                   <span className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</span>
-                  <div>
+                  <div className="min-w-0">
                     <div className="h-1.5 bg-muted mb-1">
                       <div className="h-full transition-all" style={{width:`${pct}%`,backgroundColor:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}/>
                     </div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 min-w-0">
                       <span className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</span>
-                      <span className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount} responses</span>
+                      <span className="text-xs text-muted-foreground truncate">{s.responseCount}/{s.targetCount}</span>
                     </div>
                   </div>
                   <span className={`text-sm font-bold ${cfg.c}`} style={{fontFamily:"var(--font-display)"}}>{cfg.l}</span>
                   {avgScore!=null
                     ?<span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(avgScore)}}>{avgScore}</span>
+                    :s.status==="closed"?<span className="text-xs text-amber-500">…</span>
                     :<span className="text-sm text-muted-foreground">—</span>}
-                  {s.status==="completed"?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:<span/>}
-                </button>
+                  <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
+                    {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                    {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onClosed}/>}
+                    {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed}/>}
+                    {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed} mode="score"/>}
+                    {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                  </div>
+                </div>
 
                 <AnimatePresence>
-                  {isEx&&s.status==="completed"&&(
+                  {isEx&&surveyCanExpand(s)&&(
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                       <div className="border-t border-border px-5 py-4">
+                        <SurveyAskedQuestions questions={s.questions}/>
+                        {surveyHasResults(s)&&(
+                          <>
                         <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                        <div className="border border-border divide-y divide-border mb-4">
+                        {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                        {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
+                        {s.analysisError?.startsWith("insufficient_responses")
+                          ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
+                          :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                        {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
+                        {s.themes.length>0&&<div className="border border-border divide-y divide-border mb-4">
                           {s.themes.map((t,i)=>(
                             <div key={i} className="flex gap-3 px-4 py-3 items-start">
                               <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
                               <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
                             </div>
                           ))}
-                        </div>
+                        </div>}
                         {s.rawResponses.length>0&&(
                           <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
                             className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity">
@@ -804,6 +1017,8 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
                             </motion.div>
                           )}
                         </AnimatePresence>
+                          </>
+                        )}
                       </div>
                     </motion.div>
                   )}
@@ -818,37 +1033,135 @@ function GlobalSurveysView({surveys,projects,onBack}:{surveys:Survey[];projects:
   );
 }
 
+function PulseBar({className}:{className:string}) {
+  return <div className={`bg-muted animate-pulse ${className}`}/>;
+}
+
+function ProjectPageSkeleton() {
+  const nav=[{icon:<BarChart2 size={16}/>,label:"Dashboard",active:true},{icon:<Zap size={16}/>,label:"Actions"},{icon:<MessageSquare size={16}/>,label:"Surveys"},{icon:<Settings size={16}/>,label:"Settings"}];
+  const cats=["Delivery","Code Quality","CI/CD","Team Health","Blockers"];
+  const metrics=["Commits","Tickets Closed","Sprint Velocity","Open Blockers","Deployments / wk","PR Cycle Time"];
+  return (
+    <div className="flex flex-1 min-h-0">
+      <aside className="w-56 shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col h-full">
+        <div className="flex-1 py-3 overflow-y-auto">
+          {nav.map(item=>(
+            <div key={item.label}
+              className={`w-full flex items-center gap-3 px-4 py-3 text-[15px] ${item.active?"bg-sidebar-accent text-foreground font-semibold":"text-foreground/70"}`}
+              style={item.active?{borderLeft:"3px solid var(--primary)"}:{borderLeft:"3px solid transparent"}}>
+              <span className={item.active?"text-primary":"text-foreground/50"}>{item.icon}</span>
+              <span style={{fontFamily:"var(--font-display)"}} className="font-medium">{item.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="p-4 border-t border-sidebar-border">
+          <div className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5" style={{fontFamily:"var(--font-display)"}}>
+            <Plus size={14}/> Log Action
+          </div>
+        </div>
+      </aside>
+      <div className="flex-1 overflow-y-auto bg-background">
+        <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
+          <div className="mb-2">
+            <div className="flex items-center justify-between">
+              <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Live Sync</div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 border border-border text-sm font-medium text-muted-foreground">
+                <RefreshCw size={13} className="animate-spin"/>
+                <span style={{fontFamily:"var(--font-display)"}}>Loading…</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[290px_1fr] gap-6">
+            <div className="bg-card border border-border p-6">
+              <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score</div>
+              <PulseBar className="h-20 w-28 mb-5"/>
+              <PulseBar className="h-12 w-full mb-5"/>
+              <div className="pt-5 border-t border-border space-y-3">
+                {cats.map(label=>(
+                  <div key={label} className="flex items-center justify-between">
+                    <span className="text-[15px] text-foreground/80">{label}</span>
+                    <PulseBar className="h-2 w-20"/>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-card border border-border p-6">
+              <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Category Balance</div>
+              <div className="h-[240px] flex items-center justify-center">
+                <div className="w-48 h-48 rounded-full border-2 border-dashed border-border bg-muted/40 animate-pulse"/>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
+            <div className="grid grid-cols-5 gap-3">
+              {cats.map(label=>(
+                <div key={label} className="bg-card border border-border p-4 flex flex-col">
+                  <div className="text-xs font-semibold text-foreground mb-3" style={{fontFamily:"var(--font-display)"}}>{label}</div>
+                  <PulseBar className="h-9 w-14 mb-2"/>
+                  <PulseBar className="h-[60px] w-full"/>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Metrics — click any card to expand</div>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+              {metrics.map(label=>(
+                <div key={label} className="bg-card border border-border p-4">
+                  <div className="text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>{label}</div>
+                  <PulseBar className="h-9 w-16 mb-2"/>
+                  <PulseBar className="h-[52px] w-full"/>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── PORTFOLIO ───────────────────────────────────────────────────────────────
 
-function SyncBtn() {
-  const [spin,setSpin]=useState(false);
+function SyncBtn({project,onSyncComplete}:{
+  project:Project;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
+}) {
+  const backendProjectId=project.backendProjectId;
+  const {active,start}=useDashboardSync(project,onSyncComplete);
   return (
     <button
-      onClick={e=>{e.stopPropagation();setSpin(true);setTimeout(()=>setSpin(false),1400);}}
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors ${spin?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}
-      title="Sync data">
-      <RefreshCw size={13} className={spin?"animate-spin":""}/>
-      <span style={{fontFamily:"var(--font-display)"}}>{spin?"Syncing…":"Sync"}</span>
+      onClick={e=>{e.stopPropagation();start();}}
+      disabled={active||!backendProjectId}
+      title={backendProjectId?"Sync data":"This project isn't linked to a backend project yet"}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${active?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}>
+      <RefreshCw size={13} className={active?"animate-spin":""}/>
+      <span style={{fontFamily:"var(--font-display)"}}>{active?"Syncing…":"Sync"}</span>
     </button>
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
+  loading?:boolean;
+  onAddProject?:()=>void;isAdmin?:boolean;
+  workspaceName?:string;onBackToWorkspaces?:()=>void;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
 }) {
-  const {user}=useWorkspace();
-  const canLog=(user?.level??0)>=1;
-  const canRate=(user?.level??0)>=2;
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
   const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
 
   const visible=useMemo(()=>{
     let list=tab==="tracked"?projects.filter(p=>trackedIds.has(p.id)):projects;
-    if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase()));
+    if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase())||(p.owner??"").toLowerCase().includes(q.toLowerCase()));
     return [...list].sort((a,b)=>a.score-b.score);
   },[projects,tab,q,trackedIds]);
 
@@ -861,9 +1174,19 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
         {/* ── Header ── */}
         <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
           <div>
+            {workspaceName&&(
+              <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm text-muted-foreground mb-1">
+                <button onClick={onBackToWorkspaces} className="font-medium hover:text-foreground transition-colors">Workspaces</button>
+                <ChevronRight size={13} className="text-border"/>
+                <span className="font-semibold text-foreground">{workspaceName}</span>
+              </nav>
+            )}
             <h1 className="text-4xl font-bold uppercase tracking-tight" style={{fontFamily:"var(--font-display)"}}>Portfolio</h1>
             <p className="text-base text-muted-foreground mt-1">
-              {projects.length} projects · {projects.filter(p=>p.score<60).length} need attention · {surveys.length} total surveys
+              {loading?"Loading projects from your workspace…":(()=>{
+                const attention=projects.filter(p=>p.score<60).length;
+                return `${projects.length} project${projects.length!==1?"s":""} · ${attention} need${attention===1?"s":""} attention · ${surveys.length} total survey${surveys.length!==1?"s":""}`;
+              })()}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -872,7 +1195,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               className="flex items-center gap-2 border border-border bg-card text-[15px] font-semibold px-4 py-2.5 text-foreground hover:border-primary hover:text-primary transition-colors"
               style={{fontFamily:"var(--font-display)"}}>
               <Zap size={14}/> All Actions
-              {canRate&&pendingRatings.length>0&&(
+              {pendingRatings.length>0&&(
                 <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingRatings.length}</span>
               )}
             </button>
@@ -881,12 +1204,17 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
               style={{fontFamily:"var(--font-display)"}}>
               <MessageSquare size={14}/> All Surveys
             </button>
-            {/* Log Action — primary, large (Level 1+ only) */}
-            {canLog&&(
-              <button onClick={onLogAction}
-                className="flex items-center gap-2.5 bg-primary text-primary-foreground text-[15px] font-bold px-7 py-3 hover:opacity-90 transition-opacity shadow-lg"
+            {/* Log Action — primary, large */}
+            <button onClick={onLogAction}
+              className="flex items-center gap-2.5 bg-primary text-primary-foreground text-[15px] font-bold px-7 py-3 hover:opacity-90 transition-opacity shadow-lg"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Plus size={17}/> Log Action
+            </button>
+            {isAdmin&&onAddProject&&(
+              <button onClick={onAddProject}
+                className="flex items-center gap-2.5 border border-primary text-primary text-[15px] font-bold px-7 py-3 hover:bg-primary hover:text-primary-foreground transition-colors"
                 style={{fontFamily:"var(--font-display)"}}>
-                <Plus size={17}/> Log Action
+                <Plus size={17}/> Add Project
               </button>
             )}
           </div>
@@ -916,7 +1244,18 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                 <div key={i} className={`text-sm font-semibold text-foreground ${i>=1&&i<=6?"text-center":""}`} style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
-            {visible.map((p,idx)=>(
+            {loading?(
+              Array.from({length:4}).map((_,i)=>(
+                <div key={i} className="grid items-center px-6 py-5 border-b border-border last:border-b-0" style={{gridTemplateColumns:cols}}>
+                  <div className="space-y-2">
+                    <div className="h-4 w-40 bg-muted animate-pulse"/>
+                    <div className="h-3 w-56 bg-muted animate-pulse"/>
+                  </div>
+                  {Array.from({length:7}).map((__,j)=><div key={j} className="mx-auto h-10 w-10 rounded-full bg-muted animate-pulse"/>)}
+                  <div className="h-8 w-16 bg-muted animate-pulse ml-auto"/>
+                </div>
+              ))
+            ):visible.map((p,idx)=>(
               <motion.div key={p.id} initial={{opacity:0}} animate={{opacity:1}} transition={{delay:idx*0.03,duration:0.2}}>
                 <div onClick={()=>onSelect(p.id)}
                   className="grid items-center px-6 py-4 border-b border-border hover:bg-muted/40 cursor-pointer group transition-colors"
@@ -931,7 +1270,9 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                       </button>
                       <span className="text-[15px] font-bold group-hover:text-primary transition-colors" style={{fontFamily:"var(--font-display)"}}>{p.name}</span>
                     </div>
-                    <div className="text-sm text-muted-foreground mt-0.5 pl-5">{p.team}</div>
+                    <div className="text-sm text-muted-foreground mt-0.5 pl-5">
+                      {p.owner && p.repo ? `${p.owner}/${p.repo}` : p.owner || p.team || "No owner linked"}
+                    </div>
                     {(p.pendingSurvey||p.pendingReview>0)&&(
                       <div className="flex gap-3 mt-1 pl-5">
                         {p.pendingSurvey&&<span className="text-sm text-amber-500 flex items-center gap-1"><MessageSquare size={12}/>survey</span>}
@@ -949,11 +1290,11 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                       {p.scoreTrend>0?"+":""}{p.scoreTrend}
                     </span>
                   </div>
-                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn/></div>
+                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn project={p} onSyncComplete={onSyncComplete}/></div>
                 </div>
               </motion.div>
             ))}
-            {visible.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No projects match your filter.</div>}
+            {visible.length===0&&!loading&&<div className="text-center py-16 text-base text-muted-foreground">No projects match your filter.</div>}
           </div>
         </div>
       </div>
@@ -962,11 +1303,11 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
   );
 }
 
-function GlobalEffRow({action,onRate}:{action:Action;onRate:(id:string,rating:number)=>void}) {
+function GlobalEffRow({action,onRate}:{action:Action;onRate?:(rating:number)=>void}) {
   return (
     <div className="flex items-center gap-3">
       <span className="text-sm text-muted-foreground">Rate:</span>
-      <InlineRating effectiveness={action.effectiveness} onRate={n=>onRate(action.id,n)}/>
+      <InlineRating effectiveness={action.effectiveness} onRate={onRate}/>
     </div>
   );
 }
@@ -974,9 +1315,6 @@ function GlobalEffRow({action,onRate}:{action:Action;onRate:(id:string,rating:nu
 // ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 
 function Sidebar({screen,onNavigate,project,onLogAction}:{screen:Screen;onNavigate:(s:Screen)=>void;project:Project;onLogAction:()=>void;}) {
-  const {user}=useWorkspace();
-  const canLog=(user?.level??0)>=1;
-  const canRate=(user?.level??0)>=2;
   const [actOpen,setActOpen]=useState(screen.startsWith("actions"));
   useEffect(()=>{if(screen.startsWith("actions"))setActOpen(true);},[screen]);
   const item=(s:Screen,icon:React.ReactNode,label:string)=>{
@@ -1018,12 +1356,10 @@ function Sidebar({screen,onNavigate,project,onLogAction}:{screen:Screen;onNaviga
         {item("settings",<Settings size={16}/>,"Settings")}
       </div>
       <div className="p-4 border-t border-sidebar-border space-y-2">
-        {canLog&&(
-          <button onClick={onLogAction} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5 hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
-            <Plus size={14}/> Log Action
-          </button>
-        )}
-        {canRate&&project.pendingReview>0&&(
+        <button onClick={onLogAction} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5 hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
+          <Plus size={14}/> Log Action
+        </button>
+        {project.pendingReview>0&&(
           <button className="w-full text-sm text-amber-500 text-center hover:text-amber-400 transition-colors flex items-center justify-center gap-1.5 py-1">
             <Star size={12}/>{project.pendingReview} action{project.pendingReview>1?"s":""} need review
           </button>
@@ -1048,11 +1384,11 @@ const MVAL:{[k:string]:(m:Project["metrics"])=>number}={
   blockers:m=>m.openBlockers, deployments:m=>m.deployments, prCycleTime:m=>m.prCycleTime,
 };
 
-function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:string}[];val:number;onClose:()=>void;}) {
+function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:string;date?:string}[];val:number;onClose:()=>void;}) {
   const meta=MMETA[mk];
   const [ri,setRi]=useState(1);
-  const ranges=[{l:"7D",c:4},{l:"30D",c:8},{l:"All",c:999}];
-  const data=series.slice(-Math.min(series.length,ranges[ri].c));
+  const ranges=[{l:"7D",d:7 as number|null},{l:"30D",d:30},{l:"All",d:null}];
+  const data=seriesInRange(series,ranges[ri].d);
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6" onClick={onClose}>
@@ -1083,15 +1419,19 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
           </div>
         </div>
         <div className="p-6">
+          {data.length===0?(
+            <div className="h-[300px] flex items-center justify-center text-sm text-muted-foreground">No data points in this range.</div>
+          ):(
           <ResponsiveContainer width="100%" height={300}>
             <LineChart data={data} margin={{top:8,right:8,bottom:8,left:8}}>
               <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
-              <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}}/>
+              <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}} interval={Math.max(0,Math.ceil(data.length/8)-1)}/>
               <YAxis tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={36}/>
               <ReTooltip contentStyle={ttStyle} formatter={(v:number)=>[`${v}${meta.unit||""}`,meta.label]}/>
-              <Line type="monotone" dataKey="v" stroke={meta.color} strokeWidth={2.5} dot={{fill:meta.color,r:3}} activeDot={{r:5}}/>
+              <Line type="monotone" dataKey="v" stroke={meta.color} strokeWidth={2.5} dot={data.length<=14?{fill:meta.color,r:3}:false} activeDot={{r:5}}/>
             </LineChart>
           </ResponsiveContainer>
+          )}
         </div>
       </motion.div>
     </motion.div>
@@ -1100,21 +1440,24 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
-function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateAction}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRateAction:(id:string,rating:number)=>void;}) {
-  const {user}=useWorkspace();
-  const canRate=(user?.level??0)>=2;
+function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
   const [reviewOpen,setReviewOpen]=useState(false);
   const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:project.subscores[k]}));
   const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
-  const completed=surveys.filter(s=>s.projectId===project.id&&s.status==="completed");
+  const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
   const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
         <DashboardSyncBar project={project} onSyncComplete={onSyncComplete}/>
-        {canRate&&pending.length>0&&(
+        {project.hasData===false&&(
+          <div className="border border-border bg-muted/30 px-5 py-3 text-sm text-muted-foreground">
+            No health snapshot yet for {project.name}. Run <span className="font-semibold text-foreground">Sync</span> to pull GitHub/Jira metrics.
+          </div>
+        )}
+        {pending.length>0&&(
           <button onClick={()=>setReviewOpen(true)}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
             <span className="text-base font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2.5">
@@ -1167,7 +1510,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
         {/* 6 metric cards */}
         {/* 5 subscore area chart cards */}
         <div>
-          <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 15-week trend</div>
+          <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
           <div className="grid grid-cols-5 gap-3">
             {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>{
               const val = project.subscores[k];
@@ -1178,8 +1521,8 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
               const prev = series[series.length-2]?.v ?? last;
               const delta = last - prev;
               const trendGood = delta >= 0; // higher = better for all subscores
-              const minV = Math.min(...series.map(d=>d.v));
-              const maxV = Math.max(...series.map(d=>d.v));
+              const minV = series.length?Math.min(...series.map(d=>d.v)):val;
+              const maxV = series.length?Math.max(...series.map(d=>d.v)):val;
               const SUBSCORE_ICONS: Record<string, React.ReactNode> = {
                 delivery: <Rocket size={13}/>,
                 codeQuality: <ShieldCheck size={13}/>,
@@ -1198,7 +1541,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
                   <div className="flex items-baseline gap-1.5 mb-1">
                     <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:strokeColor}}>{val}</span>
                     <span className="text-xs font-semibold" style={{color:trendGood?"var(--health-good)":"var(--health-crit)"}}>
-                      {trendGood?"↑":"↓"}{Math.abs(delta)}
+                      {delta>0?"+":""}{delta}
                     </span>
                   </div>
                   {/* min/max range */}
@@ -1246,7 +1589,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
             {mkeys.map(mk=>{
               const meta=MMETA[mk];
               const val=MVAL[mk](project.metrics);
-              const series=project.metricSeries[mseries[mk]];
+              const series=project.metricSeries[mseries[mk]]??[];
               const isBad=meta.invertBad&&val>(mk==="blockers"?3:36);
               const strokeColor=isBad?"var(--health-crit)":meta.color;
               const gradId=`mg-${mk}-${project.id}`;
@@ -1325,9 +1668,8 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
             </div>
             <div className="divide-y divide-border">
               {surveys.filter(s=>s.projectId===project.id).slice(0,4).map(s=>{
-                const pct=Math.round((s.responseCount/s.targetCount)*100);
-                const stCfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
-                const cfg=stCfg[s.status];
+                const pct=surveyResponseRate(s);
+                const cfg=SURVEY_STATUS_CONFIG[s.status];
                 return (
                   <div key={s.id} className="px-5 py-3 flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -1338,8 +1680,10 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</div>
-                      <div className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount}</div>
+                      {s.scores
+                        ?<div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5))}}>{Math.round(Object.values(s.scores).reduce((a,b)=>a+b,0)/5)}</div>
+                        :<div className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</div>}
+                      <div className="text-xs text-muted-foreground">{s.scores?"AI score":`${s.responseCount}/${s.targetCount}`}</div>
                     </div>
                   </div>
                 );
@@ -1353,7 +1697,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
       </div>
 
       <AnimatePresence>
-        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
       </AnimatePresence>
       <AnimatePresence>
         {reviewOpen&&(
@@ -1363,7 +1707,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
                 <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Effectiveness Review</div>
                 <button onClick={()=>setReviewOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
               </div>
-              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a} onRate={onRateAction}/>)}</div>
+              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a}/>)}</div>
             </motion.div>
           </motion.div>
         )}
@@ -1372,9 +1716,8 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete,onRateActi
   );
 }
 
-function EffRow({action,onRate}:{action:Action;onRate:(id:string,rating:number)=>void}) {
+function EffRow({action}:{action:Action}) {
   const [r,setR]=useState(0), [done,setDone]=useState(false);
-  const handleRate=(n:number)=>{setR(n);onRate(action.id,n);setTimeout(()=>setDone(true),300);};
   return (
     <div className={`border border-border p-4 transition-opacity ${done?"opacity-40":""}`}>
       <div className="text-[15px] font-semibold text-foreground mb-1">{action.problem}</div>
@@ -1382,7 +1725,7 @@ function EffRow({action,onRate}:{action:Action;onRate:(id:string,rating:number)=
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {Array.from({length:5}).map((_,i)=>(
-            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>!done&&handleRate(i+1)} className="transition-transform hover:scale-110">
+            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>{setR(i+1);setTimeout(()=>setDone(true),300)}} className="transition-transform hover:scale-110">
               <Star size={22} className={i<r?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
             </button>
           ))}
@@ -1493,7 +1836,9 @@ function ActionsTimeline({project,actions}:{project:Project;actions:Action[];}) 
 // ─── ACTIONS LIBRARY ─────────────────────────────────────────────────────────
 
 function fmtDate(d:string){
-  const dt=new Date(d+"T00:00:00");
+  if(!d) return "Not sent";
+  const dt=new Date(d.length===10?`${d}T00:00:00`:d);
+  if(Number.isNaN(dt.getTime())) return "Not scheduled";
   return dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 }
 
@@ -1507,14 +1852,11 @@ function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:string;
     const query=q.trim();
     if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
     const controller=new AbortController();
-    setSearchResults(null);
-    setSearchMode(null);
-    setSearchError(null);
-    setSearching(true);
+    setSearching(true);setSearchError(null);
     const timer=setTimeout(()=>{
       searchActions(query,50,{projectId,signal:controller.signal})
         .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError"){setSearchError("Search service unavailable. Showing local keyword matches.");setSearchResults(null);}})
+        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
         .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
     },300);
     return()=>{clearTimeout(timer);controller.abort();};
@@ -1579,10 +1921,10 @@ function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:string;
 
 // ─── LOG ACTION MODAL ─────────────────────────────────────────────────────────
 
-function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];
+function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];actions:Action[];
   onSubmit:(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>Promise<void>;
 }) {
-  const [problem,setProblem]=useState("");
+  const [problemAndCause,setProblemAndCause]=useState("");
   const [reason,setReason]=useState("");
   const [actionTaken,setActionTaken]=useState("");
   const [date,setDate]=useState(()=>new Date().toISOString().slice(0,10));
@@ -1591,44 +1933,23 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
   const [submitted,setSubmitted]=useState(false);
   const [submitting,setSubmitting]=useState(false);
   const [error,setError]=useState<string|null>(null);
-  const [similar,setSimilar]=useState<Action[]>([]);
-  const [similarSearching,setSimilarSearching]=useState(false);
-  const [similarMode,setSimilarMode]=useState<ActionSearchMode|null>(null);
-  const [similarError,setSimilarError]=useState(false);
+  const [searchTriggered,setSearchTriggered]=useState(false);
   const dRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{const h=(e:MouseEvent)=>{if(dRef.current&&!dRef.current.contains(e.target as Node))setDropOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
-  // Debounced similar-past-problems search — surfaces matches as the user types
-  useEffect(()=>{
-    const query=problem.trim();
-    if(query.length<4){setSimilar([]);setSimilarSearching(false);setSimilarMode(null);setSimilarError(false);return;}
-    const controller=new AbortController();
-    setSimilar([]);
-    setSimilarSearching(true);
-    setSimilarMode(null);
-    setSimilarError(false);
-    const t=setTimeout(()=>{
-      searchActions(query,5,{
-        projectId:sel.length===1?sel[0]:undefined,
-        signal:controller.signal,
-      })
-        .then(result=>{if(!controller.signal.aborted){setSimilar(result.actions);setSimilarMode(result.mode);}})
-        .catch(error=>{if((error as Error).name!=="AbortError"){setSimilar([]);setSimilarError(true);}})
-        .finally(()=>{if(!controller.signal.aborted)setSimilarSearching(false);});
-    },400);
-    return()=>{clearTimeout(t);controller.abort();};
-  },[problem,sel]);
+  const similar=useMemo(()=>{
+    if(problemAndCause.length<4)return[];
+    const words=problemAndCause.toLowerCase().split(/\s+/).filter(w=>w.length>3);
+    return actions.map(a=>({action:a,score:words.filter(w=>a.problem.toLowerCase().includes(w)||a.reason.toLowerCase().includes(w)).length})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,5);
+  },[problemAndCause,actions]);
   const toggle=(id:string)=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const canSubmit=sel.length>0&&problem.trim().length>0&&reason.trim().length>0&&actionTaken.trim().length>0;
+  const canSubmit=sel.length>0&&problemAndCause.trim().length>0&&reason.trim().length>0&&actionTaken.trim().length>0;
   const submit=async()=>{
     if(!canSubmit||submitting)return;
     setSubmitting(true);setError(null);
     try{
-      await onSubmit({projectIds:sel,problem:problem.trim(),reason:reason.trim(),actionTaken:actionTaken.trim(),timestamp:date});
+      await onSubmit({projectIds:sel,problem:problemAndCause.trim(),reason:reason.trim(),actionTaken:actionTaken.trim(),timestamp:date});
       setSubmitted(true);setTimeout(onClose,1200);
-    }catch(e){
-      setError(e instanceof Error?e.message:"Failed to log action");
-      setSubmitting(false);
-    }
+    }catch(err){setError(err instanceof Error?err.message:"Failed to log action");setSubmitting(false);}
   };
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
@@ -1689,31 +2010,32 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
 
               {/* Problem */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>
-                  Problem
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>
+                    Problem
+                  </label>
+                  <button
+                    onClick={()=>setSearchTriggered(true)}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors"
+                    title="Search for similar past problems">
+                    <Search size={11}/> Find Similar
+                  </button>
+                </div>
                 <textarea
-                  value={problem}
-                  onChange={e=>setProblem(e.target.value)}
-                  rows={3}
-                  placeholder={"What happened? Be specific.\n\nExample: Sprint velocity dropped 40% in two sprints."}
+                  value={problemAndCause}
+                  onChange={e=>{setProblemAndCause(e.target.value);setSearchTriggered(false);}}
+                  rows={4}
+                  placeholder="What happened? Be specific."
                   className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors leading-relaxed"
                 />
-                <div className="text-xs text-muted-foreground mt-1.5">Similar past problems appear on the right as you type.</div>
+                <div className="text-xs text-muted-foreground mt-1.5">This text is used when finding similar past actions.</div>
               </div>
 
-              {/* Root Cause / Reason */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>
-                  Root Cause
-                </label>
-                <textarea
-                  value={reason}
-                  onChange={e=>setReason(e.target.value)}
-                  rows={3}
-                  placeholder={"Why did it happen?\n\nExample: Two senior engineers were reassigned mid-sprint without handoff, leaving the iOS auth work unowned."}
-                  className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors leading-relaxed"
-                />
+                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Root Cause</label>
+                <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={3}
+                  placeholder="Why did it happen?"
+                  className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
               </div>
 
               {/* Action Taken */}
@@ -1726,7 +2048,7 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
 
               {/* Date */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Date of Action</label>
+                <label className="block text-sm font-semibold text-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Date</label>
                 <input type="date" value={date} onChange={e=>setDate(e.target.value)}
                   className="bg-input-background border border-border px-4 py-3 text-[15px] outline-none focus:border-primary transition-colors" style={{fontFamily:"var(--font-mono)"}}/>
               </div>
@@ -1734,51 +2056,43 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
           )}
 
           {!submitted&&(
-            <div className="px-6 py-4 border-t border-border space-y-3">
-              {error&&(
-                <div className="text-sm text-red-500 flex items-center gap-1.5 px-3 py-2 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
-                  <AlertCircle size={13}/> {error}
-                </div>
-              )}
+            <div className="px-6 py-4 border-t border-border">
+              {error&&<div className="mb-3 flex items-center gap-2 border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-950/30"><AlertCircle size={13}/>{error}</div>}
               <div className="flex items-center justify-between">
-                <button onClick={onClose} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
-                <button onClick={submit}
-                  disabled={!canSubmit||submitting}
-                  className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{fontFamily:"var(--font-display)"}}>
-                  <Send size={14}/> {submitting?"Logging…":"Log Action"}
-                </button>
+              <button onClick={onClose} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">Cancel</button>
+              <button onClick={()=>void submit()}
+                disabled={!canSubmit||submitting}
+                className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{fontFamily:"var(--font-display)"}}>
+                <Send size={14}/> {submitting?"Logging…":"Log Action"}
+              </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* ── RIGHT: similar past problems (API-powered search) ── */}
+        {/* ── RIGHT: similar problems ── */}
         <div className="w-72 border-l border-border bg-muted/20 flex flex-col shrink-0">
           <div className="px-5 py-4 border-b border-border">
             <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Similar Past Problems</div>
             <div className="text-sm text-muted-foreground mt-0.5">
-              {problem.trim().length<4?"Type above to search":similarSearching?"Searching history…":similarError?"Search unavailable":similar.length>0?`${similar.length} match${similar.length>1?"es":""} · ${actionSearchModeLabel(similarMode)}`:`No matches · ${actionSearchModeLabel(similarMode)}`}
+              {similar.length>0?`${similar.length} match${similar.length>1?"es":""} found`:"Type above to search"}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
             {similar.length===0?(
               <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
-                {problem.trim().length<4
+                {problemAndCause.length<4
                   ?"Start describing the problem to find related past actions."
-                  :similarSearching
-                    ?"Comparing this problem with past problems, causes, and actions…"
-                    :similarError
-                      ?"Past-action search is temporarily unavailable. You can still log this action."
-                      :"No similar problems found in the library."}
+                  :"No similar problems found in the library."}
               </div>
             ):(
               <div className="space-y-3">
-                {similar.map((action,idx)=>(
+                {similar.map(({action},idx)=>(
                   <div key={action.id} className="border border-border bg-card p-3.5">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="text-[13px] font-semibold text-foreground leading-snug">{action.problem}</div>
-                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5 font-mono">{actionSimilarityLabel(action.similarity)??`#${idx+1}`}</span>
+                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5 font-mono">#{idx+1}</span>
                     </div>
                     <div className="text-xs text-muted-foreground mb-2.5 leading-relaxed">{action.actionTaken}</div>
                     <div className="flex items-center justify-between">
@@ -1824,36 +2138,271 @@ const DEFAULT_QUESTIONS=[
   "What would most improve your team's velocity in the next two weeks?",
 ];
 
-function SendSurveyModal({onClose,project,quota,quotaUsed}:{onClose:()=>void;project:Project;quota:number;quotaUsed:number;}) {
-  const [questions,setQuestions]=useState(DEFAULT_QUESTIONS.map((q,i)=>({id:`q${i}`,text:q})));
-  const [step,setStep]=useState<"edit"|"preview"|"sent">("edit");
-  const remaining=quota-quotaUsed;
+interface EditableQuestion {
+  id:string;
+  text:string;
+  category?:string;
+  questionType:"text"|"scale";
+  score?:QuestionScore;
+}
+
+function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
+  survey:Survey;onClose:()=>void;onChanged?:()=>void;
+}) {
+  const [questions,setQuestions]=useState<EditableQuestion[]>(
+    (survey.questions??[]).map((question,index)=>({
+      id:String(index),
+      text:question.questionText,
+      category:question.category,
+      questionType:question.questionType,
+    })),
+  );
+  const [saving,setSaving]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  const surveyId=Number(survey.id);
+  const canEdit=!survey.questionsLocked&&survey.status!=="cancelled";
+
+  const persist=async()=>{
+    if(!canEdit) return;
+    const payload=questions.filter(q=>q.text.trim()).map(q=>({
+      category:q.category||"delivery",questionText:q.text.trim(),questionType:q.questionType,
+    }));
+    if(payload.length===0) return;
+    await updateSurveyQuestions(surveyId,payload);
+  };
+
+  const save=async()=>{
+    setSaving(true);setError(null);
+    try{
+      await persist();
+      onChanged?.();onClose();
+    }catch(err){setError(err instanceof Error?err.message:"Failed to save questions");}
+    finally{setSaving(false);}
+  };
+  const closeReview=async()=>{
+    try{if(canEdit) await persist();}catch{/* still close */}
+    onChanged?.();
+    onClose();
+  };
+  const transition=async(action:"pause"|"resume"|"retry"|"cancel")=>{
+    setSaving(true);setError(null);
+    try{await changeSurveyLifecycle(surveyId,action);onChanged?.();onClose();}
+    catch(err){setError(err instanceof Error?err.message:`Failed to ${action} survey`);}
+    finally{setSaving(false);}
+  };
+  const health=survey.healthContext;
+
+  return (
+    <motion.div role="dialog" aria-modal="true" aria-labelledby="review-survey-title" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeReview();}}>
+      <motion.div initial={{scale:0.97,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.97,opacity:0}}
+        onClick={event=>event.stopPropagation()} className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-card border border-border shadow-2xl">
+        <div className="flex items-start justify-between px-6 py-5 border-b border-border">
+          <div>
+            <h2 id="review-survey-title" className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Review Scheduled Survey</h2>
+            <p className="text-sm text-muted-foreground mt-1">Auto-sends {fmtDate(survey.reviewDeadlineAt||survey.scheduledSendAt||"")} unless paused.</p>
+          </div>
+          <button aria-label="Close review" onClick={()=>{void closeReview();}} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
+        </div>
+        <div className="overflow-y-auto p-6 space-y-5">
+          {health&&(
+            <div className="border border-border bg-muted/30 p-4">
+              <div className="text-sm font-bold mb-1">AI health context</div>
+              <p className="text-sm text-muted-foreground">
+                Captured {fmtDate(health.capturedAt)} · Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
+                {health.trendDelta==null?"":` · Trend ${health.trendDelta>0?"+":""}${health.trendDelta.toFixed(1)}`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">Gemini uses this snapshot to focus questions, but scores responses independently.</p>
+            </div>
+          )}
+          {error&&<div className="border border-red-400/50 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-600">{error}</div>}
+          <div className="space-y-3">
+            {questions.map((question,index)=>(
+              <div key={question.id} className="border border-border p-3">
+                <div className="flex gap-2 mb-2">
+                  <select aria-label={`Category for question ${index+1}`} disabled={!canEdit} value={question.category||"delivery"}
+                    onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,category:e.target.value}:q))}
+                    className="bg-card border border-border px-2 py-1.5 text-sm">
+                    {["delivery","codeQuality","cicd","teamHealth","blockers"].map(category=><option key={category} value={category}>{category}</option>)}
+                  </select>
+                  <select aria-label={`Type for question ${index+1}`} disabled={!canEdit} value={question.questionType}
+                    onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,questionType:e.target.value as "text"|"scale"}:q))}
+                    className="bg-card border border-border px-2 py-1.5 text-sm">
+                    <option value="text">Text</option><option value="scale">Scale 1–5</option>
+                  </select>
+                </div>
+                <textarea aria-label={`Question ${index+1}`} disabled={!canEdit} rows={2} value={question.text}
+                  onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,text:e.target.value}:q))}
+                  className="w-full bg-card border border-border px-3 py-2 text-sm resize-none disabled:opacity-60"/>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-border p-4 flex items-center justify-between gap-3">
+          <div className="flex gap-2">
+            {survey.status==="failed"
+              ?<button disabled={saving} onClick={()=>void transition("retry")} className="border border-border px-3 py-2 text-sm font-semibold">{survey.questionsLocked?"Retry analysis":"Retry delivery"}</button>
+              :survey.status==="paused"
+              ?<button disabled={saving} onClick={()=>void transition("resume")} className="border border-border px-3 py-2 text-sm font-semibold">Resume</button>
+              :<button disabled={saving||!canEdit} onClick={()=>void transition("pause")} className="border border-border px-3 py-2 text-sm font-semibold">Pause</button>}
+            <button disabled={saving||!canEdit} onClick={()=>void transition("cancel")} className="border border-red-400/50 text-red-600 px-3 py-2 text-sm font-semibold">Cancel</button>
+          </div>
+          <button disabled={saving||!canEdit||questions.every(q=>!q.text.trim())} onClick={()=>void save()}
+            className="bg-primary text-primary-foreground px-5 py-2 text-sm font-semibold disabled:opacity-40">{saving?"Saving…":"Save questions"}</button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function SendSurveyModal({onClose,project,customGuidance,onSent,audienceSize,demoOnly,draftSurvey}:{onClose:()=>void;project:Project;customGuidance?:string;onSent?:()=>void;audienceSize?:number;demoOnly?:boolean;draftSurvey?:Survey|null;}) {
+  const backendProjectId=project.backendProjectId;
+  const isReal=Boolean(backendProjectId);
+  const hasDraft=Boolean(draftSurvey&&(draftSurvey.questions?.length??0)>0);
+
+  const [surveyId,setSurveyId]=useState<number|null>(hasDraft?Number(draftSurvey!.id):null);
+  const [scheduledSendAt,setScheduledSendAt]=useState<string|null>(draftSurvey?.scheduledSendAt??draftSurvey?.reviewDeadlineAt??null);
+  const [trigger,setTrigger]=useState(draftSurvey?.trigger||"Manual team pulse check");
+  const [questions,setQuestions]=useState<EditableQuestion[]>(
+    hasDraft
+      ?(draftSurvey!.questions??[]).map((q,i)=>({id:`q${i}`,text:q.questionText,category:q.category,questionType:q.questionType}))
+      :isReal?[]:DEFAULT_QUESTIONS.map((q,i)=>({id:`q${i}`,text:q,questionType:"text"})),
+  );
+  const [step,setStep]=useState<"generating"|"edit"|"preview"|"sending"|"sent"|"error">(isReal&&!hasDraft?"generating":"edit");
+  const [errorMessage,setErrorMessage]=useState<string|null>(null);
+  const [quota,setQuota]=useState<SurveyQuota|null>(null);
+  const [sentResult,setSentResult]=useState<{queued?:boolean;questionCount?:number;url?:string;expiresAt?:string;delivery?:{slackSent?:boolean;telegramSent?:boolean;discordSent?:boolean}}|null>(null);
+
+  const questionPayload=()=>questions.filter(q=>q.text.trim()).map(q=>({
+    category:q.category||"delivery",
+    questionText:q.text.trim(),
+    questionType:q.questionType,
+  }));
+
+  const persistEdits=async()=>{
+    if(!surveyId||questionPayload().length===0) return;
+    await updateSurveyQuestions(surveyId,questionPayload());
+  };
+
+  const closeModal=async()=>{
+    try{
+      if(surveyId&&(step==="edit"||step==="preview")) await persistEdits();
+    }catch{
+      // Closing should still dismiss the window; edits can be retried from history.
+    }
+    onSent?.();
+    onClose();
+  };
+
+  const generate=async(force=false)=>{
+    if(!backendProjectId) return;
+    setStep("generating");
+    setErrorMessage(null);
+    try{
+      const [generated,q]=await Promise.all([
+        generateSurveyQuestions(backendProjectId,trigger,customGuidance,undefined,force),
+        getSurveyQuota(backendProjectId),
+      ]);
+      setSurveyId(generated.surveyId);
+      setScheduledSendAt(generated.scheduledSendAt);
+      setQuestions(generated.questions.map((s,i)=>({id:`q${i}`,text:s.questionText,category:s.category,questionType:s.questionType,score:s.score})));
+      setQuota(q);
+      onSent?.();
+      setStep("edit");
+    }catch(err){
+      setErrorMessage(err instanceof Error?err.message:"Failed to generate questions");
+      setStep("error");
+    }
+  };
+
+  const sendReviewed=async()=>{
+    if(!backendProjectId) return;
+    setStep("sending");
+    setErrorMessage(null);
+    try{
+      const payload=questionPayload();
+      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,undefined,surveyId??undefined);
+      setSentResult({queued:true,questionCount:payload.length});
+      onSent?.();
+      setStep("sent");
+    }catch(err){
+      setErrorMessage(err instanceof Error?err.message:"Failed to send survey");
+      setStep("error");
+    }
+  };
+  useEffect(()=>{
+    if(!isReal||!backendProjectId) return;
+    if(hasDraft){
+      void getSurveyQuota(backendProjectId).then(setQuota).catch(()=>{});
+      return;
+    }
+    void generate();
+  },[]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const updateQ=(id:string,val:string)=>setQuestions(prev=>prev.map(q=>q.id===id?{...q,text:val}:q));
   const removeQ=(id:string)=>setQuestions(prev=>prev.filter(q=>q.id!==id));
-  const addQ=()=>setQuestions(prev=>[...prev,{id:`q${Date.now()}`,text:""}]);
+  const addQ=()=>setQuestions(prev=>[...prev,{id:`q${Date.now()}`,text:"",questionType:"text"}]);
+
+  const send=async()=>{
+    if(demoOnly){
+      try{
+        if(surveyId) await persistEdits();
+        onSent?.();
+        setStep("sent");
+      }catch(err){
+        setErrorMessage(err instanceof Error?err.message:"Failed to save questions");
+        setStep("error");
+      }
+      return;
+    }
+    if(!isReal||!backendProjectId){setStep("sent");return;}
+    await sendReviewed();
+  };
+
+  const remaining=quota?quota.remaining:1;
 
   return (
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeModal();}}>
       <motion.div initial={{scale:0.97,y:8,opacity:0}} animate={{scale:1,y:0,opacity:1}} exit={{scale:0.97,y:8,opacity:0}} transition={{duration:0.16}}
         onClick={e=>e.stopPropagation()} className="w-full max-w-2xl bg-card border border-border shadow-2xl flex flex-col max-h-[88vh]">
 
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
             <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>
-              {step==="edit"?"Review & Edit Survey":step==="preview"?"Survey Preview":"Survey Sent"}
+              {step==="generating"?"Generating Questions":step==="edit"?(demoOnly?"Review generated questions":"Review & Edit Survey"):step==="preview"?"Survey Preview":step==="sending"?"Sending Survey…":step==="error"?"Something Went Wrong":demoOnly?"Generation test complete":"Survey Sent"}
             </div>
-            <div className="text-sm text-muted-foreground mt-0.5">{project.name}</div>
+            <div className="text-sm text-muted-foreground mt-0.5">
+              {project.name}
+              {scheduledSendAt&&step!=="sent"?` · Auto-sends ${fmtDate(scheduledSendAt)} unless you send now`:""}
+            </div>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
+          <button onClick={()=>{void closeModal();}} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
         </div>
 
-        {step==="sent"?(
+        {step==="generating"||step==="sending"?(
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 p-10">
+            <RefreshCw size={24} className="animate-spin text-primary"/>
+            <div className="text-base text-muted-foreground text-center max-w-sm">{step==="generating"?"AI is drafting and scoring questions for this survey…":"Queuing delivery of your reviewed questions…"}</div>
+          </div>
+        ):step==="error"?(
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
+            <AlertTriangle size={28} className="text-red-500"/>
+            <div className="text-base text-foreground text-center max-w-sm">{errorMessage}</div>
+            <button onClick={()=>{if(isReal) void generate(true); else setStep("edit");}} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
+          </div>
+        ):step==="sent"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
             <div className="w-14 h-14 bg-emerald-500 flex items-center justify-center"><Check size={26} className="text-white"/></div>
-            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>Survey sent successfully</div>
-            <div className="text-base text-muted-foreground text-center">Sent to {project.name} team · {questions.length} questions · responses due in 48h</div>
-            <button onClick={onClose} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
+            <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{demoOnly?"Draft saved — nothing sent":isReal?"Survey queued":"Survey sent successfully"}</div>
+            <div className="text-base text-muted-foreground text-center max-w-md">
+              {demoOnly
+                ? `${questions.filter(q=>q.text.trim()).length} questions stored. You can keep editing until ${scheduledSendAt?fmtDate(scheduledSendAt):"the auto-send window"}, or use Send Survey Now to broadcast now.`
+                : isReal
+                ? `${sentResult?.questionCount??questions.length} reviewed questions will be posted to team channels in the background. Watch Survey History for Active status.`
+                :`Sent to ${project.name} team · ${questions.length} questions · responses due in 48h`}
+            </div>
+            <button onClick={()=>{void closeModal();}} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
           </div>
         ):step==="preview"?(
           <div className="flex-1 overflow-y-auto">
@@ -1871,7 +2420,7 @@ function SendSurveyModal({onClose,project,quota,quotaUsed}:{onClose:()=>void;pro
                 <div key={q.id} className="border border-border bg-muted/20 p-5">
                   <div className="text-sm font-bold text-muted-foreground mb-2">Q{i+1}</div>
                   <div className="text-[15px] font-semibold text-foreground">{q.text}</div>
-                  {q.text.toLowerCase().includes("1–5")||q.text.toLowerCase().includes("1-5")?(
+                  {q.questionType==="scale"?(
                     <div className="flex gap-2 mt-3">{[1,2,3,4,5].map(n=>(
                       <div key={n} className="w-10 h-10 border-2 border-border flex items-center justify-center text-sm font-bold text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{n}</div>
                     ))}</div>
@@ -1884,18 +2433,49 @@ function SendSurveyModal({onClose,project,quota,quotaUsed}:{onClose:()=>void;pro
           </div>
         ):(
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-            {/* Quota warning */}
-            <div className={`flex items-start gap-3 px-4 py-3.5 border ${remaining<=1?"border-amber-400/50 bg-amber-50 dark:bg-amber-950/20":"border-border bg-muted/30"}`}>
-              <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${remaining<=1?"text-amber-500":"text-muted-foreground"}`}/>
+            {errorMessage&&(
+              <div className="flex items-start gap-3 px-4 py-3.5 border border-red-400/50 bg-red-50 dark:bg-red-950/20">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5 text-red-500"/>
+                <div className="text-sm font-semibold text-foreground">{errorMessage}</div>
+              </div>
+            )}
+
+            {/* Trigger */}
+            {isReal&&(
               <div>
-                <div className="text-sm font-semibold text-foreground">
-                  Sending this uses 1 of your {remaining} remaining survey{remaining!==1?"s":""} this month
-                </div>
-                <div className="text-sm text-muted-foreground mt-0.5">
-                  Quota: {quotaUsed} used / {quota} per month · Next automatic reset in {30-new Date().getDate()} days
+                <label className="text-sm font-semibold text-foreground mb-1 block" style={{fontFamily:"var(--font-display)"}}>Reason for sending</label>
+                <div className="flex items-center gap-2">
+                  <input value={trigger} onChange={e=>setTrigger(e.target.value)} placeholder="e.g. Sprint retro follow-up"
+                    className="flex-1 bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary transition-colors"/>
+                  <button onClick={()=>{void generate(true);}} className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity px-2">
+                    <RefreshCw size={13}/> Regenerate
+                  </button>
                 </div>
               </div>
-            </div>
+            )}
+
+            {/* Quota warning */}
+            {demoOnly?(
+              <div className="flex items-start gap-3 px-4 py-3.5 border border-border bg-muted/30">
+                <Sparkles size={16} className="shrink-0 mt-0.5 text-primary"/>
+                <div className="text-sm text-muted-foreground">
+                  Questions are saved as a draft{scheduledSendAt?` and auto-send ${fmtDate(scheduledSendAt)}`:""}. Edit until this window closes, then use Send Survey Now if you want to broadcast immediately.
+                </div>
+              </div>
+            ):quota&&(
+              <div className={`flex items-start gap-3 px-4 py-3.5 border ${remaining<=1?"border-amber-400/50 bg-amber-50 dark:bg-amber-950/20":"border-border bg-muted/30"}`}>
+                <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${remaining<=1?"text-amber-500":"text-muted-foreground"}`}/>
+                <div>
+                  <div className="text-sm font-semibold text-foreground">
+                    Sending this uses 1 of your {remaining} remaining survey{remaining!==1?"s":""} this month
+                  </div>
+                  <div className="text-sm text-muted-foreground mt-0.5">
+                    Quota: {quota.used} used / {quota.limit} per month
+                    {audienceSize?` · Settings team is ${audienceSize}. Response rate uses developers in projectmember.`:""}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Questions */}
             <div className="text-sm font-semibold text-foreground mb-1" style={{fontFamily:"var(--font-display)"}}>Questions ({questions.length})</div>
@@ -1903,8 +2483,21 @@ function SendSurveyModal({onClose,project,quota,quotaUsed}:{onClose:()=>void;pro
               {questions.map((q,i)=>(
                 <div key={q.id} className="flex items-start gap-3 bg-muted/30 border border-border p-3">
                   <span className="shrink-0 w-6 h-6 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-1">{i+1}</span>
-                  <textarea value={q.text} rows={2} onChange={e=>updateQ(q.id,e.target.value)} placeholder="Enter question…"
-                    className="flex-1 bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary resize-none transition-colors"/>
+                  <div className="flex-1 space-y-1.5">
+                    {q.category&&(
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold uppercase text-muted-foreground tracking-wide">{q.category}</span>
+                        <select aria-label={`Type for question ${i+1}`} value={q.questionType}
+                          onChange={e=>setQuestions(prev=>prev.map(item=>item.id===q.id?{...item,questionType:e.target.value as "text"|"scale"}:item))}
+                          className="text-xs bg-card border border-border px-1.5 py-1">
+                          <option value="text">Text</option><option value="scale">Scale 1–5</option>
+                        </select>
+                        {q.score&&q.score.overall>0&&<span className="text-xs font-semibold text-primary" title="AI quality score">score {Math.round(q.score.overall)}</span>}
+                      </div>
+                    )}
+                    <textarea value={q.text} rows={2} onChange={e=>updateQ(q.id,e.target.value)} placeholder="Enter question…"
+                      className="w-full bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary resize-none transition-colors"/>
+                  </div>
                   <button onClick={()=>removeQ(q.id)} className="text-muted-foreground hover:text-red-500 transition-colors mt-1 shrink-0"><X size={14}/></button>
                 </div>
               ))}
@@ -1915,26 +2508,26 @@ function SendSurveyModal({onClose,project,quota,quotaUsed}:{onClose:()=>void;pro
           </div>
         )}
 
-        {step!=="sent"&&(
+        {(step==="edit"||step==="preview")&&(
           <div className="px-6 py-4 border-t border-border flex items-center justify-between">
             {step==="edit"?(
               <>
                 <button onClick={()=>setStep("preview")} className="text-[15px] font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
                   <ChevronRight size={14}/> Preview
                 </button>
-                <button onClick={()=>setStep("sent")} disabled={questions.filter(q=>q.text.trim()).length===0}
+                <button onClick={send} disabled={questions.filter(q=>q.text.trim()).length===0}
                   className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{fontFamily:"var(--font-display)"}}>
-                  <Send size={14}/> Send to Team
+                  {demoOnly?<><Sparkles size={14}/> Save draft</>:<><Send size={14}/> Send to Team</>}
                 </button>
               </>
             ):(
               <>
                 <button onClick={()=>setStep("edit")} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">← Edit</button>
-                <button onClick={()=>setStep("sent")}
+                <button onClick={send}
                   className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity"
                   style={{fontFamily:"var(--font-display)"}}>
-                  <Send size={14}/> Confirm &amp; Send
+                  {demoOnly?<><Sparkles size={14}/> Save draft</>:<><Send size={14}/> Confirm &amp; Send</>}
                 </button>
               </>
             )}
@@ -2001,29 +2594,48 @@ function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
 
 // ─── SURVEYS VIEW ─────────────────────────────────────────────────────────────
 
-function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
+function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;loadError?:string|null;loading?:boolean;}) {
   const ps=surveys.filter(s=>s.projectId===project.id);
-  const completed=ps.filter(s=>s.status==="completed"&&s.themes.length>0);
+  const completed=ps.filter(s=>surveyHasResults(s)&&(s.themes.length>0||Boolean(s.scores)||Boolean(s.aiInsight)));
+  const {settings,update,customGuidance,audienceSize}=useProjectSurveySettings(project.id);
+  const guidance=settings.guidance;
   const [iIdx,setIIdx]=useState(0);
   const [exId,setExId]=useState<string|null>(null);
   const [rawId,setRawId]=useState<string|null>(null);
   const [showRubric,setShowRubric]=useState(false);
   const [showSend,setShowSend]=useState(false);
+  const [showGenerateDemo,setShowGenerateDemo]=useState(false);
+  const [reviewSurvey,setReviewSurvey]=useState<Survey|null>(null);
   const [showGuidance,setShowGuidance]=useState(false);
   const [surveySearch,setSurveySearch]=useState("");
   const [surveySort,setSurveySort]=useState<"newest"|"oldest">("newest");
-  const [quota,setQuota]=useState(2);
-  const [editQuota,setEditQuota]=useState(false);
-  const [guidance,setGuidance]=useState([
-    {id:"g1",text:"Ask about specific blockers preventing sprint completion. Focus on cross-team dependencies."},
-    {id:"g2",text:"Probe team confidence in current sprint goals — is the scope realistic?"},
-    {id:"g3",text:"Explore communication and process pain points."},
-    {id:"g4",text:"Ask about workload balance and signs of unsustainable pace."},
-  ]);
+  const [quota,setQuotaState]=useState<SurveyQuota|null>(null);
+  useEffect(()=>{
+    if(!project.backendProjectId){setQuotaState(null);return;}
+    let cancelled=false;
+    getSurveyQuota(project.backendProjectId).then(q=>{if(!cancelled) setQuotaState(q);}).catch(()=>{});
+    return ()=>{cancelled=true;};
+  },[project.backendProjectId,ps.length]);
   const latest=completed[0];
+  const scoreHistory=useMemo(()=>[...ps]
+    .filter(s=>s.scores)
+    .sort((a,b)=>new Date(a.sentDate).getTime()-new Date(b.sentDate).getTime())
+    .slice(-6)
+    .map(s=>({
+      label:fmtDate(s.sentDate),
+      overall:Math.round(Object.values(s.scores!).reduce((a,b)=>a+b,0)/5),
+      delivery:s.scores!.delivery,
+      codeQuality:s.scores!.codeQuality,
+      cicd:s.scores!.cicd,
+      teamHealth:s.scores!.teamHealth,
+      blockers:s.scores!.blockers,
+    })),[ps]);
+  const upcomingAuto=ps.find(s=>s.source==="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
+  const manualDraft=ps.find(s=>s.source!=="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&!s.questionsLocked);
+  const reviewBanners=[manualDraft,upcomingAuto].filter((s,i,arr):s is Survey=>Boolean(s)&&arr.findIndex(x=>x?.id===s.id)===i);
   const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
-  const scfg={active:{c:"text-amber-500",l:"Active"},sent:{c:"text-blue-500",l:"Sent"},completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"}};
-  const quotaUsed=ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
+  const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
+  const quotaLimit=quota?quota.limit:2;
 
   const tagStyle=projectTagStyle(project.score);
 
@@ -2048,34 +2660,59 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
           <div>
             <h2 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>Surveys</h2>
             <div className="flex items-center gap-3 mt-1.5">
-              {/* Quota */}
+              {/* Quota - org-wide monthly cap, read-only (server-configured) */}
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground border border-border bg-card px-3 py-1.5">
                 <span className="font-medium text-foreground">Quota:</span>
-                {editQuota?(
-                  <input type="number" min={1} max={12} value={quota}
-                    onChange={e=>setQuota(Math.max(1,parseInt(e.target.value)||1))}
-                    onBlur={()=>setEditQuota(false)}
-                    autoFocus className="w-8 bg-transparent outline-none font-bold text-foreground text-center" style={{fontFamily:"var(--font-mono)"}}/>
-                ):(
-                  <button onClick={()=>setEditQuota(true)} className="font-bold text-foreground hover:text-primary transition-colors" style={{fontFamily:"var(--font-mono)"}}>
-                    {quota}
-                  </button>
-                )}
+                <span className="font-bold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{quotaLimit}</span>
                 <span className="text-muted-foreground">surveys/month</span>
                 <span className="text-muted-foreground">·</span>
-                <span className={quotaUsed>=quota?"text-red-500 font-semibold":"text-foreground"}>{quotaUsed} used</span>
+                <span className={quotaUsed>=quotaLimit?"text-red-500 font-semibold":"text-foreground"}>{quotaUsed} used</span>
               </div>
               <button onClick={()=>setShowRubric(true)} className="text-sm font-semibold text-primary hover:opacity-75 transition-opacity flex items-center gap-1">
                 Scoring rubric →
               </button>
             </div>
           </div>
-          <button onClick={()=>setShowSend(true)}
-            className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
-            style={{fontFamily:"var(--font-display)"}}>
-            <Send size={14}/> Send Survey Now
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={()=>setShowGenerateDemo(true)}
+              className="flex items-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Sparkles size={14}/> Test generate
+            </button>
+            <button onClick={()=>setShowSend(true)}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Send size={14}/> Send Survey Now
+            </button>
+          </div>
         </div>
+
+        {reviewBanners.map(upcoming=>(
+          project.backendProjectId&&Number.isFinite(Number(upcoming.id))?(
+          <div key={upcoming.id} className="bg-card border border-violet-400/40">
+            <div className="flex items-center justify-between gap-4 px-5 py-4 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm font-bold ${SURVEY_STATUS_CONFIG[upcoming.status].c}`}>{SURVEY_STATUS_CONFIG[upcoming.status].l}</span>
+                  <span className="text-base font-bold" style={{fontFamily:"var(--font-display)"}}>{upcoming.status==="failed"?"Survey needs attention":upcoming.source==="auto_pulse"?"Monthly survey review":"Draft questions ready"}</span>
+                </div>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {upcoming.status==="paused"
+                    ?"Auto-send is paused."
+                    :upcoming.status==="failed"
+                      ?`Delivery failed: ${upcoming.analysisError||"retry available"}.`
+                      :`Auto-sends ${fmtDate(upcoming.reviewDeadlineAt||upcoming.scheduledSendAt||"")}.`}
+                  {" "}{upcoming.questions?.length??0} questions · edit until then
+                </p>
+              </div>
+              <button onClick={()=>setReviewSurvey(upcoming)}
+                className="bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90">
+                Review survey
+              </button>
+            </div>
+          </div>
+          ):null
+        ))}
 
         {/* ── Score summary ── */}
         {latest?.scores&&(
@@ -2102,7 +2739,30 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
           </div>
         )}
 
-        {/* ── AI Insights carousel ── */}
+        {scoreHistory.length>1&&(
+          <div className="bg-card border border-border">
+            <div className="px-5 py-3.5 border-b border-border">
+              <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Survey score over time</div>
+              <div className="text-sm text-muted-foreground mt-0.5">Last {scoreHistory.length} scored pulses</div>
+            </div>
+            <div className="px-3 py-4">
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={scoreHistory} margin={{top:8,right:12,bottom:0,left:0}}>
+                  <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
+                  <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}}/>
+                  <YAxis domain={[0,100]} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={32}/>
+                  <ReTooltip contentStyle={{background:"var(--popover)",border:"1px solid var(--border)",fontSize:12}}/>
+                  <Line type="monotone" dataKey="overall" name="Overall" stroke="var(--primary)" strokeWidth={2.5} dot={{r:3}}/>
+                  <Line type="monotone" dataKey="delivery" name="Delivery" stroke="#3b82f6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="codeQuality" name="Code Quality" stroke="#10b981" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="cicd" name="CI/CD" stroke="#8b5cf6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="teamHealth" name="Team Health" stroke="#f59e0b" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="blockers" name="Blockers" stroke="#ef4444" strokeWidth={1.5} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
         {completed.length>0&&(
           <div className="bg-card border border-border">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-muted/30">
@@ -2138,9 +2798,9 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
                   {/* Response % bar inline */}
                   <div className="flex items-center gap-1.5">
                     <div className="w-20 h-2 bg-muted">
-                      <div className="h-full bg-primary" style={{width:`${Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100)}%`}}/>
+                      <div className="h-full bg-primary" style={{width:`${surveyResponseRate(completed[iIdx])}%`}}/>
                     </div>
-                    <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100))}}>{Math.round((completed[iIdx].responseCount/completed[iIdx].targetCount)*100)}%</span>
+                    <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:hColor(surveyResponseRate(completed[iIdx]))}}>{surveyResponseRate(completed[iIdx])}%</span>
                   </div>
                 </div>
 
@@ -2165,6 +2825,8 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
                 <div className="text-[15px] text-foreground leading-relaxed mb-4 font-medium">
                   {completed[iIdx].aiInsight}
                 </div>
+
+                <SurveyAskedQuestions questions={completed[iIdx].questions}/>
 
                 {/* Themes */}
                 {completed[iIdx].themes.length>0&&(
@@ -2214,12 +2876,12 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
                     <div key={g.id} className="flex items-start gap-3">
                       <div className="shrink-0 w-6 h-6 flex items-center justify-center border border-border text-xs font-bold text-muted-foreground mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
                       <textarea value={g.text} rows={2} placeholder="Describe what the AI should ask about…"
-                        onChange={e=>setGuidance(prev=>prev.map(x=>x.id===g.id?{...x,text:e.target.value}:x))}
+                        onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(x=>x.id===g.id?{...x,text:e.target.value}:x)}))}
                         className="flex-1 bg-input-background border border-border px-3 py-2.5 text-[14px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                      <button onClick={()=>setGuidance(prev=>prev.filter(x=>x.id!==g.id))} className="mt-2 text-muted-foreground hover:text-red-500 transition-colors shrink-0"><X size={14}/></button>
+                      <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(x=>x.id!==g.id)}))} className="mt-2 text-muted-foreground hover:text-red-500 transition-colors shrink-0"><X size={14}/></button>
                     </div>
                   ))}
-                  <button onClick={()=>setGuidance(prev=>[...prev,{id:`g${Date.now()}`,text:""}])}
+                  <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`g${Date.now()}`,text:""}]}))}
                     className="flex items-center gap-1.5 text-sm text-primary font-semibold hover:opacity-75 transition-opacity mt-1">
                     <Plus size={13}/> Add instruction
                   </button>
@@ -2258,28 +2920,28 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
           <div className="border border-border bg-card">
             {/* Header */}
             <div className="grid items-center border-b border-border bg-muted px-4 py-2.5"
-              style={{gridTemplateColumns:"120px 130px 1fr 160px 80px 64px 32px"}}>
+              style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
               {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
                 <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
 
-            {filteredPs.length===0&&<div className="text-center py-12 text-base text-muted-foreground">No surveys match your search.</div>}
+            {filteredPs.length===0&&<div className="text-center py-12 text-base text-muted-foreground">{loadError?loadError:loading?"Loading surveys…":surveySearch?"No surveys match your search.":"No surveys yet."}</div>}
 
             {filteredPs.map(s=>{
-              const cfg=scfg[s.status];
-              const pct=Math.round((s.responseCount/s.targetCount)*100);
+              const cfg=surveyRowStatus(s);
+              const pct=surveyResponseRate(s);
               const isEx=exId===s.id;
               const sTag=projectTagStyle(project.score);
               return (
                 <div key={s.id} className="border-b border-border last:border-b-0">
                   {/* Row */}
-                  <button onClick={()=>{if(s.status==="completed"){setExId(isEx?null:s.id);setRawId(null);}}}
-                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${s.status==="completed"?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
-                    style={{gridTemplateColumns:"120px 130px 1fr 160px 80px 64px 32px"}}>
+                  <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                    style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
                     {/* Project */}
-                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[110px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
+                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
 
                     {/* Issue date */}
                     <div className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</div>
@@ -2288,48 +2950,70 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
                     <div className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</div>
 
                     {/* Response bar */}
-                    <div>
+                    <div className="min-w-0">
                       <div className="h-1.5 bg-muted mb-1">
                         <div className="h-full transition-all" style={{width:`${pct}%`,backgroundColor:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}/>
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1 min-w-0">
                         <span className="text-sm font-bold" style={{fontFamily:"var(--font-mono)",color:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}>{pct}%</span>
                         <span className="text-xs text-muted-foreground">{s.responseCount}/{s.targetCount}</span>
-                        {s.status==="sent"&&<span className="text-xs text-amber-500 flex items-center gap-0.5"><Clock size={10}/>waiting</span>}
                       </div>
                     </div>
 
                     {/* Status */}
                     <div className={`text-sm font-bold ${cfg.c}`} style={{fontFamily:"var(--font-display)"}}>{cfg.l}</div>
 
-                    {/* Score (completed only) */}
+                    {/* Score */}
                     <div>
                       {s.scores?(
                         <span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5))}}>
                           {Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5)}
                         </span>
-                      ):s.status==="completed"?<span className="text-sm text-muted-foreground">—</span>:<span/>}
+                      ):s.status==="closed"?<span className="text-xs text-amber-500">…</span>
+                      :surveyHasResults(s)?<span className="text-sm text-muted-foreground">—</span>:<span className="text-sm text-muted-foreground">—</span>}
                     </div>
 
-                    {s.status==="completed"?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:<span/>}
-                  </button>
+                    <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
+                      {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                      {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onSurveySent}/>}
+                      {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent}/>}
+                      {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
+                      {!s.questionsLocked&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&(
+                        <button type="button" onClick={()=>setReviewSurvey(s)}
+                          className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary">
+                          Review
+                        </button>
+                      )}
+                      {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                    </div>
+                  </div>
 
                   {/* Expanded */}
                   <AnimatePresence>
-                    {isEx&&s.status==="completed"&&(
+                    {isEx&&surveyCanExpand(s)&&(
                       <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.18}} className="overflow-hidden">
                         <div className="border-t border-border">
-                          {/* AI Summary */}
                           <div className="px-5 py-4 border-b border-border">
+                            <SurveyAskedQuestions questions={s.questions}/>
+                            {surveyHasResults(s)&&(
+                              <>
                             <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                            <div className="border border-border divide-y divide-border">
+                            {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                            {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
+                            {s.analysisError?.startsWith("insufficient_responses")
+                              ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
+                              :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                            {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
+                            {s.themes.length>0&&<div className="border border-border divide-y divide-border">
                               {s.themes.map((t,i)=>(
                                 <div key={i} className="flex gap-3 px-4 py-3 items-start">
                                   <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
                                   <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
                                 </div>
                               ))}
-                            </div>
+                            </div>}
+                              </>
+                            )}
                           </div>
                           {/* Raw responses */}
                           {s.rawResponses.length>0&&(
@@ -2381,7 +3065,22 @@ function SurveysView({project,surveys}:{project:Project;surveys:Survey[];}) {
         {showRubric&&<SurveyRubricPanel key="rubric" onClose={()=>setShowRubric(false)}/>}
       </AnimatePresence>
       <AnimatePresence>
-        {showSend&&<SendSurveyModal key="send" onClose={()=>setShowSend(false)} project={project} quota={quota} quotaUsed={quotaUsed}/>}
+        {showGenerateDemo&&<SendSurveyModal key="gen-demo" onClose={()=>setShowGenerateDemo(false)} project={project}
+          customGuidance={customGuidance}
+          draftSurvey={manualDraft}
+          onSent={onSurveySent}
+          demoOnly/>}
+      </AnimatePresence>
+      <AnimatePresence>
+        {showSend&&<SendSurveyModal key="send" onClose={()=>setShowSend(false)} project={project}
+          customGuidance={customGuidance}
+          audienceSize={audienceSize}
+          draftSurvey={manualDraft}
+          onSent={onSurveySent}/>}
+      </AnimatePresence>
+      <AnimatePresence>
+        {reviewSurvey&&<ReviewScheduledSurveyModal key="review" survey={reviewSurvey}
+          onClose={()=>setReviewSurvey(null)} onChanged={onSurveySent}/>}
       </AnimatePresence>
     </div>
   );
@@ -2499,16 +3198,17 @@ function ConnectorCard({def}:{def:ConnectorDef}) {
   );
 }
 
-interface QI{id:string;text:string;}
 function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
-  const [qi,setQi]=useState<QI[]>([
-    {id:"qi1",text:"Ask about specific blockers preventing sprint completion. Focus on cross-team dependencies and waiting-on relationships."},
-    {id:"qi2",text:"Probe team confidence in current sprint goals. Ask whether scope is realistic given current capacity."},
-    {id:"qi3",text:"Explore communication and process pain points — what slows people down day-to-day."},
-    {id:"qi4",text:"Ask about workload balance and signs of unsustainable pace or burnout risk."},
-  ]);
-  const team=[{n:"Sarah Chen",r:"Engineering Manager",e:"s.chen@company.io"},{n:"Marcus Webb",r:"Product Manager",e:"m.webb@company.io"},{n:"Priya Nair",r:"Senior Engineer",e:"p.nair@company.io"},{n:"James Okafor",r:"Tech Lead",e:"j.okafor@company.io"},{n:"Lena Fischer",r:"QA Lead",e:"l.fischer@company.io"}];
+  const {settings,update}=useProjectSurveySettings(project.id);
+  const [draftMember,setDraftMember]=useState({n:"",r:"",e:""});
+  const team=settings.team;
+  const qi=settings.guidance;
+  const addMember=()=>{
+    if(!draftMember.n.trim()||!draftMember.e.trim()) return;
+    update(prev=>({...prev,team:[...prev.team,{n:draftMember.n.trim(),r:draftMember.r.trim()||"Team member",e:draftMember.e.trim()}]}));
+    setDraftMember({n:"",r:"",e:""});
+  };
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-4xl mx-auto px-8 py-8">
@@ -2525,22 +3225,35 @@ function SettingsView({project}:{project:Project;}) {
         {tab==="team"&&(
           <div>
             <div className="flex items-center justify-between mb-5">
-              <div className="text-[15px] font-bold text-foreground">Survey Recipients — {team.length} members</div>
-              <button className="flex items-center gap-1.5 text-[15px] text-primary font-semibold hover:opacity-75"><Plus size={14}/>Add member</button>
+              <div>
+                <div className="text-[15px] font-bold text-foreground">Team directory — {team.length} members</div>
+                <p className="text-sm text-muted-foreground mt-1">This list is local notes only. Survey response rate (`1 of N`) uses how many `projectmember` rows have role DEVELOPER. The public form stays anonymous.</p>
+              </div>
             </div>
-            <div className="border border-border bg-card">
+            <div className="border border-border bg-card mb-4">
               {team.map((m,i)=>(
-                <div key={i} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
+                <div key={`${m.e}-${i}`} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 bg-primary/15 text-primary flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{m.n.split(" ").map(n=>n[0]).join("")}</div>
                     <div><div className="text-[15px] font-semibold text-foreground">{m.n}</div><div className="text-sm text-muted-foreground">{m.r}</div></div>
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.e}</span>
-                    <button className="text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
+                    <button onClick={()=>update(prev=>({...prev,team:prev.team.filter((_,idx)=>idx!==i)}))} className="text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
+              <input value={draftMember.n} onChange={e=>setDraftMember(m=>({...m,n:e.target.value}))} placeholder="Name"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <input value={draftMember.r} onChange={e=>setDraftMember(m=>({...m,r:e.target.value}))} placeholder="Role"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <input value={draftMember.e} onChange={e=>setDraftMember(m=>({...m,e:e.target.value}))} placeholder="Email"
+                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              <button onClick={addMember} className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90">
+                <Plus size={14}/>Add
+              </button>
             </div>
           </div>
         )}
@@ -2548,20 +3261,20 @@ function SettingsView({project}:{project:Project;}) {
           <div>
             <div className="mb-6">
               <div className="text-[15px] font-bold text-foreground mb-1">Question Generation Instructions</div>
-              <p className="text-[15px] text-muted-foreground leading-relaxed">Each instruction steers the AI when generating survey questions. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
+              <p className="text-[15px] text-muted-foreground leading-relaxed">These instructions are sent to Gemini when you generate a survey. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
             </div>
             <div className="space-y-3">
               {qi.map((inst,idx)=>(
                 <div key={inst.id} className="bg-card border border-border p-4 flex items-start gap-3">
                   <div className="shrink-0 w-7 h-7 flex items-center justify-center text-sm font-bold text-muted-foreground border border-border mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
                   <textarea value={inst.text} rows={2} placeholder="Describe what the AI should ask about…"
-                    onChange={e=>setQi(p=>p.map(i=>i.id===inst.id?{...i,text:e.target.value}:i))}
+                    onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(i=>i.id===inst.id?{...i,text:e.target.value}:i)}))}
                     className="flex-1 bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                  <button onClick={()=>setQi(p=>p.filter(i=>i.id!==inst.id))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
+                  <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(i=>i.id!==inst.id)}))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
                 </div>
               ))}
             </div>
-            <button onClick={()=>setQi(p=>[...p,{id:`qi${Date.now()}`,text:""}])} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
+            <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`qi${Date.now()}`,text:""}]}))} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
           </div>
         )}
         {tab==="notifications"&&(
@@ -2596,93 +3309,83 @@ function SettingsView({project}:{project:Project;}) {
 
 // ─── SURVEY TAKE FLOW ─────────────────────────────────────────────────────────
 
-function SurveyFlow({onClose}:{onClose:()=>void;}) {
-  const qs=[{q:"What is your biggest blocker this sprint?",t:"text"},{q:"How confident are you in this sprint's outcome?",t:"scale"},{q:"What would improve team effectiveness most?",t:"text"},{q:"How is cross-team communication working?",t:"text"}];
-  const [step,setStep]=useState(0), [ans,setAns]=useState<(string|number|null)[]>(qs.map(()=>null)), [done,setDone]=useState(false);
-  const cur=qs[step];
-  const next=()=>step<qs.length-1?setStep(step+1):setDone(true);
-  return (
-    <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 bg-background z-50 flex items-center justify-center">
-      <button onClick={onClose} className="absolute top-6 right-6 text-muted-foreground hover:text-foreground"><X size={20}/></button>
-      <div className="w-full max-w-lg px-6">
-        <div className="mb-10">
-          <div className="flex items-center justify-between text-base text-muted-foreground mb-3" style={{fontFamily:"var(--font-mono)"}}><span>{done?"Complete":`${step+1} / ${qs.length}`}</span><span>~2 minutes</span></div>
-          <div className="h-1 bg-muted"><motion.div className="h-full bg-primary" animate={{width:`${done?100:(step/qs.length)*100}%`}} transition={{duration:0.3}}/></div>
-        </div>
-        <AnimatePresence mode="wait">
-          {done?(
-            <motion.div key="done" initial={{opacity:0,y:10}} animate={{opacity:1,y:0}} className="text-center">
-              <div className="w-16 h-16 bg-primary flex items-center justify-center mx-auto mb-6"><Check size={28} className="text-primary-foreground"/></div>
-              <h2 className="text-4xl font-bold uppercase mb-3" style={{fontFamily:"var(--font-display)"}}>Thank you</h2>
-              <p className="text-base text-muted-foreground">Your responses are recorded anonymously.</p>
-              <button onClick={onClose} className="mt-8 bg-primary text-primary-foreground px-10 py-3 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Close</button>
-            </motion.div>
-          ):(
-            <motion.div key={step} initial={{opacity:0,x:24}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-24}} transition={{duration:0.2}}>
-              <h2 className="text-2xl font-bold text-foreground leading-tight mb-8" style={{fontFamily:"var(--font-display)"}}>{cur.q}</h2>
-              {cur.t==="text"
-                ?<textarea autoFocus rows={4} value={(ans[step] as string)||""} onChange={e=>{const u=[...ans];u[step]=e.target.value;setAns(u);}} placeholder="Your answer…"
-                    className="w-full bg-transparent border-b-2 border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground text-base resize-none py-2 transition-colors"/>
-                :<div className="flex gap-3 py-4">{[1,2,3,4,5].map(n=>(
-                  <button key={n} onClick={()=>{const u=[...ans];u[step]=n;setAns(u);}}
-                    className={`flex-1 h-16 border-2 text-xl font-bold transition-all ${ans[step]===n?"border-primary bg-primary text-primary-foreground":"border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
-                    style={{fontFamily:"var(--font-mono)"}}>{n}</button>
-                ))}</div>
-              }
-              <div className="flex items-center justify-between mt-10">
-                <button onClick={next} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">Skip</button>
-                <button onClick={next} className="flex items-center gap-2 bg-primary text-primary-foreground px-7 py-3 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
-                  {step===qs.length-1?"Submit":"Next"} <ArrowRight size={14}/>
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </motion.div>
-  );
-}
-
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
+const VCS_PROVIDERS:VcsProvider[]=["github","gitlab","bitbucket"];
+const VCS_LABELS:Record<string,string>={github:"GitHub",gitlab:"GitLab",bitbucket:"Bitbucket"};
+
 export default function App() {
-  const {isAuthenticated,activeWorkspace,logout,user}=useWorkspace();
+  const {user,isAuthenticated,isAuthLoading,activeWorkspace,setActiveWorkspace,logout}=useWorkspace();
+  const location=useLocation();
+  const navigate=useNavigate();
+  const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
+  const screen=parsed.screen;
+  const activeId=parsed.projectId;
+  // Links carry tokens: /reset-password?token=... and /register?invite=... — read them off the URL.
+  const searchParams=useMemo(()=>new URLSearchParams(location.search),[location.search]);
+  const resetToken=screen==="reset-password" ? searchParams.get("token") : null;
+  const inviteToken=screen==="register" ? searchParams.get("invite") : null;
   const [dark,setDark]=useState(false);
-  const [screen,setScreen]=useState<Screen>(()=>{
-    if(!isAuthenticated) return "login";
-    if(!activeWorkspace) return "workspaces";
-    return "portfolio";
-  });
-  const [activeId,setActiveId]=useState<string|null>(null);
   const [logOpen,setLogOpen]=useState(false);
-  const [surveyDemo,setSurveyDemo]=useState(false);
-  const [projects,setProjects]=useState<Project[]>(PROJECTS);
-  const [trackedIds,setTrackedIds]=useState<Set<string>>(
-    ()=>new Set(PROJECTS.filter(p=>p.tracked).map(p=>p.id))
-  );
   const [actions,setActions]=useState<Action[]>([]);
-  const refreshActions=()=>{
-    listActions()
-      .then(setActions)
-      .catch(err=>console.error("Failed to load actions",err));
-  };
+  const [surveyDemo,setSurveyDemo]=useState(false);
+  const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
+  // Real vcs per project (company-scoped) from our own API — used to group workspaces and filter the portfolio.
+  const [vcsById,setVcsById]=useState<Map<number,string>>(new Map());
   useEffect(()=>{
     if(!isAuthenticated) return;
-    refreshActions();
+    listProjects()
+      .then(rows=>setVcsById(new Map(rows.filter(r=>r.vcs).map(r=>[r.id,r.vcs as string]))))
+      .catch(()=>{});
   },[isAuthenticated]);
-  const handleLogAction=async(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>{
-    await createAction({...input,loggedBy:user?.name??user?.email??"unknown"});
-    await refreshActions();
-  };
-  const handleRateAction=(id:string,rating:number)=>{
-    setActions(prev=>prev.map(a=>a.id===id?{...a,effectiveness:rating}:a));
-    rateAction(id,rating).catch(err=>{console.error("Failed to rate action",err);refreshActions();});
-  };
+  // The URL is the source of truth for the active workspace; the context value is a remembered fallback (used on project pages, which carry no vcs in the path).
+  const urlVcs=parsed.vcs;
+  const activeVcs=urlVcs ?? activeWorkspace?.vcs ?? null;
+  const isValidVcs=(v:string|null|undefined):v is VcsProvider=>v!=null&&VCS_PROVIDERS.includes(v as VcsProvider);
+  const workspaceLabel=activeVcs?(VCS_LABELS[activeVcs]??activeVcs):undefined;
+  const portfolioPath=isValidVcs(activeVcs)?paths.workspacePortfolio(activeVcs):paths.portfolio;
+  // Keep the context/localStorage preference in sync with whatever workspace the URL currently points at.
+  useEffect(()=>{
+    if(!isValidVcs(urlVcs)||activeWorkspace?.vcs===urlVcs) return;
+    setActiveWorkspace({id:`ws-${urlVcs}`,name:urlVcs,vcs:urlVcs,projectsCount:0,membersCount:0});
+  },[urlVcs,activeWorkspace,setActiveWorkspace]);
+  // Portfolio is scoped to the chosen vcs workspace (and, via our company-scoped map, the user's company).
+  const visibleProjects=useMemo(()=>
+    activeVcs
+      ? projects.filter(p=>p.backendProjectId && vcsById.get(Number(p.backendProjectId))===activeVcs)
+      : projects
+  ,[projects,activeVcs,vcsById]);
+  // Selecting a vcs workspace navigates to its portfolio URL — the route drives the rest.
+  const selectVcsWorkspace=useCallback((vcs:string)=>{
+    navigate(paths.workspacePortfolio(vcs));
+  },[navigate]);
+  const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
+  useEffect(()=>{
+    if(projects.length===0) return;
+    setTrackedIds(prev=>{
+      if(prev.size>0) return prev;
+      return new Set(projects.map(p=>p.id));
+    });
+  },[projects]);
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
-  useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
-  const active=useMemo(()=>projects.find(p=>p.id===activeId)??null,[activeId,projects]);
-  const updateProjectRisk=(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
+  const active=useMemo(()=>findProjectByPath(projects,activeId),[activeId,projects]);
+  const go=useCallback((next:Screen)=>{
+    // "portfolio" is workspace-scoped, so route it to the active workspace's url rather than bare "/".
+    if(next==="portfolio"){navigate(portfolioPath);return;}
+    navigate(pathFromScreen(next, active?.id ?? activeId));
+  },[navigate,active?.id,activeId,portfolioPath]);
+  useEffect(()=>{
+    if(!active || !activeId || active.id===activeId) return;
+    navigate(pathFromScreen(screen, active.id), { replace: true });
+  },[active,activeId,screen,navigate]);
+  // Real survey data for backend-synced projects; demo-only projects (no backendProjectId) keep their static mock surveys.
+  const {surveys:realSurveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
+  const surveys=useMemo(()=>{
+    const mockOnly=SURVEYS.filter(s=>projects.some(p=>p.id===s.projectId&&!p.backendProjectId));
+    return [...mockOnly,...realSurveys];
+  },[realSurveys,projects]);
+  const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
     setProjects(prev=>prev.map(p=>{
       if(p.id!==projectId) return p;
       const subscores={...p.subscores};
@@ -2695,69 +3398,145 @@ export default function App() {
       if(typeof riskScore!=="number") return {...p,subscores};
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
-  };
+    void refetchHealth({ silent: true });
+  },[refetchHealth]);
+  const refreshActions=useCallback(async()=>{
+    if(!isAuthenticated){setActions([]);return;}
+    const rows=await listActions();
+    setActions(rows);
+  },[isAuthenticated]);
+  useEffect(()=>{void refreshActions().catch(()=>setActions([]));},[refreshActions]);
+  const handleLogAction=useCallback(async(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>{
+    await createAction({...input,loggedBy:user?.name??user?.email??"Unknown user"});
+    await refreshActions();
+  },[user,refreshActions]);
+  const handleRateAction=useCallback(async(id:string,rating:number)=>{
+    setActions(current=>current.map(action=>action.id===id?{...action,effectiveness:rating}:action));
+    try{await rateAction(id,rating);}catch(error){await refreshActions();throw error;}
+  },[refreshActions]);
   const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
   const [ratingOpen,setRatingOpen]=useState(false);
-  const sel=(id:string)=>{setActiveId(id);setScreen("dashboard");};
-  const home=()=>{setActiveId(null);setScreen("portfolio");};
+  const sel=(id:string)=>{navigate(pathFromScreen("dashboard", id));};
+  const home=()=>{navigate(portfolioPath);};
   const renderContent=()=>{
-    if(screen==="global-actions")
-      return <GlobalActionsView actions={actions} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)} onRateAction={handleRateAction}/>;
-    if(screen==="global-surveys")
-      return <GlobalSurveysView surveys={SURVEYS} projects={projects} onBack={home}/>;
-    if(screen==="portfolio"||!active)
+    if(projectsLoading){
+      if(parsed.projectId) return <ProjectPageSkeleton/>;
       return <PortfolioView
-        projects={projects} actions={actions} surveys={SURVEYS}
+        projects={[]} actions={actions} surveys={surveys} loading
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
-        onViewActions={()=>setScreen("global-actions")}
-        onViewSurveys={()=>setScreen("global-surveys")}
+        onViewActions={()=>go("global-actions")}
+        onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onSyncComplete={updateProjectRisk}
+      />;
+    }
+    if(projectsError && projects.length===0){
+      return (
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center max-w-md">
+            <AlertTriangle size={28} className="mx-auto text-amber-500 mb-3"/>
+            <div className="text-lg font-bold mb-1" style={{fontFamily:"var(--font-display)"}}>Couldn’t load projects</div>
+            <p className="text-sm text-muted-foreground mb-4">{projectsError}</p>
+            <button onClick={()=>void refetchHealth()} className="bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold">Try again</button>
+          </div>
+        </div>
+      );
+    }
+    if(screen==="global-actions")
+      return <GlobalActionsView actions={actions} projects={projects} onBack={home} onLogAction={()=>setLogOpen(true)} onRateAction={(id,rating)=>void handleRateAction(id,rating)}/>;
+    if(screen==="global-surveys")
+      return <GlobalSurveysView surveys={surveys} projects={projects} onBack={home} onClosed={refetchSurveys}/>;
+    if(screen==="portfolio"||!active)
+      return <PortfolioView
+        projects={visibleProjects} actions={actions} surveys={surveys}
+        onSelect={sel} onLogAction={()=>setLogOpen(true)}
+        onViewActions={()=>go("global-actions")}
+        onViewSurveys={()=>go("global-surveys")}
+        onRatingOpen={()=>setRatingOpen(true)}
+        trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onAddProject={()=>go("add-project")} isAdmin={user?.role==="admin"}
+        workspaceName={workspaceLabel} onBackToWorkspaces={()=>go("workspaces")}
+        onSyncComplete={updateProjectRisk}
       />;
     const view=()=>{switch(screen){
-      case"dashboard": return <Dashboard project={active} actions={actions} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk} onRateAction={handleRateAction}/>;
+      case"dashboard": return <Dashboard project={active} actions={actions} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
       case"actions-timeline": return <ActionsTimeline project={active} actions={actions}/>;
       case"actions-library": return <ActionsLibrary actions={actions} projectId={active.id}/>;
-      case"surveys": return <SurveysView project={active} surveys={SURVEYS}/>;
+      case"surveys": return <SurveysView project={active} surveys={surveys} onSurveySent={refetchSurveys} loadError={surveysError} loading={surveysLoading}/>;
       case"settings": return <SettingsView project={active}/>;
       default: return null;
     }};
-    return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={setScreen} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
+    return <div className="flex flex-1 min-h-0"><Sidebar screen={screen} onNavigate={go} project={active} onLogAction={()=>setLogOpen(true)}/>{view()}</div>;
   };
-  if(screen==="login"){
-    return <LoginView onSuccess={()=>setScreen("workspaces")}/>;
+  if(parsed.surveyToken){
+    return <PublicSurveyPage token={parsed.surveyToken}/>;
+  }
+  if(isAuthLoading){
+    return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
+  }
+  if(!isAuthenticated){
+    if(screen==="register"){
+      return <RegisterView onSuccess={()=>navigate("/workspaces")} onNavigateToLogin={()=>navigate("/login")} inviteToken={inviteToken ?? undefined}/>;
+    }
+    if(screen==="forgot-password"){
+      return <ForgotPasswordView onBackToLogin={()=>navigate("/login")}/>;
+    }
+    if(screen==="reset-password"){
+      return <ResetPasswordView token={resetToken} onSuccess={()=>navigate("/login")} onBackToLogin={()=>navigate("/login")}/>;
+    }
+    return <LoginView onSuccess={()=>navigate("/workspaces")} onNavigateToRegister={()=>navigate("/register")} onNavigateToForgot={()=>navigate("/forgot-password")}/>;
+  }
+  if(screen==="login"||screen==="register"||screen==="forgot-password"||screen==="reset-password"){
+    return <Navigate to={portfolioPath} replace/>;
+  }
+  // Bare "/" (or an unknown workspace) resolves to the remembered workspace, else the chooser — the url stays the source of truth.
+  if(screen==="portfolio" && !isValidVcs(urlVcs)){
+    const remembered=activeWorkspace?.vcs;
+    return <Navigate to={isValidVcs(remembered)?paths.workspacePortfolio(remembered):paths.workspaces} replace/>;
+  }
+  if(screen==="projects"){
+    return <ProjectsView onAddProject={()=>go("add-project")}/>;
+  }
+  if(screen==="add-project"){
+    // Only admins can create projects — members never reach the form.
+    if(user?.role!=="admin") return <ProjectsView onAddProject={()=>go("add-project")}/>;
+    return <AddProjectView onCreated={()=>{void refetchHealth();go("portfolio");}} onCancel={()=>go("portfolio")}/>;
   }
   if(screen==="workspaces"){
     return (
-      <WorkspaceSelectionView
-        onSelect={()=>setScreen("portfolio")}
-        onCreateNew={()=>setScreen("create-workspace")}
-        onLogout={()=>{logout();setScreen("login");}}
+      <VcsWorkspaceView
+        onSelect={selectVcsWorkspace}
+        onAddProject={()=>navigate("/projects/new")}
+        isAdmin={user?.role==="admin"}
       />
     );
   }
   if(screen==="create-workspace"){
     return (
       <CreateWorkspaceView
-        onBack={()=>setScreen("workspaces")}
-        onCreated={()=>setScreen("portfolio")}
+        onBack={()=>navigate("/workspaces")}
+        onCreated={()=>navigate("/")}
       />
     );
   }
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={projects} activeId={activeId} onSelect={sel} onHome={home}
-        pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>setScreen("workspaces")}/>
+        pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>go("workspaces")}/>
       <div className="flex-1 flex min-h-0">{renderContent()}</div>
       {(screen==="portfolio"||screen==="global-actions"||screen==="global-surveys")&&(
         <div className="border-t border-border bg-card px-6 py-2.5 flex items-center gap-6 text-sm text-muted-foreground">
           <span className="text-xs uppercase font-bold text-foreground/40" style={{fontFamily:"var(--font-display)"}}>Demo</span>
           <button onClick={()=>setSurveyDemo(true)} className="hover:text-primary transition-colors flex items-center gap-1.5"><MessageSquare size={13}/>Preview survey flow</button>
-          <button onClick={()=>sel("onyx-mobile")} className="hover:text-primary transition-colors flex items-center gap-1.5"><AlertTriangle size={13}/>Open critical project</button>
+          <button onClick={()=>{
+            const critical=projects.filter(p=>p.hasData).sort((a,b)=>a.score-b.score)[0];
+            if(critical) sel(critical.id);
+          }} className="hover:text-primary transition-colors flex items-center gap-1.5"><AlertTriangle size={13}/>Open critical project</button>
         </div>
       )}
       <AnimatePresence>
-        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={projects} onSubmit={handleLogAction}/>}
+        {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={activeId??undefined} projects={projects} actions={actions} onSubmit={handleLogAction}/>}
       </AnimatePresence>
       <AnimatePresence>
         {surveyDemo&&<SurveyFlow key="sf" onClose={()=>setSurveyDemo(false)}/>}
@@ -2788,7 +3567,7 @@ export default function App() {
                       </div>
                       <div className="text-[15px] font-semibold text-foreground mb-1">{a.problem}</div>
                       <div className="text-sm text-muted-foreground mb-4 leading-relaxed">{a.actionTaken}</div>
-                      <GlobalEffRow action={a} onRate={handleRateAction}/>
+                      <GlobalEffRow action={a} onRate={rating=>void handleRateAction(a.id,rating)}/>
                     </div>
                   );
                 })}

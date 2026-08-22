@@ -1,13 +1,13 @@
 import { ActionEmbeddingQueue } from '@libs/queue/index.js';
 import { buildActionEmbeddingText, hashEmbeddingText } from '@libs/embeddings/index.js';
-import { env } from '../apps/api/src/config/env.js';
+import { env } from '../apps/api/config/env.js';
 import {
   getActionEmbedding,
   listActionsForEmbedding,
   listRetryableActionEmbeddings,
   resetStaleActionEmbeddings,
   upsertPendingActionEmbedding,
-} from '../apps/api/src/database/action-embeddings.js';
+} from '../apps/api/database/action-embeddings.js';
 
 function positiveArg(name: string, fallback: number): number {
   const prefix = `--${name}=`;

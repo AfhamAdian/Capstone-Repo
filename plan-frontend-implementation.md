@@ -1,5 +1,10 @@
 # Frontend Implementation — Action Logging Feature
 
+> Authentication update (2026-08-22): a later merge replaced the temporary local
+> role picker and `x-user-level` headers described below with the application's real
+> cookie-session login and admin/member authorization. Action API calls now use
+> `credentials: "include"`; the incoming authentication implementation is authoritative.
+
 Status: **Complete.** All changes wired to the live backend API. Roles gated, similar-problems search debounced, `LogActionModal` split into separate Problem/Reason fields.
 
 ---

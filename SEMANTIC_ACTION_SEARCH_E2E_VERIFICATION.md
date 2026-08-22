@@ -19,7 +19,9 @@ Consequently, the production API correctly operates in `lexical` fallback mode
 until the SiliconFlow account receives free allowance/credits. No paid fallback is
 configured or used.
 
-Authentication and role-based code remained untouched.
+After the later survey/auth merge, action endpoints were attached to the incoming
+cookie-session authentication with `requireAuth`. The incoming login, registration,
+session, and admin/member authorization implementation was preserved.
 
 ## What changed in this pass
 
@@ -53,7 +55,7 @@ the account allowance was unavailable.
 
 Updated configuration locations:
 
-- `backend/apps/api/src/config/env.ts`
+- `backend/apps/api/config/env.ts`
 - `backend/.env.example`
 - Local ignored `backend/.env`
 - `How-To-Run.md`
@@ -64,7 +66,7 @@ compared with any vectors produced by the former configuration.
 
 ### 2. Prevented wasteful retries for permanent provider failures
 
-`backend/apps/worker/src/processors/action-embedding.processor.ts` now converts a
+`backend/apps/worker/processors/action-embedding.processor.ts` now converts a
 non-retryable `EmbeddingProviderError` into BullMQ's `UnrecoverableError`.
 
 Behavior now is:
@@ -90,7 +92,7 @@ An automated 402 classification test was added to
 ### 3. Exposed search mode to browser JavaScript
 
 The API already sent `x-action-search-mode`, but CORS did not expose that custom
-header to frontend JavaScript. `backend/apps/api/src/server.ts` now adds:
+header to frontend JavaScript. `backend/apps/api/server.ts` now adds:
 
 ```text
 Access-Control-Expose-Headers: x-action-search-mode
@@ -152,8 +154,8 @@ defaults to `lexical`.
 - Existing actions are compared using their combined problem, root cause, and
   action-taken embedding.
 
-No authentication headers, login state, role decisions, role gates, or role-based
-rendering were changed.
+The merged frontend now sends action requests with `credentials: "include"`; the
+obsolete mock `x-user-level` action headers and role picker are no longer used.
 
 ## Real API and infrastructure checks
 

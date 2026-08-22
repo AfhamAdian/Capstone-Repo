@@ -24,8 +24,8 @@
     "types": ["node"]
   },
   "include": [
-    "apps/api/src/**/*.ts",
-    "apps/worker/src/**/*.ts",
+    "apps/api/**/*.ts",
+    "apps/worker/**/*.ts",
     "libs/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"

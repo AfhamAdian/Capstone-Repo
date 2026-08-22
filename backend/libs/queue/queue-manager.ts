@@ -3,7 +3,8 @@
  * Manages async job queueing and processing
  */
 
-import { Job, Queue, Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
+import type { Job } from 'bullmq';
 import type { SupportedTool } from '@libs/sync/index.js';
 
 interface ToolIntegration {

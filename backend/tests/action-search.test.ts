@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sanitizeActionSearchQuery, type ActionRow, type ActionSearchRow } from '../apps/api/src/database/actions.js';
-import { fuseActionSearchResults } from '../apps/api/src/services/action-search.service.js';
-import { isValidDateOnly } from '../apps/api/src/controllers/actions.controller.js';
+import { sanitizeActionSearchQuery, type ActionRow, type ActionSearchRow } from '../apps/api/database/actions.js';
+import { fuseActionSearchResults } from '../apps/api/services/action-search.service.js';
+import { isValidDateOnly } from '../apps/api/controllers/actions.controller.js';
 
 function row(id: string, date: string): ActionRow {
   return {

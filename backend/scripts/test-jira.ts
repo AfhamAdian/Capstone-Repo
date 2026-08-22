@@ -4,10 +4,10 @@
  */
 
 import 'dotenv/config';
-import { getProjectIntegrationsForTools } from '../apps/api/src/database/project.js';
+import { getProjectIntegrationsForTools } from '../apps/api/database/project.js';
 import { createConnector } from '@libs/sync/index.js';
-import { persistConnectorMetrics } from '../apps/api/src/database/metrics.js';
-import { calculateAndSaveRiskScores } from '../apps/api/src/services/risk-calculation.service.js';
+import { persistConnectorMetrics } from '../apps/api/database/metrics.js';
+import { calculateAndSaveRiskScores } from '../apps/api/services/risk-calculation.service.js';
 
 const PROJECT_ID = '4';
 const TOOL = 'jira' as const;

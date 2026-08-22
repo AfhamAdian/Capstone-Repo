@@ -9,3 +9,10 @@ export {
   type ActionEmbeddingQueueConfig,
 } from './action-embedding-queue.js';
 export { eventStore } from './event-store.js';
+export {
+  SurveyQueueManager,
+  type SurveyQueueConfig,
+  type SurveySendJobData,
+  type SurveyInsightJobData,
+  type SurveyDistributionJobData,
+} from './survey-queue-manager.js';

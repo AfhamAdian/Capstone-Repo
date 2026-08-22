@@ -30,9 +30,10 @@ database. The live database currently has pgvector **0.8.0**, the
 BGE embedding version; it was preserved and will be superseded by the Qwen version
 when a successful backfill can run.
 
-Authentication and role-based code were explicitly excluded. No authentication
-middleware, role levels, route role gates, login behavior, role-based UI behavior,
-or `authHeaders()` behavior was changed.
+The original implementation excluded authentication changes. During the later
+survey/auth merge, the incoming cookie-session authentication was preserved and
+all action routes were attached to its existing `requireAuth` middleware. The
+temporary `x-user-level` action header is no longer used.
 
 ## Free-only provider policy
 
@@ -78,20 +79,20 @@ is not part of this pipeline.
 | Layer | File | Responsibility |
 |---|---|---|
 | Migration | `supabase/migrations/20260822000000_action_semantic_search.sql` | Enables pgvector; creates embedding storage, claim RPC, and match RPC. |
-| Reference schema | `backend/apps/api/src/database/schema.sql` | Documents action and embedding tables. |
-| Environment | `backend/apps/api/src/config/env.ts` | Parses SiliconFlow and search configuration. |
+| Reference schema | `backend/apps/api/database/schema.sql` | Documents action and embedding tables. |
+| Environment | `backend/apps/api/config/env.ts` | Parses SiliconFlow and search configuration. |
 | Environment example | `backend/.env.example` | Documents every semantic-search variable. |
 | Provider contract | `backend/libs/embeddings/embedding-provider.ts` | Provider interface, safe provider error, and vector validation. |
 | SiliconFlow adapter | `backend/libs/embeddings/siliconflow-embedding.provider.ts` | HTTP request, timeout, response parsing, and error classification. |
 | Canonical text | `backend/libs/embeddings/embedding-text.ts` | Builds stable action text and SHA-256 content hash. |
-| Action database | `backend/apps/api/src/database/actions.ts` | Insert/list/get/rate and bounded lexical search. |
-| Embedding database | `backend/apps/api/src/database/action-embeddings.ts` | Pending/claim/complete/fail/retry operations and vector RPC call. |
-| Creation service | `backend/apps/api/src/services/actions.service.ts` | Stores the action, prepares an embedding row, and enqueues best effort. |
-| Search service | `backend/apps/api/src/services/action-search.service.ts` | Query embedding, vector retrieval, RRF, and lexical fallback. |
-| Controller | `backend/apps/api/src/controllers/actions.controller.ts` | Input bounds, date validation, search mode header, and service calls. |
+| Action database | `backend/apps/api/database/actions.ts` | Insert/list/get/rate and bounded lexical search. |
+| Embedding database | `backend/apps/api/database/action-embeddings.ts` | Pending/claim/complete/fail/retry operations and vector RPC call. |
+| Creation service | `backend/apps/api/services/actions.service.ts` | Stores the action, prepares an embedding row, and enqueues best effort. |
+| Search service | `backend/apps/api/services/action-search.service.ts` | Query embedding, vector retrieval, RRF, and lexical fallback. |
+| Controller | `backend/apps/api/controllers/actions.controller.ts` | Input bounds, date validation, search mode header, and service calls. |
 | Queue | `backend/libs/queue/action-embedding-queue.ts` | Dedicated BullMQ queue with deterministic job IDs and retries. |
-| Worker processor | `backend/apps/worker/src/processors/action-embedding.processor.ts` | Claims tasks, embeds action text, and writes status/vector. |
-| Worker entry | `backend/apps/worker/src/worker.ts` | Starts and closes sync and embedding workers. |
+| Worker processor | `backend/apps/worker/processors/action-embedding.processor.ts` | Claims tasks, embeds action text, and writes status/vector. |
+| Worker entry | `backend/apps/worker/worker.ts` | Starts and closes sync, survey, and embedding workers. |
 | Backfill | `backend/scripts/backfill-action-embeddings.ts` | Prepares, reconciles, and enqueues existing actions. |
 | Frontend API | `new_frontend/src/app/api.ts` | Sends search options and maps optional similarity. |
 | Frontend UI | `new_frontend/src/app/App.tsx` | Integrates all three action-search surfaces. |
