@@ -95,3 +95,16 @@ export async function getLatestRiskScoreForProject(projectId: number): Promise<L
   }
   return (data as LatestRiskScoreRow) ?? null;
 }
+
+export async function getRiskScoreBySnapshotId(snapshotId: number): Promise<LatestRiskScoreRow | null> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('riskscore')
+    .select('*')
+    .eq('project_snapshot_id', snapshotId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load risk score for snapshot ${snapshotId}: ${error.message}`);
+  }
+  return (data as LatestRiskScoreRow) ?? null;
+}

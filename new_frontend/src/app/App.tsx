@@ -37,6 +37,8 @@ import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
+import { ScoreProvenancePanel } from "./components/ScoreProvenancePanel";
+import type { HealthCategoryKey } from "./api-project";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
 
@@ -117,6 +119,24 @@ const surveyResponseRate=(survey:Pick<Survey,"responseCount"|"targetCount">)=>
   survey.targetCount>0?Math.min(100,Math.round((survey.responseCount/survey.targetCount)*100)):0;
 const surveyDeliveryChannels=(survey:Survey)=>
   Object.entries(survey.delivery?.channels??{}).filter(([,sent])=>sent).map(([channel])=>channel.replace("Sent","")).join(", ");
+
+function surveyIncidentLines(health: SurveyHealthContext): string[] {
+  const incidents = health.incidents;
+  if (!incidents) return [];
+  const pct = (value: number) => Math.round(value <= 1 ? value * 100 : value);
+  const lines: string[] = [];
+  if (incidents.spilloverRatio != null) lines.push(`About ${pct(incidents.spilloverRatio)}% of committed sprint work spilled over`);
+  if (incidents.midSprintAdditions != null && incidents.midSprintAdditions > 0) lines.push(`${incidents.midSprintAdditions} tickets added after the sprint started`);
+  if (incidents.blockedItemsCount != null && incidents.blockedItemsCount > 0) lines.push(`${incidents.blockedItemsCount} tickets currently blocked`);
+  if (incidents.overdueItemsCount != null && incidents.overdueItemsCount > 0) lines.push(`${incidents.overdueItemsCount} overdue tickets`);
+  if (incidents.stalePrCount != null && incidents.stalePrCount > 0) lines.push(`${incidents.stalePrCount} stale pull requests`);
+  if (incidents.prCycleTimeHours != null) lines.push(`Average time to first PR review is about ${Math.round(incidents.prCycleTimeHours)} hours`);
+  if (incidents.deploymentsPerWeek != null) lines.push(`${incidents.deploymentsPerWeek} deployments in the last week`);
+  if (incidents.deploymentFailureRatePercent != null && incidents.deploymentFailureRatePercent > 0) {
+    lines.push(`About ${pct(incidents.deploymentFailureRatePercent)}% of recent deployments failed`);
+  }
+  return lines;
+}
 
 function CloseSurveyFormButton({surveyId,onClosed,mode}:{surveyId:string;onClosed?:()=>void;mode?:"close"|"score";}) {
   const [busy,setBusy]=useState(false);
@@ -228,7 +248,7 @@ function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
       {keys.map((k)=>(
         <div key={k} className="border border-border px-2 py-2 text-center">
           <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SUBSCORE_LABELS[k]}</div>
-          <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scores[k]}</div>
+          <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scoreInt(scores[k])}</div>
         </div>
       ))}
     </div>
@@ -524,6 +544,13 @@ const SUBSCORE_LABELS: Record<string,string> = {
   delivery:"Delivery", codeQuality:"Code Quality", cicd:"CI/CD", teamHealth:"Team Health", blockers:"Blockers",
 };
 
+function scoreInt(n: number): number {
+  return Math.round(Number.isFinite(n) ? n : 0);
+}
+function trendLabel(n: number): string {
+  const v = Math.round(n * 10) / 10;
+  return `${v > 0 ? "+" : ""}${v}`;
+}
 function hColor(s: number) {
   if (s >= 80) return "var(--health-good)";
   if (s >= 60) return "var(--health-warn)";
@@ -558,7 +585,7 @@ function Ring({ score, size=48 }: {score:number;size?:number}) {
         strokeDasharray={`${fill} ${circ-fill}`} strokeLinecap="round" transform={`rotate(-90 ${cx} ${cy})`}/>
       <text x={cx} y={cy+4} textAnchor="middle"
         style={{fontFamily:"var(--font-mono)", fontSize:size*0.27, fontWeight:600, fill:hColor(score)}}>
-        {score}
+        {scoreInt(score)}
       </text>
     </svg>
   );
@@ -1384,7 +1411,12 @@ function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;label:s
 function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onNavigate:(s:Screen)=>void;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
   const [reviewOpen,setReviewOpen]=useState(false);
-  const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:project.subscores[k]}));
+  const [provenanceFocus,setProvenanceFocus]=useState<"overall"|HealthCategoryKey|null>(null);
+  const openProvenance=(focus:"overall"|HealthCategoryKey)=>{
+    if(!project.backendProjectId) return;
+    setProvenanceFocus(focus);
+  };
+  const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(project.subscores[k])}));
   const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
   const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
@@ -1411,27 +1443,34 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
         {/* Score + Radar */}
         <div className="grid grid-cols-[290px_1fr] gap-6">
           <div className="bg-card border border-border p-6">
-            <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score</div>
-            <div className="flex items-end gap-4 mb-5">
-              <span className="text-8xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{project.score}</span>
+            <div className="flex items-center justify-between mb-4">
+              <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Health Score</div>
+              {project.backendProjectId&&(
+                <button type="button" onClick={()=>openProvenance("overall")} className="text-xs font-semibold text-primary hover:underline">
+                  Why this score
+                </button>
+              )}
+            </div>
+            <button type="button" onClick={()=>openProvenance("overall")} className="flex items-end gap-4 mb-5 text-left" title="Inspect how this score was blended">
+              <span className="text-8xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{scoreInt(project.score)}</span>
               <div className="mb-2 flex flex-col gap-1.5">
                 <TrendIcon t={project.scoreTrend} sz={18}/>
                 <span className={`text-xl font-bold tabular-nums ${project.scoreTrend>0?"text-emerald-500":project.scoreTrend<0?"text-red-500":"text-muted-foreground"}`} style={{fontFamily:"var(--font-mono)"}}>
-                  {project.scoreTrend>0?"+":""}{project.scoreTrend}
+                  {trendLabel(project.scoreTrend)}
                 </span>
               </div>
-            </div>
+            </button>
             <Spark data={project.sparkline} color={hColor(project.score)} w={210} h={48}/>
             {/* Always-visible breakdown */}
             <div className="mt-5 pt-5 border-t border-border space-y-3">
               {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>(
-                <div key={k} className="flex items-center justify-between">
+                <button type="button" key={k} onClick={()=>openProvenance(k)} className="flex items-center justify-between w-full text-left hover:bg-muted/40 -mx-1 px-1 py-0.5">
                   <span className="text-[15px] text-foreground/80">{SUBSCORE_LABELS[k]}</span>
                   <div className="flex items-center gap-3">
-                    <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${project.subscores[k]}%`,backgroundColor:hColor(project.subscores[k])}}/></div>
-                    <span className={`text-[15px] font-bold tabular-nums w-6 text-right ${hClass(project.subscores[k])}`} style={{fontFamily:"var(--font-mono)"}}>{project.subscores[k]}</span>
+                    <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${Math.min(100, Math.max(0, scoreInt(project.subscores[k])))}%`,backgroundColor:hColor(project.subscores[k])}}/></div>
+                    <span className={`text-[15px] font-bold tabular-nums w-8 text-right ${hClass(project.subscores[k])}`} style={{fontFamily:"var(--font-mono)"}}>{scoreInt(project.subscores[k])}</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -1454,16 +1493,16 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
           <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
           <div className="grid grid-cols-5 gap-3">
             {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>{
-              const val = project.subscores[k];
+              const val = scoreInt(project.subscores[k]);
               const series = project.subscoreSeries[k] ?? [];
               const strokeColor = hColor(val);
               const gradId = `ss-${project.id}-${k}`;
-              const last = series[series.length-1]?.v ?? val;
-              const prev = series[series.length-2]?.v ?? last;
+              const last = scoreInt(series[series.length-1]?.v ?? val);
+              const prev = scoreInt(series[series.length-2]?.v ?? last);
               const delta = last - prev;
               const trendGood = delta >= 0; // higher = better for all subscores
-              const minV = series.length?Math.min(...series.map(d=>d.v)):val;
-              const maxV = series.length?Math.max(...series.map(d=>d.v)):val;
+              const minV = scoreInt(series.length?Math.min(...series.map(d=>d.v)):val);
+              const maxV = scoreInt(series.length?Math.max(...series.map(d=>d.v)):val);
               const SUBSCORE_ICONS: Record<string, React.ReactNode> = {
                 delivery: <Rocket size={13}/>,
                 codeQuality: <ShieldCheck size={13}/>,
@@ -1472,7 +1511,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                 blockers: <AlertTriangle size={13}/>,
               };
               return (
-                <div key={k} className="bg-card border border-border p-4 flex flex-col">
+                <button type="button" key={k} onClick={()=>openProvenance(k)} className="bg-card border border-border p-4 flex flex-col text-left hover:border-primary/50 transition-colors">
                   {/* label + icon */}
                   <div className="flex items-center gap-1.5 mb-3">
                     <span style={{color:strokeColor}}>{SUBSCORE_ICONS[k]}</span>
@@ -1482,7 +1521,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                   <div className="flex items-baseline gap-1.5 mb-1">
                     <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:strokeColor}}>{val}</span>
                     <span className="text-xs font-semibold" style={{color:trendGood?"var(--health-good)":"var(--health-crit)"}}>
-                      {delta>0?"+":""}{delta}
+                      {trendLabel(delta)}
                     </span>
                   </div>
                   {/* min/max range */}
@@ -1517,7 +1556,7 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -1639,6 +1678,16 @@ function Dashboard({project,actions,surveys,onNavigate,onSyncComplete}:{project:
 
       <AnimatePresence>
         {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+      </AnimatePresence>
+      <AnimatePresence>
+        {provenanceFocus&&project.backendProjectId&&(
+          <ScoreProvenancePanel
+            key="provenance"
+            projectId={project.backendProjectId}
+            focus={provenanceFocus}
+            onClose={()=>setProvenanceFocus(null)}
+          />
+        )}
       </AnimatePresence>
       <AnimatePresence>
         {reviewOpen&&(
@@ -2102,7 +2151,12 @@ function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
                 Captured {fmtDate(health.capturedAt)} · Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
                 {health.trendDelta==null?"":` · Trend ${health.trendDelta>0?"+":""}${health.trendDelta.toFixed(1)}`}
               </p>
-              <p className="text-xs text-muted-foreground mt-2">Gemini uses this snapshot to focus questions, but scores responses independently.</p>
+              {surveyIncidentLines(health).length>0&&(
+                <ul className="mt-3 space-y-1 text-sm text-foreground">
+                  {surveyIncidentLines(health).map(line=><li key={line}>· {line}</li>)}
+                </ul>
+              )}
+              <p className="text-xs text-muted-foreground mt-2">Gemini uses this snapshot and these incidents to focus questions, but scores responses independently.</p>
             </div>
           )}
           {error&&<div className="border border-red-400/50 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-600">{error}</div>}
@@ -3245,10 +3299,10 @@ export default function App() {
       if(p.id!==projectId) return p;
       const subscores={...p.subscores};
       if(riskScores){
-        if(typeof riskScores.DELIVERY==="number") subscores.delivery=riskScores.DELIVERY;
-        if(typeof riskScores.CODE_QUALITY==="number") subscores.codeQuality=riskScores.CODE_QUALITY;
-        if(typeof riskScores.CICD_RELIABILITY==="number") subscores.cicd=riskScores.CICD_RELIABILITY;
-        if(typeof riskScores.TEAM_HEALTH==="number") subscores.teamHealth=riskScores.TEAM_HEALTH;
+        if(typeof riskScores.DELIVERY==="number") subscores.delivery=Math.round(riskScores.DELIVERY);
+        if(typeof riskScores.CODE_QUALITY==="number") subscores.codeQuality=Math.round(riskScores.CODE_QUALITY);
+        if(typeof riskScores.CICD_RELIABILITY==="number") subscores.cicd=Math.round(riskScores.CICD_RELIABILITY);
+        if(typeof riskScores.TEAM_HEALTH==="number") subscores.teamHealth=Math.round(riskScores.TEAM_HEALTH);
       }
       if(typeof riskScore!=="number") return {...p,subscores};
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};

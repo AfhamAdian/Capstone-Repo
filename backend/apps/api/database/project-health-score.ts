@@ -1,5 +1,6 @@
 import { assertSupabaseClient } from '../config/supabase.js';
 import type { SurveyHealthContext } from '@libs/ai/index.js';
+import { getIncidentSignalsForSnapshot, getLatestIncidentSignals } from './incident-signals.js';
 
 export interface SaveProjectHealthScoreInput {
   projectId: number;
@@ -94,14 +95,19 @@ export async function captureSurveyHealthContext(projectId: number): Promise<Sur
   const latest = history.at(-1);
   const previous = history.at(-2);
 
+  const incidents = latest?.project_snapshot_id
+    ? await getIncidentSignalsForSnapshot(latest.project_snapshot_id)
+    : await getLatestIncidentSignals(projectId);
+
   if (!latest) {
     return {
       capturedAt: new Date().toISOString(),
       overallScore: null,
       scores: { delivery: null, codeQuality: null, cicd: null, teamHealth: null, blockers: null },
       trendDelta: null,
-      metricsSnapshotId: null,
+      metricsSnapshotId: incidents.snapshotId,
       source: 'unavailable',
+      incidents,
     };
   }
 
@@ -121,5 +127,6 @@ export async function captureSurveyHealthContext(projectId: number): Promise<Sur
         : null,
     metricsSnapshotId: latest.project_snapshot_id,
     source: 'project_health_score',
+    incidents,
   };
 }

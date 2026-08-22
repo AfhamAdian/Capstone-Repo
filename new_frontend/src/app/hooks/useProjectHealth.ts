@@ -107,11 +107,19 @@ export function mapHealthToProject(health: ProjectHealth, slug: string): Backend
     description: health.description || "",
     status: "active",
     tracked: true,
-    score: health.hasData && health.score !== null ? health.score : 0,
-    scoreTrend: health.hasData ? health.scoreTrend : 0,
+    score: health.hasData && health.score !== null ? Math.round(health.score) : 0,
+    scoreTrend: health.hasData ? Math.round(health.scoreTrend * 10) / 10 : 0,
     sparkline: health.hasData ? health.sparkline : [],
     timeSeries: health.hasData ? health.timeSeries : [],
-    subscores: health.hasData && health.subscores ? health.subscores : EMPTY_SUBSCORES,
+    subscores: health.hasData && health.subscores
+      ? {
+          delivery: Math.round(health.subscores.delivery),
+          codeQuality: Math.round(health.subscores.codeQuality),
+          cicd: Math.round(health.subscores.cicd),
+          teamHealth: Math.round(health.subscores.teamHealth),
+          blockers: Math.round(health.subscores.blockers),
+        }
+      : EMPTY_SUBSCORES,
     subscoreSeries: health.hasData ? health.subscoreSeries : EMPTY_SUBSCORE_SERIES,
     metrics: health.hasMetrics && health.metrics
       ? {

@@ -49,6 +49,22 @@ export interface SurveyHealthContext {
   scores: Record<"delivery" | "codeQuality" | "cicd" | "teamHealth" | "blockers", number | null>;
   trendDelta: number | null;
   source: "project_health_score" | "unavailable";
+  incidents?: {
+    snapshotId: number | null;
+    snapshotTime: string | null;
+    spilloverRatio: number | null;
+    consecutiveSpilloverCount: number | null;
+    blockedItemsCount: number | null;
+    overdueItemsCount: number | null;
+    scopeChurnRatio: number | null;
+    midSprintAdditions: number | null;
+    deploymentsPerWeek: number | null;
+    deploymentFailureRatePercent: number | null;
+    pipelineSuccessRatePercent: number | null;
+    stalePrCount: number | null;
+    prCycleTimeHours: number | null;
+    commitsPerWeek: number | null;
+  } | null;
 }
 
 export interface SurveyDetail extends SurveyListItem {
