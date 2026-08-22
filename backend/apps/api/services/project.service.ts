@@ -521,8 +521,14 @@ function buildProjectHealth(
   };
 }
 
-export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
-  const projects = await dbListAllProjects();
+export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[]> {
+  // Company-scoped feed; members are further narrowed to projects they belong to (mirrors listProjects).
+  const allowed =
+    auth.role === 'admin'
+      ? await listProjectsByCompany(auth.companyId)
+      : await listProjectsForMember(auth.companyId, auth.userId);
+  const allowedIds = new Set(allowed.map((p) => p.id));
+  const projects = (await dbListAllProjects(auth.companyId)).filter((p) => allowedIds.has(p.id));
   return Promise.all(
     projects.map(async (project) => {
       const [history, opsHistory] = await Promise.all([
@@ -534,9 +540,10 @@ export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
   );
 }
 
-export async function getProjectHealth(projectId: number): Promise<ProjectHealth | null> {
+export async function getProjectHealth(auth: Auth, projectId: number): Promise<ProjectHealth | null> {
   const project = await dbGetProjectRow(projectId);
-  if (!project) return null;
+  // Don't leak other companies' projects — treat cross-company as not found.
+  if (!project || project.companyId !== auth.companyId) return null;
   const [history, opsHistory] = await Promise.all([
     listProjectHealthScoreHistory(projectId),
     listProjectOpsMetricsHistory(projectId),

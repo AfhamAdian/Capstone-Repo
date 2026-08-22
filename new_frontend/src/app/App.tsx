@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect, useCallback, type MouseEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
-import { pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
+import { paths, pathFromScreen, screenFromPath, type AppScreen } from "./app-paths";
 import {
   TrendingUp, TrendingDown, Minus, Search, Plus, Moon, Sun,
   BarChart2, Activity, AlertTriangle, Users,
@@ -15,8 +15,8 @@ import {
   Brush, XAxis, YAxis, ComposedChart, CartesianGrid, ReferenceLine
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { useWorkspace } from "./context/WorkspaceContext";
-import type { SyncRiskKey } from "./api";
+import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
+import { listProjects, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveySettings } from "./hooks/useProjectSurveySettings";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
@@ -36,9 +36,11 @@ import { ProjectsView } from "./pages/ProjectsView";
 import { AddProjectView } from "./pages/AddProjectView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
 import { CreateWorkspaceView } from "./pages/CreateWorkspaceView";
+import { VcsWorkspaceView } from "./pages/VcsWorkspaceView";
 import { DashboardSyncBar } from "./components/DashboardSyncBar";
 import { ScoreProvenancePanel } from "./components/ScoreProvenancePanel";
 import type { HealthCategoryKey } from "./api-project";
+import { useDashboardSync } from "./hooks/useDashboardSync";
 
 // ─── TYPES ─────────────────────────────────────────────────────────────────
 
@@ -1112,26 +1114,33 @@ function ProjectPageSkeleton() {
 
 // ─── PORTFOLIO ───────────────────────────────────────────────────────────────
 
-function SyncBtn() {
-  const [spin,setSpin]=useState(false);
+function SyncBtn({project,onSyncComplete}:{
+  project:Project;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
+}) {
+  const backendProjectId=project.backendProjectId;
+  const {active,start}=useDashboardSync(project,onSyncComplete);
   return (
     <button
-      onClick={e=>{e.stopPropagation();setSpin(true);setTimeout(()=>setSpin(false),1400);}}
-      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors ${spin?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}
-      title="Sync data">
-      <RefreshCw size={13} className={spin?"animate-spin":""}/>
-      <span style={{fontFamily:"var(--font-display)"}}>{spin?"Syncing…":"Sync"}</span>
+      onClick={e=>{e.stopPropagation();start();}}
+      disabled={active||!backendProjectId}
+      title={backendProjectId?"Sync data":"This project isn't linked to a backend project yet"}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${active?"border-primary text-primary bg-primary/5":"border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"}`}>
+      <RefreshCw size={13} className={active?"animate-spin":""}/>
+      <span style={{fontFamily:"var(--font-display)"}}>{active?"Syncing…":"Sync"}</span>
     </button>
   );
 }
 
-function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin}:{
+function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
   projects:Project[];actions:Action[];surveys:Survey[];
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
   loading?:boolean;
   onAddProject?:()=>void;isAdmin?:boolean;
+  workspaceName?:string;onBackToWorkspaces?:()=>void;
+  onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
@@ -1152,9 +1161,19 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
         {/* ── Header ── */}
         <div className="flex items-end justify-between mb-6 gap-4 flex-wrap">
           <div>
+            {workspaceName&&(
+              <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm text-muted-foreground mb-1">
+                <button onClick={onBackToWorkspaces} className="font-medium hover:text-foreground transition-colors">Workspaces</button>
+                <ChevronRight size={13} className="text-border"/>
+                <span className="font-semibold text-foreground">{workspaceName}</span>
+              </nav>
+            )}
             <h1 className="text-4xl font-bold uppercase tracking-tight" style={{fontFamily:"var(--font-display)"}}>Portfolio</h1>
             <p className="text-base text-muted-foreground mt-1">
-              {loading?"Loading projects from your workspace…":`${projects.length} projects · ${projects.filter(p=>p.score<60).length} need attention · ${surveys.length} total surveys`}
+              {loading?"Loading projects from your workspace…":(()=>{
+                const attention=projects.filter(p=>p.score<60).length;
+                return `${projects.length} project${projects.length!==1?"s":""} · ${attention} need${attention===1?"s":""} attention · ${surveys.length} total survey${surveys.length!==1?"s":""}`;
+              })()}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -1258,7 +1277,7 @@ function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActi
                       {p.scoreTrend>0?"+":""}{p.scoreTrend}
                     </span>
                   </div>
-                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn/></div>
+                  <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn project={p} onSyncComplete={onSyncComplete}/></div>
                 </div>
               </motion.div>
             ))}
@@ -3255,8 +3274,11 @@ function SettingsView({project}:{project:Project;}) {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 
+const VCS_PROVIDERS:VcsProvider[]=["github","gitlab","bitbucket"];
+const VCS_LABELS:Record<string,string>={github:"GitHub",gitlab:"GitLab",bitbucket:"Bitbucket"};
+
 export default function App() {
-  const {user,isAuthenticated,isAuthLoading,activeWorkspace,logout}=useWorkspace();
+  const {user,isAuthenticated,isAuthLoading,activeWorkspace,setActiveWorkspace,logout}=useWorkspace();
   const location=useLocation();
   const navigate=useNavigate();
   const parsed=useMemo(()=>screenFromPath(location.pathname),[location.pathname]);
@@ -3270,6 +3292,35 @@ export default function App() {
   const [logOpen,setLogOpen]=useState(false);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
+  // Real vcs per project (company-scoped) from our own API — used to group workspaces and filter the portfolio.
+  const [vcsById,setVcsById]=useState<Map<number,string>>(new Map());
+  useEffect(()=>{
+    if(!isAuthenticated) return;
+    listProjects()
+      .then(rows=>setVcsById(new Map(rows.filter(r=>r.vcs).map(r=>[r.id,r.vcs as string]))))
+      .catch(()=>{});
+  },[isAuthenticated]);
+  // The URL is the source of truth for the active workspace; the context value is a remembered fallback (used on project pages, which carry no vcs in the path).
+  const urlVcs=parsed.vcs;
+  const activeVcs=urlVcs ?? activeWorkspace?.vcs ?? null;
+  const isValidVcs=(v:string|null|undefined):v is VcsProvider=>v!=null&&VCS_PROVIDERS.includes(v as VcsProvider);
+  const workspaceLabel=activeVcs?(VCS_LABELS[activeVcs]??activeVcs):undefined;
+  const portfolioPath=isValidVcs(activeVcs)?paths.workspacePortfolio(activeVcs):paths.portfolio;
+  // Keep the context/localStorage preference in sync with whatever workspace the URL currently points at.
+  useEffect(()=>{
+    if(!isValidVcs(urlVcs)||activeWorkspace?.vcs===urlVcs) return;
+    setActiveWorkspace({id:`ws-${urlVcs}`,name:urlVcs,vcs:urlVcs,projectsCount:0,membersCount:0});
+  },[urlVcs,activeWorkspace,setActiveWorkspace]);
+  // Portfolio is scoped to the chosen vcs workspace (and, via our company-scoped map, the user's company).
+  const visibleProjects=useMemo(()=>
+    activeVcs
+      ? projects.filter(p=>p.backendProjectId && vcsById.get(Number(p.backendProjectId))===activeVcs)
+      : projects
+  ,[projects,activeVcs,vcsById]);
+  // Selecting a vcs workspace navigates to its portfolio URL — the route drives the rest.
+  const selectVcsWorkspace=useCallback((vcs:string)=>{
+    navigate(paths.workspacePortfolio(vcs));
+  },[navigate]);
   const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
   useEffect(()=>{
     if(projects.length===0) return;
@@ -3282,8 +3333,10 @@ export default function App() {
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const active=useMemo(()=>findProjectByPath(projects,activeId),[activeId,projects]);
   const go=useCallback((next:Screen)=>{
+    // "portfolio" is workspace-scoped, so route it to the active workspace's url rather than bare "/".
+    if(next==="portfolio"){navigate(portfolioPath);return;}
     navigate(pathFromScreen(next, active?.id ?? activeId));
-  },[navigate,active?.id,activeId]);
+  },[navigate,active?.id,activeId,portfolioPath]);
   useEffect(()=>{
     if(!active || !activeId || active.id===activeId) return;
     navigate(pathFromScreen(screen, active.id), { replace: true });
@@ -3312,7 +3365,7 @@ export default function App() {
   const pendingRatings=useMemo(()=>ACTIONS.filter(a=>a.effectiveness===null),[]);
   const [ratingOpen,setRatingOpen]=useState(false);
   const sel=(id:string)=>{navigate(pathFromScreen("dashboard", id));};
-  const home=()=>{navigate(pathFromScreen("portfolio"));};
+  const home=()=>{navigate(portfolioPath);};
   const renderContent=()=>{
     if(projectsLoading){
       if(parsed.projectId) return <ProjectPageSkeleton/>;
@@ -3323,6 +3376,7 @@ export default function App() {
         onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onSyncComplete={updateProjectRisk}
       />;
     }
     if(projectsError && projects.length===0){
@@ -3343,13 +3397,15 @@ export default function App() {
       return <GlobalSurveysView surveys={surveys} projects={projects} onBack={home} onClosed={refetchSurveys}/>;
     if(screen==="portfolio"||!active)
       return <PortfolioView
-        projects={projects} actions={ACTIONS} surveys={surveys}
+        projects={visibleProjects} actions={ACTIONS} surveys={surveys}
         onSelect={sel} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>go("global-actions")}
         onViewSurveys={()=>go("global-surveys")}
         onRatingOpen={()=>setRatingOpen(true)}
         trackedIds={trackedIds} onToggleTracked={toggleTracked}
         onAddProject={()=>go("add-project")} isAdmin={user?.role==="admin"}
+        workspaceName={workspaceLabel} onBackToWorkspaces={()=>go("workspaces")}
+        onSyncComplete={updateProjectRisk}
       />;
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={ACTIONS} surveys={surveys} onNavigate={go} onSyncComplete={updateProjectRisk}/>;
@@ -3379,25 +3435,13 @@ export default function App() {
     }
     return <LoginView onSuccess={()=>navigate("/workspaces")} onNavigateToRegister={()=>navigate("/register")} onNavigateToForgot={()=>navigate("/forgot-password")}/>;
   }
-  if(!activeWorkspace){
-    if(screen==="create-workspace"){
-      return (
-        <CreateWorkspaceView
-          onBack={()=>navigate("/workspaces")}
-          onCreated={()=>navigate("/")}
-        />
-      );
-    }
-    return (
-      <WorkspaceSelectionView
-        onSelect={()=>{if(screen==="login"||screen==="workspaces") navigate("/");}}
-        onCreateNew={()=>navigate("/workspaces/new")}
-        onLogout={()=>{logout();navigate("/login");}}
-      />
-    );
-  }
   if(screen==="login"||screen==="register"||screen==="forgot-password"||screen==="reset-password"){
-    return <Navigate to="/" replace/>;
+    return <Navigate to={portfolioPath} replace/>;
+  }
+  // Bare "/" (or an unknown workspace) resolves to the remembered workspace, else the chooser — the url stays the source of truth.
+  if(screen==="portfolio" && !isValidVcs(urlVcs)){
+    const remembered=activeWorkspace?.vcs;
+    return <Navigate to={isValidVcs(remembered)?paths.workspacePortfolio(remembered):paths.workspaces} replace/>;
   }
   if(screen==="projects"){
     return <ProjectsView onAddProject={()=>go("add-project")}/>;
@@ -3409,10 +3453,10 @@ export default function App() {
   }
   if(screen==="workspaces"){
     return (
-      <WorkspaceSelectionView
-        onSelect={()=>navigate("/")}
-        onCreateNew={()=>navigate("/workspaces/new")}
-        onLogout={()=>{logout();navigate("/login");}}
+      <VcsWorkspaceView
+        onSelect={selectVcsWorkspace}
+        onAddProject={()=>navigate("/projects/new")}
+        isAdmin={user?.role==="admin"}
       />
     );
   }

@@ -57,15 +57,12 @@ export async function getProjectHandler(request: Request, response: Response): P
   }
 }
 
-/**
- * Project + health-score dashboard feed (no auth scoping yet - matches the rest of
- * this backend, see authorization.service.ts).
- */
+/** Project + health-score dashboard feed, scoped to the caller's company. */
 
 /** GET /api/v1/projects/health */
-export async function listProjectsHealthHandler(_request: Request, response: Response): Promise<void> {
+export async function listProjectsHealthHandler(request: Request, response: Response): Promise<void> {
   try {
-    const projects = await listProjectsWithHealth();
+    const projects = await listProjectsWithHealth(request.auth!);
     response.status(200).json({ projects });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to list projects';
@@ -82,7 +79,7 @@ export async function getProjectHealthDetail(request: Request, response: Respons
   }
 
   try {
-    const health = await getProjectHealth(projectId);
+    const health = await getProjectHealth(request.auth!, projectId);
     if (!health) {
       response.status(404).json({ message: 'Project not found' });
       return;
