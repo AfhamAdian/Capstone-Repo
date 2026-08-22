@@ -98,6 +98,7 @@ export interface ApiAction {
   timestamp: string;
   effectiveness: number | null;
   loggedBy: string;
+  similarity?: number;
 }
 
 /** Raw row shape returned by the backend (snake_case). */
@@ -111,6 +112,7 @@ interface ActionRow {
   effectiveness: number | null;
   logged_by: string;
   created_at: string;
+  similarity?: number;
 }
 
 function rowToAction(row: ActionRow): ApiAction {
@@ -123,6 +125,7 @@ function rowToAction(row: ActionRow): ApiAction {
     timestamp: row.action_date,
     effectiveness: row.effectiveness,
     loggedBy: row.logged_by,
+    similarity: row.similarity,
   };
 }
 
@@ -168,12 +171,36 @@ export async function createAction(input: CreateActionInput): Promise<ApiAction>
   return rowToAction((await response.json()) as ActionRow);
 }
 
-export async function searchActions(query: string, limit = 5): Promise<ApiAction[]> {
+export interface SearchActionsOptions {
+  projectId?: string;
+  signal?: AbortSignal;
+}
+
+export type ActionSearchMode = "hybrid" | "semantic" | "lexical";
+
+export interface SearchActionsResult {
+  actions: ApiAction[];
+  mode: ActionSearchMode;
+}
+
+export async function searchActions(
+  query: string,
+  limit = 5,
+  options: SearchActionsOptions = {},
+): Promise<SearchActionsResult> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
-  const response = await fetch(`${API_BASE_URL}/actions/search?${params}`, { headers: authHeaders() });
+  if (options.projectId) params.set("projectId", options.projectId);
+  const response = await fetch(`${API_BASE_URL}/actions/search?${params}`, {
+    headers: authHeaders(),
+    signal: options.signal,
+  });
   if (!response.ok) throw await parseError(response, "Failed to search actions");
   const rows = (await response.json()) as ActionRow[];
-  return rows.map(rowToAction);
+  const modeHeader = response.headers.get("x-action-search-mode");
+  const mode: ActionSearchMode = modeHeader === "hybrid" || modeHeader === "semantic"
+    ? modeHeader
+    : "lexical";
+  return { actions: rows.map(rowToAction), mode };
 }
 
 export async function rateAction(id: string, effectiveness: number): Promise<ApiAction> {

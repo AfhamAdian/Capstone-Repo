@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { useWorkspace } from "./context/WorkspaceContext";
-import type { SyncRiskKey } from "./api";
+import type { ActionSearchMode, SyncRiskKey } from "./api";
 import { listActions, createAction, searchActions, rateAction } from "./api";
 import { LoginView } from "./pages/LoginView";
 import { WorkspaceSelectionView } from "./pages/WorkspaceSelectionView";
@@ -53,6 +53,7 @@ interface Action {
   timestamp: string;
   effectiveness: number | null;
   loggedBy: string;
+  similarity?: number;
 }
 
 interface Survey {
@@ -70,6 +71,18 @@ interface Survey {
 }
 
 type Screen = "login" | "workspaces" | "create-workspace" | "portfolio" | "global-actions" | "global-surveys" | "dashboard" | "actions-timeline" | "actions-library" | "surveys" | "settings";
+
+function actionSearchModeLabel(mode:ActionSearchMode|null):string {
+  if(mode==="hybrid")return "Hybrid semantic + keyword results";
+  if(mode==="semantic")return "Semantic similarity results";
+  if(mode==="lexical")return "Keyword fallback results";
+  return "Searching by relevance";
+}
+
+function actionSimilarityLabel(similarity:number|undefined):string|null {
+  if(similarity===undefined||!Number.isFinite(similarity))return null;
+  return `${Math.round(Math.max(0,Math.min(1,similarity))*100)}% similar`;
+}
 
 // ─── MOCK DATA ──────────────────────────────────────────────────────────────
 
@@ -512,14 +525,39 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
   const [filterProject,setFilterProject]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [ex,setEx]=useState<string|null>(null);
+  const [searchResults,setSearchResults]=useState<Action[]|null>(null);
+  const [searching,setSearching]=useState(false);
+  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
+  const [searchError,setSearchError]=useState<string|null>(null);
+
+  useEffect(()=>{
+    const query=q.trim();
+    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
+    const controller=new AbortController();
+    setSearchResults(null);
+    setSearchMode(null);
+    setSearchError(null);
+    setSearching(true);
+    const timer=setTimeout(()=>{
+      searchActions(query,50,{
+        projectId:filterProject!=="all"?filterProject:undefined,
+        signal:controller.signal,
+      })
+        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
+        .catch(error=>{if((error as Error).name!=="AbortError"){setSearchError("Search service unavailable. Showing local keyword matches.");setSearchResults(null);}})
+        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
+    },300);
+    return()=>{clearTimeout(timer);controller.abort();};
+  },[q,filterProject]);
 
   const filtered=useMemo(()=>{
-    let list=[...actions];
+    const semanticQuery=q.trim().length>=3;
+    let list=[...(semanticQuery&&!searchError?(searchResults??[]):actions)];
     if(filterProject!=="all") list=list.filter(a=>a.projectIds.includes(filterProject));
-    if(q){const lq=q.toLowerCase();list=list.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));}
-    list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
+    if(q&&(!semanticQuery||searchError)){const lq=q.toLowerCase();list=list.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));}
+    if(!semanticQuery||searchError)list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
     return list;
-  },[actions,q,filterProject,sortOrder]);
+  },[actions,searchResults,searchError,q,filterProject,sortOrder]);
 
   const COL="minmax(0,2.5fr) 150px 130px 90px 36px";
 
@@ -547,8 +585,9 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
         <div className="flex items-center gap-3 mb-5 flex-wrap">
           <div className="flex items-center gap-2 bg-card border border-border px-3 py-2.5 flex-1 max-w-sm">
             <Search size={14} className="text-muted-foreground"/>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions…"
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by meaning…"
               className="bg-transparent text-sm outline-none flex-1 placeholder:text-muted-foreground"/>
+            {searching&&<RefreshCw size={13} className="text-primary animate-spin"/>}
             {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
           </div>
           <select value={filterProject} onChange={e=>setFilterProject(e.target.value)}
@@ -556,16 +595,24 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
             <option value="all">All Projects</option>
             {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
-          <div className="flex border border-border">
-            {(["newest","oldest"] as const).map(o=>(
-              <button key={o} onClick={()=>setSortOrder(o)}
-                className={`px-3 py-2.5 text-sm font-semibold capitalize transition-colors ${sortOrder===o?"bg-foreground text-background":"text-muted-foreground hover:text-foreground"}`}
-                style={{fontFamily:"var(--font-display)"}}>
-                {o}
-              </button>
-            ))}
-          </div>
+          {q.trim().length>=3?(
+            <div className="border border-border bg-card px-3 py-2.5 text-sm font-semibold text-primary" style={{fontFamily:"var(--font-display)"}}>
+              {searching?"Searching…":searchError?"Local keyword results":actionSearchModeLabel(searchMode)}
+            </div>
+          ):(
+            <div className="flex border border-border">
+              {(["newest","oldest"] as const).map(o=>(
+                <button key={o} onClick={()=>setSortOrder(o)}
+                  className={`px-3 py-2.5 text-sm font-semibold capitalize transition-colors ${sortOrder===o?"bg-foreground text-background":"text-muted-foreground hover:text-foreground"}`}
+                  style={{fontFamily:"var(--font-display)"}}>
+                  {o}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
+
+        {searchError&&q.trim().length>=3&&<div className="mb-4 flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={14}/>{searchError}</div>}
 
         <div className="border border-border bg-card">
           <div className="grid px-5 py-3 border-b border-border bg-muted" style={{gridTemplateColumns:COL}}>
@@ -579,7 +626,7 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
                   className="w-full grid px-5 py-4 border-b border-border hover:bg-muted/40 transition-colors text-left items-center"
                   style={{gridTemplateColumns:COL}}>
                   <div>
-                    <div className="text-[15px] font-medium text-foreground leading-snug">{a.problem}</div>
+                    <div className="flex items-start gap-2"><div className="text-[15px] font-medium text-foreground leading-snug">{a.problem}</div>{actionSimilarityLabel(a.similarity)&&<span className="shrink-0 bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">{actionSimilarityLabel(a.similarity)}</span>}</div>
                     <div className="text-sm text-muted-foreground mt-0.5">{a.loggedBy}</div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -605,7 +652,7 @@ function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
               </div>
             );
           })}
-          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No actions match your filter.</div>}
+          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Searching action history…":"No actions match your filter."}</div>}
         </div>
       </div>
     </div>
@@ -1450,9 +1497,35 @@ function fmtDate(d:string){
   return dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 }
 
-function ActionsLibrary({actions}:{actions:Action[];}) {
+function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:string;}) {
   const [q,setQ]=useState(""), [ex,setEx]=useState<string|null>(null);
-  const filtered=useMemo(()=>{if(!q)return actions;const lq=q.toLowerCase();return actions.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));},[actions,q]);
+  const [searchResults,setSearchResults]=useState<Action[]|null>(null);
+  const [searching,setSearching]=useState(false);
+  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
+  const [searchError,setSearchError]=useState<string|null>(null);
+  useEffect(()=>{
+    const query=q.trim();
+    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
+    const controller=new AbortController();
+    setSearchResults(null);
+    setSearchMode(null);
+    setSearchError(null);
+    setSearching(true);
+    const timer=setTimeout(()=>{
+      searchActions(query,50,{projectId,signal:controller.signal})
+        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
+        .catch(error=>{if((error as Error).name!=="AbortError"){setSearchError("Search service unavailable. Showing local keyword matches.");setSearchResults(null);}})
+        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
+    },300);
+    return()=>{clearTimeout(timer);controller.abort();};
+  },[q,projectId]);
+  const filtered=useMemo(()=>{
+    const base=actions.filter(a=>!projectId||a.projectIds.includes(projectId));
+    if(q.trim().length>=3&&!searchError)return searchResults??[];
+    if(!q)return base;
+    const lq=q.toLowerCase();
+    return base.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));
+  },[actions,searchResults,searchError,q,projectId]);
   const COL="minmax(0,3fr) 140px 120px 90px";
   return (
     <div className="flex-1 overflow-y-auto bg-background">
@@ -1463,10 +1536,14 @@ function ActionsLibrary({actions}:{actions:Action[];}) {
         </div>
         <div className="flex items-center gap-2 bg-card border border-border px-4 py-3.5 mb-6">
           <Search size={16} className="text-muted-foreground shrink-0"/>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search across all actions…"
+          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search action history by meaning…"
             className="flex-1 text-[15px] bg-transparent outline-none placeholder:text-muted-foreground"/>
+          {searching&&<RefreshCw size={14} className="text-primary animate-spin"/>}
           {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={15}/></button>}
         </div>
+        {q.trim().length>=3&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
+          {searchError?<AlertCircle size={14}/>:<Search size={14}/>} {searchError??actionSearchModeLabel(searchMode)}
+        </div>}
         <div className="border border-border bg-card">
           <div className="grid px-5 py-3 border-b border-border bg-muted" style={{gridTemplateColumns:COL}}>
             {["Problem","Logged By","Date","Rating"].map(h=><div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>)}
@@ -1476,7 +1553,7 @@ function ActionsLibrary({actions}:{actions:Action[];}) {
               <button onClick={()=>setEx(ex===a.id?null:a.id)}
                 className="w-full grid px-5 py-4 border-b border-border hover:bg-muted/40 transition-colors text-left items-center"
                 style={{gridTemplateColumns:COL}}>
-                <div className="text-[15px] font-medium text-foreground pr-5 leading-snug">{a.problem}</div>
+                <div className="pr-5"><div className="text-[15px] font-medium text-foreground leading-snug">{a.problem}</div>{actionSimilarityLabel(a.similarity)&&<div className="mt-1 text-xs font-semibold text-primary">{actionSimilarityLabel(a.similarity)}</div>}</div>
                 <div className="text-[15px] text-foreground/80">{a.loggedBy}</div>
                 <div className="text-sm font-medium text-foreground/70 bg-muted px-2 py-1 w-fit" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</div>
                 <div className="flex gap-0.5 items-center">{a.effectiveness!==null?Array.from({length:5}).map((_,i)=><Star key={i} size={12} className={i<a.effectiveness!?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>):<span className="text-sm text-muted-foreground">—</span>}</div>
@@ -1493,7 +1570,7 @@ function ActionsLibrary({actions}:{actions:Action[];}) {
               </AnimatePresence>
             </div>
           ))}
-          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No actions match your search.</div>}
+          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Searching action history…":"No actions match your search."}</div>}
         </div>
       </div>
     </div>
@@ -1515,17 +1592,31 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
   const [submitting,setSubmitting]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [similar,setSimilar]=useState<Action[]>([]);
+  const [similarSearching,setSimilarSearching]=useState(false);
+  const [similarMode,setSimilarMode]=useState<ActionSearchMode|null>(null);
+  const [similarError,setSimilarError]=useState(false);
   const dRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{const h=(e:MouseEvent)=>{if(dRef.current&&!dRef.current.contains(e.target as Node))setDropOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
   // Debounced similar-past-problems search — surfaces matches as the user types
   useEffect(()=>{
     const query=problem.trim();
-    if(query.length<4){setSimilar([]);return;}
+    if(query.length<4){setSimilar([]);setSimilarSearching(false);setSimilarMode(null);setSimilarError(false);return;}
+    const controller=new AbortController();
+    setSimilar([]);
+    setSimilarSearching(true);
+    setSimilarMode(null);
+    setSimilarError(false);
     const t=setTimeout(()=>{
-      searchActions(query,5).then(rows=>setSimilar(rows)).catch(()=>setSimilar([]));
+      searchActions(query,5,{
+        projectId:sel.length===1?sel[0]:undefined,
+        signal:controller.signal,
+      })
+        .then(result=>{if(!controller.signal.aborted){setSimilar(result.actions);setSimilarMode(result.mode);}})
+        .catch(error=>{if((error as Error).name!=="AbortError"){setSimilar([]);setSimilarError(true);}})
+        .finally(()=>{if(!controller.signal.aborted)setSimilarSearching(false);});
     },400);
-    return()=>clearTimeout(t);
-  },[problem]);
+    return()=>{clearTimeout(t);controller.abort();};
+  },[problem,sel]);
   const toggle=(id:string)=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const canSubmit=sel.length>0&&problem.trim().length>0&&reason.trim().length>0&&actionTaken.trim().length>0;
   const submit=async()=>{
@@ -1667,7 +1758,7 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
           <div className="px-5 py-4 border-b border-border">
             <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Similar Past Problems</div>
             <div className="text-sm text-muted-foreground mt-0.5">
-              {similar.length>0?`${similar.length} match${similar.length>1?"es":""} found`:"Type above to search"}
+              {problem.trim().length<4?"Type above to search":similarSearching?"Searching history…":similarError?"Search unavailable":similar.length>0?`${similar.length} match${similar.length>1?"es":""} · ${actionSearchModeLabel(similarMode)}`:`No matches · ${actionSearchModeLabel(similarMode)}`}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
@@ -1675,7 +1766,11 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
               <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
                 {problem.trim().length<4
                   ?"Start describing the problem to find related past actions."
-                  :"No similar problems found in the library."}
+                  :similarSearching
+                    ?"Comparing this problem with past problems, causes, and actions…"
+                    :similarError
+                      ?"Past-action search is temporarily unavailable. You can still log this action."
+                      :"No similar problems found in the library."}
               </div>
             ):(
               <div className="space-y-3">
@@ -1683,7 +1778,7 @@ function LogActionModal({onClose,preId,projects,onSubmit}:{onClose:()=>void;preI
                   <div key={action.id} className="border border-border bg-card p-3.5">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="text-[13px] font-semibold text-foreground leading-snug">{action.problem}</div>
-                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5 font-mono">#{idx+1}</span>
+                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5 font-mono">{actionSimilarityLabel(action.similarity)??`#${idx+1}`}</span>
                     </div>
                     <div className="text-xs text-muted-foreground mb-2.5 leading-relaxed">{action.actionTaken}</div>
                     <div className="flex items-center justify-between">
@@ -2622,7 +2717,7 @@ export default function App() {
     const view=()=>{switch(screen){
       case"dashboard": return <Dashboard project={active} actions={actions} surveys={SURVEYS} onNavigate={setScreen} onSyncComplete={updateProjectRisk} onRateAction={handleRateAction}/>;
       case"actions-timeline": return <ActionsTimeline project={active} actions={actions}/>;
-      case"actions-library": return <ActionsLibrary actions={actions}/>;
+      case"actions-library": return <ActionsLibrary actions={actions} projectId={active.id}/>;
       case"surveys": return <SurveysView project={active} surveys={SURVEYS}/>;
       case"settings": return <SettingsView project={active}/>;
       default: return null;

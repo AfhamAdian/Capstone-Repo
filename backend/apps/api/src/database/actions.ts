@@ -18,6 +18,10 @@ export type ActionRow = {
   created_at: string;
 };
 
+export type ActionSearchRow = ActionRow & {
+  similarity?: number;
+};
+
 export type InsertActionInput = {
   projectIds: string[];
   problem: string;
@@ -39,6 +43,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // PostgREST "no rows returned" error code for .single()
 const NO_ROWS_CODE = 'PGRST116';
+const ACTION_COLUMNS = 'id,project_ids,problem,reason,action_taken,action_date,effectiveness,logged_by,created_at';
+
+export function sanitizeActionSearchQuery(q: string): string {
+  return q.replace(/[%_,"()\\]/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
 export async function insertAction(input: InsertActionInput): Promise<ActionRow> {
   const client = assertSupabaseClient();
@@ -55,7 +64,7 @@ export async function insertAction(input: InsertActionInput): Promise<ActionRow>
         logged_by: input.loggedBy,
       },
     ])
-    .select()
+    .select(ACTION_COLUMNS)
     .single();
 
   if (error || !data) {
@@ -70,7 +79,7 @@ export async function listActions(filters: ListActionsFilters = {}): Promise<Act
 
   let query = client
     .from('actions')
-    .select('*')
+    .select(ACTION_COLUMNS)
     .order('action_date', { ascending: false });
 
   if (filters.projectId) {
@@ -109,7 +118,7 @@ export async function getActionById(id: string): Promise<ActionRow | null> {
 
   const { data, error } = await client
     .from('actions')
-    .select('*')
+    .select(ACTION_COLUMNS)
     .eq('id', id)
     .single();
 
@@ -123,19 +132,25 @@ export async function getActionById(id: string): Promise<ActionRow | null> {
   return data as ActionRow;
 }
 
-export async function searchActions(q: string, limit: number): Promise<ActionRow[]> {
+export async function searchActions(q: string, limit: number, projectId?: string): Promise<ActionRow[]> {
   const client = assertSupabaseClient();
 
   // Strip characters that would break the PostgREST .or() filter string
-  const sanitized = q.replace(/[%_,"()\\]/g, ' ').trim();
+  const sanitized = sanitizeActionSearchQuery(q);
+  if (!sanitized) return [];
   const pattern = `%${sanitized}%`;
 
-  const { data, error } = await client
+  let query = client
     .from('actions')
-    .select('*')
+    .select(ACTION_COLUMNS)
     .or(`problem.ilike.${pattern},reason.ilike.${pattern},action_taken.ilike.${pattern}`)
-    .order('action_date', { ascending: false })
-    .limit(limit);
+    .order('action_date', { ascending: false });
+
+  if (projectId) {
+    query = query.contains('project_ids', [projectId]);
+  }
+
+  const { data, error } = await query.limit(limit);
 
   if (error) {
     throw new Error(`Failed to search actions: ${error.message}`);
@@ -155,7 +170,7 @@ export async function updateActionEffectiveness(id: string, rating: number): Pro
     .from('actions')
     .update({ effectiveness: rating })
     .eq('id', id)
-    .select()
+    .select(ACTION_COLUMNS)
     .single();
 
   if (error) {

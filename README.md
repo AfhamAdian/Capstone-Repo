@@ -61,6 +61,11 @@ Set the following variables in `backend/.env` to enable Supabase database connec
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+Semantic action search uses SiliconFlow's OpenAI-compatible embedding endpoint and
+falls back to PostgreSQL lexical search when it is not configured. Set
+`SILICONFLOW_API_KEY`; endpoint, model, dimension, threshold, and embedding-version
+defaults are documented in `backend/.env.example`.
+
 After configuring them, hit `GET /api/v1/health` to verify status under `services.supabase`.
 
 The backend now supports shared imports from `@libs/...` instead of long relative paths.

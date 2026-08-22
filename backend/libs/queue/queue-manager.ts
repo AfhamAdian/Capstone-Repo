@@ -3,7 +3,7 @@
  * Manages async job queueing and processing
  */
 
-import { Queue, Worker } from 'bullmq';
+import { Job, Queue, Worker } from 'bullmq';
 import type { SupportedTool } from '@libs/sync/index.js';
 
 interface ToolIntegration {
@@ -72,7 +72,7 @@ export class QueueManager {
    * Create a worker to process sync jobs
    * Worker will be instantiated in the separate worker process
    */
-  createWorker(processor: (jobData: SyncJobData) => Promise<void>): Worker<SyncJobData> {
+  createWorker(processor: (job: Job<SyncJobData>) => Promise<void>): Worker<SyncJobData> {
     return new Worker<SyncJobData>('sync', processor, {
       connection: {
         url: this.config.redisUrl,
@@ -89,7 +89,7 @@ export class QueueManager {
       const job = await this.queue.getJob(jobId);
       return job ? {
         id: job.id,
-        progress: job.progress(),
+        progress: job.progress,
         state: await job.getState(),
         attemptsMade: job.attemptsMade,
         data: job.data,

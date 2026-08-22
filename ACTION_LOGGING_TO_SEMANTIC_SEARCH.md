@@ -1,330 +1,145 @@
 # Action Logging to Semantic Action Search
 
-Audit date: **2026-08-22**  
-Scope: current repository implementation, current live Supabase schema, and the planned SignalFlow + Supabase Postgres/pgvector implementation.
+Last verified: **2026-08-22**
 
-## Executive summary
+This is the current implementation and operations reference for management-action
+logging, embedding, and semantic search. The provider name used here is
+**SiliconFlow** (“Silicon Flow”); the earlier “SignalFlow” spelling referred to
+SiliconFlow.
 
-The repository already has a functioning management-action data path in `new_frontend`:
+## Current status
 
-1. A Manager enters a problem, root cause, action taken, affected projects, and date.
-2. The frontend sends the record to the Express API.
-3. The API validates it and inserts it into the live Supabase `public.actions` table.
-4. Actions are fetched back into application state and displayed in portfolio, project, timeline, library, and effectiveness-review views.
-5. An Executive can rate effectiveness from 1 to 5.
-6. While the user types a new problem, the modal calls an endpoint intended for similar-action search.
+The end-to-end code path is implemented:
 
-The search contract and UI hook exist, but the search is **not semantic yet**. The backend currently performs case-insensitive substring matching (`ILIKE`) over `problem`, `reason`, and `action_taken`, then orders matches by action date. There is no embedding provider, vector column/table, vector index, similarity RPC, query embedding, relevance score, or backfill process.
+- An action is stored first, so logging does not depend on the embedding provider.
+- Its canonical text is recorded as a pending, versioned embedding task.
+- BullMQ and Redis deliver that task to the worker.
+- The worker calls SiliconFlow's OpenAI-compatible embeddings endpoint.
+- The vector is stored in Supabase Postgres using pgvector.
+- Search embeds the query, retrieves cosine matches, and fuses them with lexical
+  matches using reciprocal-rank fusion (RRF).
+- If SiliconFlow, Redis, or the vector path is unavailable, action logging still
+  works and search automatically uses lexical matching.
+- The Log Action modal, global Actions page, and project Actions Library all use
+  the server search endpoint.
 
-The live Supabase database was inspected read-only during this audit. It currently has 9 action rows, no `vector` extension, no action-related database function, no RLS on `public.actions`, and broad table grants including `anon`. Security and tenant isolation should be fixed before exposing semantic search beyond a local/demo environment.
+The pgvector migration has been applied to the currently configured Supabase
+database. The live database currently has pgvector **0.8.0**, the
+`action_embeddings` table, and both required RPC functions. It currently has
+**zero ready vectors**. One pre-existing action has a failed row under the former
+BGE embedding version; it was preserved and will be superseded by the Qwen version
+when a successful backfill can run.
 
-The recommended target is:
+Authentication and role-based code were explicitly excluded. No authentication
+middleware, role levels, route role gates, login behavior, role-based UI behavior,
+or `authHeaders()` behavior was changed.
 
-- SignalFlow behind a small provider-neutral embedding interface.
-- A separate `public.action_embeddings` table, not an embedding column on `actions`.
-- Asynchronous document embedding through a dedicated BullMQ queue/worker.
-- Synchronous query embedding in the search request.
-- A Supabase Postgres RPC that applies project/tenant filters before cosine ranking.
-- Lexical fallback if SignalFlow or the vector path is unavailable.
-- Eventually, hybrid lexical + semantic ranking rather than vector-only search.
+## Free-only provider policy
 
-## Terminology and repository boundaries
+This implementation uses only SiliconFlow for embeddings. It does not import the
+OpenAI SDK, call OpenAI, or fall back to any paid embedding provider.
 
-“Action” has two unrelated meanings in this repository:
+Defaults:
 
-- **Management actions** are the subject of this document: a logged response to a project problem.
-- **GitHub Actions** files under `backend/libs/connectors/cicd/GithubActionsConnector/` collect CI/CD metrics. They are not part of management-action logging or semantic search.
+| Setting | Default |
+|---|---|
+| Endpoint | `https://api.siliconflow.com/v1/embeddings` |
+| Model | `Qwen/Qwen3-Embedding-0.6B` |
+| Dimensions | `1024` |
+| Version | `siliconflow-qwen3-embedding-0.6b-1024-v1` |
 
-There are also two frontend implementations:
+The live SiliconFlow model endpoint for the configured account exposes
+`Qwen/Qwen3-Embedding-0.6B`, and a real request returned a 1,024-dimensional vector.
+SiliconFlow controls model availability and may change its free-credit policy.
+The application itself cannot guarantee unlimited free hosted inference; it
+guarantees that it will not silently switch to a paid provider. Confirm that the
+model is marked free in the account before backfilling, and use the account's
+spending controls.
 
-- `new_frontend/` is the implementation connected to the management actions API and live Supabase data.
-- `frontend-react/` has a separate mock-only `ActionCenter.tsx`. Its action/historical-action data stays in React state, its matching is a small string heuristic, and it does not call the management actions API.
+Official references:
 
-Unless the application is intentionally keeping two products, `new_frontend` should be treated as the source of truth and the older Action Center should be retired or migrated.
+- [SiliconFlow Create Embeddings API](https://docs.siliconflow.com/en/api-reference/embeddings/create-embeddings)
+- [SiliconFlow model list](https://docs.siliconflow.com/quickstart/models)
+- [SiliconFlow pricing and spending limits](https://www.siliconflow.com/pricing)
+- [Supabase semantic search](https://supabase.com/docs/guides/ai/semantic-search)
+- [pgvector](https://github.com/pgvector/pgvector)
 
-## Relevant file map
+## Repository scope
 
-| Area | File | Current responsibility |
+“Action” means a management response to a project problem. The GitHub Actions
+connector under `backend/libs/connectors/cicd/` is unrelated.
+
+`new_frontend/` is connected to the live actions API. The older
+`frontend-react/src/app/pages/ActionCenter.tsx` remains a separate mock-only UI and
+is not part of this pipeline.
+
+## Relevant files
+
+| Layer | File | Responsibility |
 |---|---|---|
-| Database reference schema | `backend/apps/api/src/database/schema.sql` | Documents `public.actions` and its three non-vector indexes. The file warns that it is context-only, not an executable migration. |
-| Database access | `backend/apps/api/src/database/actions.ts` | Insert, list, get, keyword search, and effectiveness update using the Supabase service-role client. |
-| HTTP validation | `backend/apps/api/src/controllers/actions.controller.ts` | Validates action requests and translates database outcomes into HTTP responses. |
-| Routes | `backend/apps/api/src/routes/actions.route.ts` | Declares five action endpoints and level gates for create/rate. |
-| Route mount | `backend/apps/api/src/routes/index.ts` | Mounts actions below `/api/v1/actions`. |
-| Role gate | `backend/apps/api/src/middlewares/role.middleware.ts` | Reads a client-supplied `x-user-level` header. This is placeholder authentication. |
-| Supabase client | `backend/apps/api/src/config/supabase.ts` | Creates a server-side Supabase client with the service-role key. |
-| Environment config | `backend/apps/api/src/config/env.ts` | Reads Supabase, Redis, database, and connector variables. No SignalFlow variables exist. |
-| Frontend API adapter | `new_frontend/src/app/api.ts` | Calls the action endpoints and maps snake_case database rows to camelCase UI objects. |
-| Main frontend/action UI | `new_frontend/src/app/App.tsx` | Loads actions, logs/rates actions, performs similar-action requests, and renders all connected action surfaces. |
-| Mock auth state | `new_frontend/src/app/context/WorkspaceContext.tsx` | Stores the selected user level in `pulse.auth.v1` local storage. |
-| Mock role picker | `new_frontend/src/app/pages/LoginView.tsx` | Lets a demo user select Viewer, Manager, or Executive. |
-| Older mock UI | `frontend-react/src/app/pages/ActionCenter.tsx` | Separate in-memory actions, resolutions, upvotes, and heuristic past-action matching. |
-| Existing implementation notes | `plan-action.md`, `plan-backend-implementaion.md`, `plan-frontend-implementation.md` | Historical implementation plans and manual test claims. |
+| Migration | `supabase/migrations/20260822000000_action_semantic_search.sql` | Enables pgvector; creates embedding storage, claim RPC, and match RPC. |
+| Reference schema | `backend/apps/api/src/database/schema.sql` | Documents action and embedding tables. |
+| Environment | `backend/apps/api/src/config/env.ts` | Parses SiliconFlow and search configuration. |
+| Environment example | `backend/.env.example` | Documents every semantic-search variable. |
+| Provider contract | `backend/libs/embeddings/embedding-provider.ts` | Provider interface, safe provider error, and vector validation. |
+| SiliconFlow adapter | `backend/libs/embeddings/siliconflow-embedding.provider.ts` | HTTP request, timeout, response parsing, and error classification. |
+| Canonical text | `backend/libs/embeddings/embedding-text.ts` | Builds stable action text and SHA-256 content hash. |
+| Action database | `backend/apps/api/src/database/actions.ts` | Insert/list/get/rate and bounded lexical search. |
+| Embedding database | `backend/apps/api/src/database/action-embeddings.ts` | Pending/claim/complete/fail/retry operations and vector RPC call. |
+| Creation service | `backend/apps/api/src/services/actions.service.ts` | Stores the action, prepares an embedding row, and enqueues best effort. |
+| Search service | `backend/apps/api/src/services/action-search.service.ts` | Query embedding, vector retrieval, RRF, and lexical fallback. |
+| Controller | `backend/apps/api/src/controllers/actions.controller.ts` | Input bounds, date validation, search mode header, and service calls. |
+| Queue | `backend/libs/queue/action-embedding-queue.ts` | Dedicated BullMQ queue with deterministic job IDs and retries. |
+| Worker processor | `backend/apps/worker/src/processors/action-embedding.processor.ts` | Claims tasks, embeds action text, and writes status/vector. |
+| Worker entry | `backend/apps/worker/src/worker.ts` | Starts and closes sync and embedding workers. |
+| Backfill | `backend/scripts/backfill-action-embeddings.ts` | Prepares, reconciles, and enqueues existing actions. |
+| Frontend API | `new_frontend/src/app/api.ts` | Sends search options and maps optional similarity. |
+| Frontend UI | `new_frontend/src/app/App.tsx` | Integrates all three action-search surfaces. |
+| Tests | `backend/tests/embeddings.test.ts` | Canonical text, validation, provider request, and safe-error tests. |
+| Tests | `backend/tests/action-search.test.ts` | Sanitization, date, and RRF tests. |
 
-No committed action migration, automated action test suite, SignalFlow client, embedding module, vector schema, or embedding job exists.
+## Action data model
 
-## Current data model
-
-The current `public.actions` shape is:
+The existing `public.actions` table remains the source of truth:
 
 | Column | Type | Meaning |
 |---|---|---|
-| `id` | `uuid` | Primary key; defaults to `gen_random_uuid()`. |
-| `project_ids` | `text[]` | One or more frontend project identifiers such as `onyx-mobile`. Not foreign keys. |
+| `id` | `uuid` | Action primary key. |
+| `project_ids` | `text[]` | Associated project IDs. |
 | `problem` | `text` | What happened. |
 | `reason` | `text` | Root cause. |
-| `action_taken` | `text` | Management response/decision. |
-| `action_date` | `date` | User-selected date of the action; defaults to current date. |
-| `effectiveness` | `integer`, nullable | `NULL` means awaiting review; otherwise constrained to 1–5. |
-| `logged_by` | `text` | Display string supplied by the client. It is not a trusted user reference. |
-| `created_at` | `timestamptz` | Database insertion time. |
+| `action_taken` | `text` | Management response. |
+| `action_date` | `date` | Date supplied for the action. |
+| `effectiveness` | `integer`, nullable | Unrated or a value from 1 to 5. |
+| `logged_by` | `text` | Existing display value. |
+| `created_at` | `timestamptz` | Database creation time. |
 
-Current indexes:
+Vectors are deliberately stored separately in `public.action_embeddings`:
 
-- GIN on `project_ids` for array containment.
-- Descending B-tree on `action_date`.
-- Partial B-tree on `effectiveness` where it is null.
+| Column | Purpose |
+|---|---|
+| `action_id`, `embedding_version` | Composite key; permits versioned model rollouts. |
+| `provider`, `model`, `dimensions` | Prevents incompatible-vector ambiguity. |
+| `content_hash` | Detects unchanged action text during backfill. |
+| `status` | `pending`, `processing`, `ready`, or `failed`. |
+| `embedding` | pgvector value; never included in normal action responses. |
+| `attempt_count`, `last_error` | Retry and diagnosis state. |
+| `embedded_at`, timestamps | Processing history. |
 
-Important consequences:
+The table cascades when an action is deleted. A ready row must have a vector.
 
-- Actions are not scoped by company/workspace/tenant.
-- Project references cannot enforce referential integrity.
-- `logged_by` can be spoofed.
-- Re-rating overwrites the previous rating; there is no `rated_by`, `rated_at`, or rating history.
-- There is no `updated_at`, embedding state, model/version metadata, or content hash.
+The vector column is dimension-agnostic. This allows a future free SiliconFlow
+model to use a different dimension under a new embedding version without replacing
+the table. The matching RPC checks dimensions before computing cosine distance.
 
-## Current API contract
+There is no HNSW index yet. Exact cosine search has perfect recall and is the
+appropriate choice for the current nine-action corpus. Add a dimension-specific
+HNSW or `halfvec` expression index only after the corpus and measured latency make
+approximate search necessary.
 
-All routes are mounted under `/api/v1/actions`.
+## Canonical embedding document
 
-| Method and path | Gate | Current behavior |
-|---|---|---|
-| `POST /` | Level 1 / Manager | Validates and inserts a new action; returns the raw snake_case row with `201`. |
-| `GET /` | Open | Lists actions, optionally filtered by project, date range, pending rating, and limit. |
-| `GET /search` | Open | Validates `q`, performs `ILIKE` search, returns raw rows. Registered before `/:id` so `search` is not interpreted as an ID. |
-| `GET /:id` | Open | Returns an action or `404`. Invalid UUIDs also become `404`. |
-| `PUT /:id/effectiveness` | Level 2 / Executive | Accepts an integer from 1 to 5 and overwrites the current rating. |
-
-### Create validation
-
-- `projectIds` must be a non-empty array whose members are non-empty strings.
-- `problem`, `reason`, `actionTaken`, and `loggedBy` must be non-empty strings.
-- Text is trimmed before insertion.
-- `timestamp`, if present, must match `YYYY-MM-DD`; otherwise the API supplies today's date.
-
-The regular expression checks only shape, not whether the date exists. An input such as an impossible month can reach Postgres and become a `500` rather than a client validation error. There are no maximum lengths or maximum project count.
-
-### List behavior
-
-`GET /api/v1/actions` supports:
-
-- `projectId`: Supabase array containment on `project_ids`.
-- `from` / `to`: inclusive comparisons against `action_date` when the string matches the date regex.
-- `pending=true`: `effectiveness IS NULL`.
-- `limit`: any positive parsed integer; default 100.
-
-Invalid filters are mostly ignored rather than rejected. There is no cursor/offset pagination and no server-side upper bound on `limit`.
-
-### Current search behavior
-
-The current database operation is conceptually:
-
-```sql
-select *
-from public.actions
-where problem ilike '%query%'
-   or reason ilike '%query%'
-   or action_taken ilike '%query%'
-order by action_date desc
-limit :limit;
-```
-
-Before constructing the PostgREST `.or()` expression, `%`, `_`, commas, quotes, parentheses, and backslashes are replaced with spaces. This avoids wildcard/filter injection, but it has two edge cases:
-
-- A query can pass the controller's three-character check and become empty after sanitization, producing a `%%` pattern that can match everything.
-- Results are ordered by recency, not textual relevance.
-
-This finds exact fragments and case variants. It will not reliably connect differently worded concepts such as “delivery capacity fell” and “sprint velocity dropped.”
-
-## Current end-to-end flows
-
-### 1. Log an action
-
-```text
-Manager opens LogActionModal
-  -> selects one or more frontend project IDs
-  -> enters problem, root cause, action taken, and date
-  -> App.handleLogAction adds loggedBy from mock user state
-  -> new_frontend/api.createAction
-  -> POST /api/v1/actions with x-user-level
-  -> requireLevel(MANAGER)
-  -> actions.controller.createAction validates and trims
-  -> database/actions.insertAction
-  -> Supabase REST insert into public.actions using service-role client
-  -> raw snake_case row returned
-  -> frontend refreshes the complete action list
-  -> rowToAction maps it to the UI's camelCase Action shape
-  -> modal shows success and closes after 1.2 seconds
-```
-
-Logging does not generate or enqueue an embedding.
-
-### 2. Find similar actions while logging
-
-```text
-User types in Problem textarea
-  -> wait until trimmed text has at least 4 characters
-  -> debounce 400 ms
-  -> new_frontend/api.searchActions(query, 5)
-  -> GET /api/v1/actions/search?q=...&limit=5
-  -> controller requires at least 3 characters
-  -> database performs ILIKE across three fields
-  -> latest matching rows are returned
-  -> frontend maps rows and displays problem, action taken, rating, and date
-```
-
-The UI silently converts search failures into an empty result. It does not show loading/error state, cancel an in-flight request, or protect against an older response arriving after a newer one.
-
-### 3. Browse actions
-
-After authentication, `App` calls `listActions()` once and holds all returned actions in local state. The same state is reused by:
-
-- Portfolio/global action views.
-- Project dashboard recent actions.
-- Project Actions Timeline.
-- Project Actions Library.
-- Pending effectiveness review panels.
-
-The global view and Actions Library each perform their own client-side lowercase substring filtering. Their visible search boxes do **not** call `/actions/search`, so they are not even using the server placeholder semantic-search path today.
-
-The timeline associates action dates with the closest available health-series point. It stores one action per chart label, so multiple actions mapped to the same label overwrite one another as chart markers, although all actions still appear in the list below.
-
-### 4. Rate effectiveness
-
-```text
-Executive clicks a star
-  -> frontend immediately changes local state (optimistic update)
-  -> PUT /api/v1/actions/:id/effectiveness
-  -> requireLevel(EXECUTIVE)
-  -> controller validates integer 1..5
-  -> Supabase updates effectiveness
-  -> on failure, frontend logs to console and refetches all actions
-```
-
-Rating does not change the text that should be embedded, so it should not trigger re-embedding. It may later be used as a ranking or display signal.
-
-## Authorization and data security as implemented
-
-The current role system is explicitly a demo placeholder:
-
-1. Login accepts any email/password and a selected level.
-2. The level is stored in browser local storage.
-3. `authHeaders()` copies it into `x-user-level`.
-4. The server trusts that header.
-
-Any caller can therefore claim Executive by sending `x-user-level: 2`. GET endpoints do not apply even this gate.
-
-The live database inspection found a more urgent issue:
-
-- RLS is disabled on `public.actions`.
-- `anon` and `authenticated` currently have broad table privileges.
-- The backend uses a service-role client, which bypasses RLS in any case.
-- `backend/test-supabase.js` is tracked and contains a hard-coded live-looking service-role credential.
-
-Before production use:
-
-1. Rotate the exposed service-role key.
-2. Remove the hard-coded credential and read it from environment variables.
-3. Revoke unnecessary direct grants from `anon` and `authenticated`.
-4. Enable RLS and add explicit policies if clients will ever access Supabase directly.
-5. Replace the role header with verified authentication and server-derived authorization.
-6. Add `company_id`/`workspace_id` and enforce tenant membership in every list/search/get/write path.
-7. Derive `logged_by` from verified identity rather than the request body.
-
-Semantic search magnifies the tenant risk because an unscoped nearest-neighbor query can retrieve related records across every organization even when the query wording does not match exactly.
-
-## What is complete and what is not
-
-### Implemented
-
-- Live `actions` table with constraints and non-vector indexes.
-- Five Express endpoints.
-- Create/list/get/search/rate database functions.
-- Basic controller validation.
-- Placeholder level gates for create and rate.
-- Frontend DTO mapping.
-- Live initial action fetch in `new_frontend`.
-- Log Action modal with separate problem/root cause/action fields.
-- Debounced similar-action API request in the modal.
-- Multiple action browsing views and timeline markers.
-- Optimistic effectiveness rating.
-- Historical manual API test notes.
-
-### Not implemented
-
-- Semantic embeddings or a confirmed SignalFlow API contract.
-- Supabase `vector` extension or pgvector storage.
-- Similarity SQL/RPC or vector index.
-- Embedding generation on create/update.
-- Backfill for existing actions.
-- Embedding retries, status, versioning, or observability.
-- Relevance scores or semantic result ordering.
-- Semantic search in the global/library search boxes.
-- Hybrid search.
-- Real authentication, trustworthy roles, or tenant isolation.
-- Executable database migrations.
-- Automated action tests.
-
-The notes in `plan-backend-implementaion.md` say 14 tests passed against a live API, but these are recorded manual outcomes. There is no committed action test suite that can reproduce them. During this audit, `npm run typecheck` did not pass because of existing errors elsewhere in the backend/worker/queue code; no error was reported in the action controller, routes, or database module.
-
-## SignalFlow integration assumption
-
-No public, authoritative generic embedding API contract for a product named “SignalFlow” could be confirmed during this audit. “SignalFlow” is used publicly by several unrelated products. Therefore, implementation must not scatter guessed SignalFlow request/response details through the action code.
-
-Treat SignalFlow as an embedding provider behind this internal contract:
-
-```ts
-export interface EmbeddingProvider {
-  readonly provider: "signalflow";
-  readonly model: string;
-  readonly dimensions: number;
-  embed(texts: string[]): Promise<number[][]>;
-}
-```
-
-Before writing the pgvector migration, confirm:
-
-- Base URL and embeddings endpoint.
-- Authentication header format.
-- Request shape and maximum batch size.
-- Response shape and whether order is guaranteed.
-- Exact model identifier.
-- Exact output dimension.
-- Whether vectors are normalized.
-- Input/token limits.
-- Rate limits, timeout guidance, and retryable status codes.
-- Data retention/privacy terms.
-
-The vector dimension is a schema decision. Stored vectors and query vectors must use the same model/version and dimension; vectors from different models are not meaningfully comparable.
-
-Recommended environment variables:
-
-```dotenv
-SIGNALFLOW_EMBEDDINGS_URL=
-SIGNALFLOW_API_KEY=
-SIGNALFLOW_EMBEDDING_MODEL=
-SIGNALFLOW_EMBEDDING_DIMENSIONS=
-ACTION_EMBEDDING_VERSION=signalflow-v1
-ACTION_SEARCH_MIN_SIMILARITY=0.70
-ACTION_SEARCH_MAX_RESULTS=20
-ACTION_EMBEDDING_TIMEOUT_MS=10000
-```
-
-The API key must remain server-side and must never use a `VITE_` prefix.
-
-## Recommended embedding document
-
-Use one deterministic canonical string per action:
+Each action becomes this deterministic text:
 
 ```text
 Problem: {problem}
@@ -332,379 +147,370 @@ Root cause: {reason}
 Action taken: {action_taken}
 ```
 
-Normalize only line endings and surrounding whitespace. Do not lowercase or remove punctuation unless SignalFlow specifically recommends it; embedding models generally use that context.
+Line endings and surrounding whitespace are normalized. Text is not lowercased or
+stripped of useful punctuation. A SHA-256 hash of this exact text supports
+idempotent backfill and future re-embedding decisions.
 
-Store a SHA-256 hash of the canonical string. A worker can skip work when the hash, provider, model, and embedding version are unchanged.
+Effectiveness changes do not affect the canonical text and do not enqueue a new
+embedding.
 
-The first evaluation set should compare two variants:
+## Runtime flows
 
-- `problem + reason`, which is closely aligned with the modal's problem-only query.
-- `problem + reason + action_taken`, which may better support the full Actions Library.
-
-Choose using retrieval quality, not intuition. The returned action can always include `action_taken` even if that field is not part of the embedded text.
-
-## Recommended pgvector design
-
-### Why a separate table
-
-Do not add `embedding` directly to `public.actions` while the database code uses `.select('*')`. That would return a large vector on list, get, create, rate, and search responses even though the frontend does not need it.
-
-A separate one-to-one/versioned table provides:
-
-- No accidental vector exposure through existing API responses.
-- Smaller normal action queries.
-- Explicit provider/model/version/status metadata.
-- Safe re-embedding and model rollout.
-- Independent vector permissions and indexes.
-
-### Migration template
-
-This is a design template, not executable SQL until the exact SignalFlow dimension/model/version are known. Replace `<D>` and the model/version placeholders first.
-
-```sql
-create extension if not exists vector with schema extensions;
-
-create table public.action_embeddings (
-  action_id uuid not null
-    references public.actions(id) on delete cascade,
-  embedding_version text not null,
-  provider text not null check (provider = 'signalflow'),
-  model text not null,
-  content_hash text not null,
-  status text not null default 'pending'
-    check (status in ('pending', 'processing', 'ready', 'failed')),
-  embedding extensions.vector(<D>),
-  attempt_count integer not null default 0,
-  last_error text,
-  embedded_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  primary key (action_id, embedding_version)
-);
-
-create index idx_action_embeddings_pending
-  on public.action_embeddings (status, updated_at)
-  where status in ('pending', 'failed');
-
--- Add after the corpus/latency justifies approximate search.
-create index idx_action_embeddings_hnsw_cosine
-  on public.action_embeddings
-  using hnsw (embedding extensions.vector_cosine_ops)
-  where status = 'ready';
-```
-
-Supabase documents `vector` columns, cosine distance (`<=>`), RPC-based matching, and HNSW indexes. A normal `vector` HNSW index supports up to 2,000 dimensions on current pgvector versions; higher dimensions may require a `halfvec` expression index or a different model/storage choice. Confirm the installed pgvector version and SignalFlow dimension before selecting the type/index.
-
-At the current corpus size, exact vector search is simpler and has perfect recall. Add HNSW after realistic load testing shows it is needed rather than tuning approximate search around nine rows.
-
-### Similarity RPC template
-
-Filters must be inside the function before ordering/limiting. Applying a project/tenant filter after an RPC has already selected top-K neighbors can return too few results and can create an isolation bug.
-
-```sql
-create or replace function public.match_actions(
-  query_embedding extensions.vector(<D>),
-  target_embedding_version text,
-  match_threshold double precision default 0.70,
-  match_count integer default 5,
-  filter_project_id text default null
-)
-returns table (
-  id uuid,
-  project_ids text[],
-  problem text,
-  reason text,
-  action_taken text,
-  action_date date,
-  effectiveness integer,
-  logged_by text,
-  created_at timestamptz,
-  similarity double precision
-)
-language sql
-stable
-security invoker
-set search_path = ''
-as $$
-  select
-    a.id,
-    a.project_ids,
-    a.problem,
-    a.reason,
-    a.action_taken,
-    a.action_date,
-    a.effectiveness,
-    a.logged_by,
-    a.created_at,
-    1 - (ae.embedding <=> query_embedding) as similarity
-  from public.action_embeddings ae
-  join public.actions a on a.id = ae.action_id
-  where ae.status = 'ready'
-    and ae.embedding_version = target_embedding_version
-    and ae.embedding is not null
-    and (filter_project_id is null or a.project_ids @> array[filter_project_id])
-    and 1 - (ae.embedding <=> query_embedding) >= match_threshold
-  order by ae.embedding <=> query_embedding
-  limit least(greatest(match_count, 1), 50);
-$$;
-```
-
-Add tenant/workspace input and authorization before production. Project filtering alone is not a tenant boundary.
-
-Revoke this function from `public`, `anon`, and `authenticated` if only the backend service role should call it. Never return the embedding itself.
-
-## Target flows
-
-### Action creation and document embedding
+### 1. Log a new action
 
 ```text
-POST /actions
-  -> authenticate real user and authorize Manager capability
-  -> validate tenant-visible project IDs and body limits
-  -> insert action
-  -> create durable action_embeddings row with status=pending
-  -> enqueue action-embedding job (best effort)
-  -> return 201 immediately
-
-Embedding worker
-  -> claim action/version idempotently
-  -> load action source fields
-  -> build canonical text and content hash
-  -> call SignalFlow with timeout/retry
-  -> validate one finite vector of exactly configured dimensions
-  -> update embedding/status/model/hash/embedded_at
-  -> on terminal failure store a sanitized error and leave action searchable lexically
+LogActionModal
+  -> POST /api/v1/actions
+  -> controller validates and bounds the existing fields
+  -> actions.service inserts public.actions
+  -> response-critical action data is now durable
+  -> if SiliconFlow is configured:
+       upsert action_embeddings as pending
+       enqueue deterministic BullMQ job, best effort
+  -> return 201 with the normal action row
 ```
 
-Action logging must succeed even when SignalFlow is down. The durable pending row allows reconciliation if Redis enqueueing fails.
+Provider or Redis failure cannot undo the action insert. If pending-row creation or
+enqueueing fails, the service logs a sanitized warning and returns the stored action.
+The backfill command can reconcile it later.
 
-### Semantic search
+### 2. Generate an action embedding
 
 ```text
-GET /actions/search?q=...&limit=...&projectId=...
-  -> authenticate and resolve tenant/project scope
-  -> validate query and clamp limit
-  -> generate one query embedding synchronously through SignalFlow
-  -> validate dimension
-  -> Supabase rpc('match_actions', ...)
-  -> return actions ordered by similarity (optional additive similarity field)
-  -> if provider/vector path is unavailable, run bounded lexical fallback
+action-embeddings BullMQ worker
+  -> atomically claim pending/failed row
+  -> status=processing and attempt_count += 1
+  -> load the action
+  -> build canonical text and hash
+  -> POST text to SiliconFlow with timeout
+  -> validate vector count, dimension, and finite numeric values
+  -> status=ready; save vector/model/hash/embedded_at
+  -> on error: status=failed; save a bounded sanitized message; rethrow for retry
 ```
 
-Keep the route and core action shape stable. `similarity` can be an optional additive field; the existing frontend mapper can ignore it until the UI is ready.
+Queue behavior:
 
-### Re-embedding
+- Queue: `action-embeddings`.
+- Job identity: action ID plus sanitized embedding version.
+- Duplicate pending/active jobs are reused.
+- Completed or terminal failed jobs can be replaced for reconciliation.
+- Five attempts with exponential backoff starting at two seconds.
+- Default worker concurrency is four.
+- Completed and failed job retention is bounded.
 
-Re-embed only when `problem`, `reason`, or `action_taken` changes, or when the configured embedding version/model changes. Effectiveness changes must not re-embed.
+### 3. Search actions
 
-There is no action edit endpoint today. If one is added, it must mark the active embedding version pending in the same durable workflow.
+Endpoint:
 
-## Queue/worker plan
+```http
+GET /api/v1/actions/search?q=sprint%20capacity&limit=5&projectId=onyx-mobile
+```
 
-The repository already uses BullMQ and Redis for sync work, but the queue implementation is currently hard-coded to the `sync` queue and `SyncJobData`. It also contributes existing TypeScript failures: the processor type is declared as data while BullMQ supplies a `Job`, the worker caller then uses `job.data`, and `job.progress()` is called although progress is a property in the installed type.
+```text
+request
+  -> validate q and clamp limit
+  -> start bounded lexical candidate query
+  -> if SiliconFlow is configured:
+       embed q synchronously
+       call match_actions RPC for active embedding version
+       apply project filter before ranking/limit
+       keep rows above cosine threshold
+       fuse semantic and lexical rankings with RRF
+  -> otherwise, or on semantic failure:
+       return lexical results
+  -> set x-action-search-mode
+```
 
-Do not put embedding jobs into the existing `sync` queue unchanged. First either:
+Search modes:
 
-1. Refactor the queue wrapper into a correctly typed generic queue, or
-2. Add a dedicated, correctly typed `ActionEmbeddingQueue`.
+| Header value | Meaning |
+|---|---|
+| `hybrid` | Semantic and lexical candidates were fused. |
+| `semantic` | Semantic results were returned because lexical produced none. |
+| `lexical` | SiliconFlow was unconfigured/unavailable, vector search failed, or normal lexical matching was the only path. |
 
-Recommended queue data:
+The API response stays an array of normal action rows. Semantic rows add an
+optional `similarity` number; stored vectors are never returned.
 
-```ts
-interface ActionEmbeddingJobData {
-  actionId: string;
-  embeddingVersion: string;
+RRF lets exact names, issue identifiers, and acronyms from lexical search coexist
+with paraphrases from semantic search. A row present in both candidate sets is
+promoted without comparing incompatible raw lexical and cosine scores.
+
+### 4. Frontend search
+
+All connected surfaces now call the same endpoint:
+
+- Log Action modal: 400 ms debounce, five results, optional single-project scope.
+- Global Actions view: 300 ms debounce, optional selected-project scope, relevance
+  order while a semantic-length query is active.
+- Project Actions Library: 300 ms debounce and mandatory active-project scope.
+
+Each surface aborts obsolete requests so an older response cannot replace a newer
+query. Queries shorter than three characters use the existing local behavior or no
+similar lookup.
+
+### 5. Backfill and reconciliation
+
+The backfill command:
+
+1. Loads existing actions in bounded order.
+2. Builds the current canonical text/hash.
+3. Skips a ready row when hash, model, and dimensions already match.
+4. Upserts everything else as pending.
+5. Enqueues deterministic jobs.
+6. Resets stale processing rows to failed.
+7. Re-enqueues pending and failed rows that may have missed Redis delivery.
+
+This same command supports recovery after Redis downtime and migration to a new
+embedding version.
+
+## Provider behavior
+
+The SiliconFlow adapter sends the OpenAI-compatible body:
+
+```json
+{
+  "model": "Qwen/Qwen3-Embedding-0.6B",
+  "input": ["text to embed"],
+  "encoding_format": "float"
 }
 ```
 
-Recommended behavior:
+It uses `Authorization: Bearer ...` by default. Header and scheme are configurable
+for compatibility, while the API key stays server-side.
 
-- Queue name: `action-embeddings`.
-- Deterministic job ID: `${actionId}:${embeddingVersion}` for deduplication.
-- Three to five attempts with exponential backoff and jitter.
-- Moderate concurrency based on SignalFlow rate limits.
-- Keep failed jobs long enough for diagnosis; remove successful jobs.
-- A reconciliation command periodically scans `pending`/retryable `failed` rows and re-enqueues them.
-- Graceful worker shutdown must close both sync and embedding workers/queues.
+The adapter:
 
-## Backend file-level implementation plan
+- Uses `AbortController` for the configured timeout.
+- Accepts and reorders the documented `data[].embedding` response by `index`.
+- Also tolerates simple `embedding`/`embeddings` response envelopes.
+- Validates one vector per input, exact configured dimensions, and finite numbers.
+- Marks network, timeout, HTTP 429, and HTTP 5xx failures as retryable.
+- Does not include provider response bodies, API keys, action text, or vectors in
+  its thrown HTTP errors.
+- Adds the `dimensions` request field only for SiliconFlow Qwen3 embedding models,
+  because SiliconFlow documents it only for that family.
 
-### Phase 0 — security and foundations
+## Validation and bounds added
 
-- Rotate and remove the hard-coded service-role credential in `backend/test-supabase.js`.
-- Add a real migration directory, preferably the Supabase CLI convention `supabase/migrations/`.
-- Capture the existing `actions` table in a baseline migration or make the new migration safely conditional.
-- Revoke broad direct table access and define RLS/tenant strategy.
-- Add trusted auth and tenant/workspace identity to action records and requests.
-- Fix the existing queue/worker TypeScript contract before relying on it.
+Outside authentication/roles, the action controller now:
 
-### Phase 1 — embedding provider
+- Rejects impossible calendar dates, not just malformed date strings.
+- Limits an action to 50 project IDs.
+- Limits project IDs to 200 characters.
+- Limits problem, reason, and action text to 5,000 characters each.
+- Limits `loggedBy` to 320 characters.
+- Caps list results at 200.
+- Caps search results at `ACTION_SEARCH_MAX_RESULTS`.
+- Rejects a query that contains no searchable text after PostgREST control
+  characters are removed.
+- Uses explicit action projections rather than `.select('*')` so vectors can never
+  leak through normal action queries.
 
-Add under `backend/libs/embeddings/`:
+## Environment configuration
 
-- `embedding-provider.ts`: provider interface and validation helpers.
-- `signalflow-embedding.provider.ts`: the only file aware of SignalFlow HTTP/auth/response details.
-- `embedding-text.ts`: canonical action text and hash generation.
-- `index.ts`: public exports.
+Add the key to `backend/.env`:
 
-Update:
+```dotenv
+SILICONFLOW_API_KEY=your-siliconflow-key
+```
 
-- `backend/apps/api/src/config/env.ts` and `backend/.env.example` with SignalFlow/search settings.
-- Startup validation so an enabled semantic-search mode cannot start with a missing model/dimension/key.
+Available settings and defaults:
 
-Provider requirements:
+```dotenv
+SILICONFLOW_EMBEDDINGS_URL=https://api.siliconflow.com/v1/embeddings
+SILICONFLOW_API_KEY=
+SILICONFLOW_AUTH_HEADER=authorization
+SILICONFLOW_AUTH_SCHEME=Bearer
+SILICONFLOW_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+SILICONFLOW_EMBEDDING_DIMENSIONS=1024
+ACTION_EMBEDDING_VERSION=siliconflow-qwen3-embedding-0.6b-1024-v1
+ACTION_SEARCH_MIN_SIMILARITY=0.70
+ACTION_SEARCH_MAX_RESULTS=50
+ACTION_EMBEDDING_TIMEOUT_MS=10000
+```
 
-- Use an explicit timeout/abort signal.
-- Retry only retryable network/429/5xx failures.
-- Do not log API keys, full provider responses, embeddings, or sensitive action text.
-- Validate batch length, vector count, exact dimension, numeric finiteness, and empty input.
-- Emit provider/model/version and duration metrics.
+The earlier misspelled `SIGNALFLOW_*` variables remain accepted as compatibility
+aliases, but new environments should use `SILICONFLOW_*`.
 
-### Phase 2 — pgvector schema and repository
+Changing the model or dimensions requires a new `ACTION_EMBEDDING_VERSION` and a
+backfill. Do not compare vectors generated by different model configurations under
+one version.
 
-- Enable `vector` in an executable migration.
-- Create `action_embeddings`, constraints, status index, and matching RPC.
-- Add RLS/grants in the same migration.
-- Add `backend/apps/api/src/database/action-embeddings.ts` for pending-row management, claim/update/failure operations, and RPC calls.
-- Keep the existing `ActionRow` query projections explicit rather than `.select('*')` where possible.
+The health endpoint exposes only non-secret state:
 
-### Phase 3 — asynchronous embedding
+```text
+services.semanticActionSearch.status
+services.semanticActionSearch.provider
+services.semanticActionSearch.model
+services.semanticActionSearch.dimensions
+services.semanticActionSearch.embeddingVersion
+```
 
-- Add the dedicated queue and `ActionEmbeddingJobData`.
-- Add `backend/apps/worker/src/processors/action-embedding.processor.ts`.
-- Start the embedding worker from the worker entrypoint.
-- Introduce `actions.service.ts` so create orchestration is not embedded in the controller.
-- After an action insert, ensure the pending row exists and enqueue it without making provider availability part of the `POST` response.
-- Add a backfill/reconciliation script with batch size, resume behavior, and dry-run mode.
+Status is `configured` when the SiliconFlow key and provider settings exist;
+otherwise it is `lexical_fallback`.
 
-For stronger durability, create the pending embedding row with a database trigger or a single transactional RPC when an action is inserted. Redis enqueue remains best effort because the reconciliation scan can recover missed jobs.
+## Setup and operation
 
-### Phase 4 — semantic search endpoint
+### Apply the migration
 
-- Replace `database/actions.searchActions` internals with a service flow: embed query, call `match_actions`, return ranked rows.
-- Preserve the existing URL and minimum-query contract.
-- Clamp `limit` to a small configured maximum.
-- Reject a query that becomes empty after normalization.
-- Add optional `projectId` immediately; add mandatory tenant scope before production.
-- Keep the current bounded lexical query as fallback.
-- Return/log which mode served the request (`semantic`, `hybrid`, or `lexical-fallback`) without exposing provider errors to the client.
+The migration is already applied to the Supabase database currently referenced by
+`backend/.env`. For another environment:
 
-### Phase 5 — frontend adoption
+```bash
+set -a
+. backend/.env
+set +a
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260822000000_action_semantic_search.sql
+```
 
-- Keep the Log Action modal's 400 ms debounce, but add `AbortController` or a monotonically increasing request ID.
-- Show separate loading, no-result, and unavailable/fallback states.
-- Wire `GlobalActionsView` and `ActionsLibrary` search boxes to the server semantic endpoint instead of local substring filtering.
-- Pass project scope from project-specific views.
-- Optionally show a rounded similarity percentage only after relevance calibration proves it is meaningful.
-- Keep rating and timeline flows independent of embedding generation.
+The migration is idempotent for the extension, table, index, and functions. It does
+not modify action authentication, role behavior, role grants, or RLS.
 
-### Phase 6 — hybrid relevance and rollout
+### Start the pipeline
 
-Vector-only retrieval can miss exact identifiers such as issue keys, service names, and acronyms. After the semantic path works, add Postgres full-text or trigram ranking and fuse it with vector results, for example with reciprocal rank fusion.
+```bash
+docker compose up redis -d
 
-Use effectiveness carefully as a secondary signal. A highly effective but unrelated action must never outrank a clearly relevant action. A safe ordering is semantic/lexical relevance first, then a small effectiveness and recency tie-breaker.
+cd backend
+npm run dev
+```
 
-Roll out with:
+In another terminal:
 
-1. Shadow mode: compute semantic results but continue returning lexical results; compare rankings in logs without recording raw query text.
-2. Internal users only.
-3. Semantic with lexical fallback.
-4. Hybrid search after evaluation.
+```bash
+cd backend
+npm run dev:worker
+```
 
-## Backfill plan for existing actions
+### Preview and run backfill
 
-The live table currently has 9 rows, so backfill is operationally small, but it should use the same production mechanism:
+```bash
+cd backend
+npm run backfill:action-embeddings -- --dry-run
+npm run backfill:action-embeddings
+```
 
-1. Insert/upsert a pending embedding record for every action and active embedding version.
-2. Enqueue deterministic jobs in small batches.
-3. Skip rows whose content hash/model/version already match a ready vector.
-4. Record ready/failed counts and sanitized failure reasons.
-5. Verify vector dimensions and null counts in SQL.
-6. Run a fixed semantic query set and manually inspect top results.
-7. Keep lexical fallback until every eligible action is ready.
+Optional arguments:
 
-Never mix embeddings from different models under one active search version. For a model upgrade, dual-write/backfill a new version, validate it, switch the active version, then remove the old version later.
+```bash
+npm run backfill:action-embeddings -- --limit=500 --stale-minutes=15
+```
 
-## Testing plan
+### Verify search
 
-### Unit tests
+```bash
+curl -i 'http://localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5'
+curl -s 'http://localhost:3000/api/v1/health'
+```
 
-- Canonical text generation and hash stability.
-- SignalFlow request mapping and response validation using mocked HTTP.
-- Timeout, 429, 5xx, malformed vector, wrong dimension, NaN/infinity, and partial-batch behavior.
-- Controller validation including impossible dates, all-sanitized queries, body size, and limit clamping.
-- Role/tenant authorization using server-derived identity.
-- Frontend debounce cancellation and stale-response protection.
+After the worker finishes a backfill, search should report `hybrid` or `semantic`.
+Without the key or ready vectors, `lexical` is the expected healthy behavior.
 
-### Database tests
+Useful database checks:
 
-- Migration applies to an empty database and an existing actions database.
-- Cascade deletion removes embeddings.
-- Only ready vectors in the active version are matched.
-- Threshold, limit cap, project filter, and tenant filter work before ranking/limit.
-- RPC does not return the embedding.
-- RLS/grants prevent cross-tenant and anonymous access.
-- Exact and indexed queries produce acceptable recall after HNSW is enabled.
+```sql
+select extversion from pg_extension where extname = 'vector';
 
-### Integration tests
+select status, count(*)
+from public.action_embeddings
+group by status
+order by status;
 
-- Create action returns `201` when SignalFlow is healthy, slow, or unavailable.
-- A created action transitions pending -> processing -> ready.
-- Failed jobs retry and reconciliation recovers a missed enqueue.
-- Search produces a query embedding and returns meaning-based results in descending similarity.
-- Provider failure produces lexical fallback, not a blank UI or action logging failure.
-- Effectiveness updates do not enqueue re-embedding.
-- Model-version switch never compares incompatible vectors.
+select action_id, embedding_version, model, dimensions,
+       status, attempt_count, last_error, embedded_at
+from public.action_embeddings
+order by updated_at desc;
+```
 
-### Retrieval evaluation
+## Verification completed
 
-Create a small labeled dataset of realistic queries with expected relevant action IDs, including:
+### Automated backend tests
 
-- Synonyms and paraphrases.
-- Exact service/project/issue identifiers.
-- Similar problems with different causes.
-- Similar causes with different problems.
-- Unrelated queries that should return nothing above threshold.
-- Cross-project and cross-tenant isolation cases.
+Command:
 
-Track Recall@5, Mean Reciprocal Rank, no-result accuracy, p50/p95 latency, provider error rate, fallback rate, and cost per embedded action/query. Tune threshold only from this dataset.
+```bash
+cd backend
+npm run test:actions
+```
 
-## Operational and product gaps to resolve
+Result: **7/7 pass**.
 
-Priority order:
+Covered behavior:
 
-1. **Credential exposure and database grants/RLS.** Rotate the tracked service key and close direct anonymous access.
-2. **Tenant model.** Add workspace/company ownership before semantic search can be safely global.
-3. **SignalFlow contract.** Confirm endpoint, model, dimension, normalization, and limits before writing vector SQL.
-4. **Migration discipline.** `schema.sql` is reference-only; production changes need executable, versioned migrations.
-5. **Queue correctness.** Fix existing BullMQ typing/runtime assumptions before reusing the worker for embeddings.
-6. **Automated tests.** Convert the manual action test notes into a reproducible suite.
-7. **Search scope.** Decide whether “similar” means similar problem, similar root cause, useful action taken, or a weighted combination.
-8. **Frontend consolidation.** Decide whether to retire or migrate `frontend-react`'s separate mock action model.
-9. **Auditability.** Add trusted actor IDs and rating history if action logging is intended as an audit record.
-10. **Pagination and bounds.** Add cursor pagination, maximum input lengths, maximum limits, and rate limiting.
+- Canonical text normalization and content hash stability.
+- Wrong dimensions and non-finite vector rejection.
+- SiliconFlow's OpenAI-compatible request and documented response mapping.
+- Safe and retryable HTTP 429 handling.
+- PostgREST search-query sanitization.
+- Impossible date rejection.
+- RRF promotion for results present in both rankings.
 
-## Definition of done for semantic action search
+### TypeScript
 
-The feature is complete when:
+The new semantic/action code has no reported TypeScript errors. The whole-backend
+`npm run typecheck` still reports three unrelated pre-existing errors:
 
-- A versioned migration enables pgvector and creates secure embedding storage/RPC.
-- The SignalFlow adapter is based on a confirmed contract and validates vector dimensions.
-- Existing and newly logged actions reach a visible/observable embedding state.
-- Logging remains available during embedding-provider outages.
-- Search ranks paraphrased problems by meaning and falls back predictably.
-- All search paths enforce tenant/project scope before ranking.
-- The modal, global action view, and Actions Library use the server search path.
-- No endpoint returns stored vectors or provider secrets.
-- Re-embedding is idempotent and model-version safe.
-- Security, database, integration, frontend, and retrieval-evaluation tests pass in CI.
-- p95 latency, fallback rate, relevance quality, and provider cost are measured.
+- `apps/api/src/database/metrics.ts:187`
+- `libs/connectors/cicd/GithubActionsConnector/github-actions.connector.ts:210`
+- `libs/risk-engines/risk-engine.ts:63`
 
-## External technical references
+The current Node 18 runtime also produces a Supabase warning; Node 20 or later is
+recommended.
 
-- [Supabase semantic search guide](https://supabase.com/docs/guides/ai/semantic-search)
-- [Supabase HNSW index guide](https://supabase.com/docs/guides/ai/vector-indexes/hnsw-indexes)
-- [Supabase hybrid search guide](https://supabase.com/docs/guides/ai/hybrid-search)
-- [Supabase automatic embeddings architecture](https://supabase.com/docs/guides/ai/automatic-embeddings)
-- [pgvector project documentation](https://github.com/pgvector/pgvector)
+### Frontend
 
+The `new_frontend` Vite production build succeeds. Vite reports only its normal
+large-chunk warning.
+
+### Live Supabase
+
+Verified on the configured database:
+
+- pgvector version 0.8.0 is installed.
+- `public.action_embeddings` exists.
+- `public.claim_action_embedding` exists.
+- `public.match_actions` exists.
+- A temporary 3-dimensional vector matched through the RPC inside a transaction.
+- The transaction was rolled back; no test embedding remained.
+- Current ready-vector count is zero; one preserved legacy BGE row is failed.
+
+### Live API fallback
+
+With no SiliconFlow key:
+
+- Semantic configuration correctly remained disabled.
+- Search returned HTTP 200 with `x-action-search-mode: lexical`.
+- A query for `velocity` returned the matching existing action.
+- A control/wildcard-only query returned HTTP 400.
+- Normal action listing continued to work.
+
+Redis integration could not be exercised live because Docker Desktop's daemon was
+stopped and no local `redis-server` binary was installed. Queue behavior is covered
+by code/type review, and the API's no-Redis failure path was exercised.
+
+## Remaining steps
+
+Only environment-dependent work remains for a real semantic result:
+
+1. Put a SiliconFlow API key with access to
+   `Qwen/Qwen3-Embedding-0.6B` in `backend/.env`.
+2. Start Docker/Redis.
+3. Start the API and worker.
+4. Run the backfill.
+5. Confirm rows transition to `ready` and the search header becomes `hybrid` or
+   `semantic`.
+6. Evaluate realistic paraphrase queries and tune
+   `ACTION_SEARCH_MIN_SIMILARITY` from relevance results.
+
+Future scale work, only when measurements justify it:
+
+- Add a dimension-specific HNSW/halfvec index.
+- Add pagination to very large action libraries.
+- Build a labeled retrieval evaluation set and track Recall@5, MRR, no-result
+  accuracy, p95 latency, provider error rate, and fallback rate.
+- For a new free embedding model, increment the version, backfill alongside the
+  old version, evaluate, switch the active version, then retire the old rows.
+
+No authentication or role-based changes are included in this remaining plan.

@@ -6,18 +6,30 @@
 
 import type { Request, Response } from 'express';
 import {
-  insertAction,
   listActions as queryActions,
   getActionById,
-  searchActions as querySearchActions,
   updateActionEffectiveness,
+  sanitizeActionSearchQuery,
   type ListActionsFilters,
 } from '../database/actions.js';
+import { createAction as createActionRecord } from '../services/actions.service.js';
+import { searchActions as querySearchActions } from '../services/action-search.service.js';
+import { env } from '../config/env.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_PROJECTS = 50;
+const MAX_PROJECT_ID_LENGTH = 200;
+const MAX_TEXT_LENGTH = 5_000;
+const MAX_LOGGED_BY_LENGTH = 320;
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function isValidDateOnly(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 /**
@@ -29,7 +41,12 @@ export async function createAction(request: Request, response: Response): Promis
     const body = request.body as Record<string, unknown>;
 
     const projectIds = body.projectIds;
-    if (!Array.isArray(projectIds) || projectIds.length === 0 || !projectIds.every(isNonEmptyString)) {
+    if (
+      !Array.isArray(projectIds)
+      || projectIds.length === 0
+      || projectIds.length > MAX_PROJECTS
+      || !projectIds.every((value) => isNonEmptyString(value) && value.trim().length <= MAX_PROJECT_ID_LENGTH)
+    ) {
       response.status(400).json({ message: 'projectIds must be a non-empty array of strings' });
       return;
     }
@@ -39,10 +56,18 @@ export async function createAction(request: Request, response: Response): Promis
       response.status(400).json({ message: 'problem is required' });
       return;
     }
+    if (problem.trim().length > MAX_TEXT_LENGTH) {
+      response.status(400).json({ message: `problem must be at most ${MAX_TEXT_LENGTH} characters` });
+      return;
+    }
 
     const reason = body.reason;
     if (!isNonEmptyString(reason)) {
       response.status(400).json({ message: 'reason is required' });
+      return;
+    }
+    if (reason.trim().length > MAX_TEXT_LENGTH) {
+      response.status(400).json({ message: `reason must be at most ${MAX_TEXT_LENGTH} characters` });
       return;
     }
 
@@ -51,23 +76,31 @@ export async function createAction(request: Request, response: Response): Promis
       response.status(400).json({ message: 'actionTaken is required' });
       return;
     }
+    if (actionTaken.trim().length > MAX_TEXT_LENGTH) {
+      response.status(400).json({ message: `actionTaken must be at most ${MAX_TEXT_LENGTH} characters` });
+      return;
+    }
 
     const loggedBy = body.loggedBy;
     if (!isNonEmptyString(loggedBy)) {
       response.status(400).json({ message: 'loggedBy is required' });
       return;
     }
+    if (loggedBy.trim().length > MAX_LOGGED_BY_LENGTH) {
+      response.status(400).json({ message: `loggedBy must be at most ${MAX_LOGGED_BY_LENGTH} characters` });
+      return;
+    }
 
     let timestamp = new Date().toISOString().slice(0, 10);
     if (body.timestamp !== undefined) {
-      if (typeof body.timestamp !== 'string' || !DATE_RE.test(body.timestamp)) {
+      if (typeof body.timestamp !== 'string' || !isValidDateOnly(body.timestamp)) {
         response.status(400).json({ message: 'timestamp must be in YYYY-MM-DD format' });
         return;
       }
       timestamp = body.timestamp;
     }
 
-    const action = await insertAction({
+    const action = await createActionRecord({
       projectIds: (projectIds as string[]).map((id) => id.trim()),
       problem: problem.trim(),
       reason: reason.trim(),
@@ -112,7 +145,7 @@ export async function listActions(request: Request, response: Response): Promise
     if (typeof limit === 'string') {
       const parsed = Number.parseInt(limit, 10);
       if (Number.isFinite(parsed) && parsed > 0) {
-        filters.limit = parsed;
+        filters.limit = Math.min(parsed, 200);
       }
     }
 
@@ -126,14 +159,19 @@ export async function listActions(request: Request, response: Response): Promise
 
 /**
  * GET /api/v1/actions/search
- * Placeholder semantic search (ILIKE) — internals swapped for embeddings later
+ * Hybrid semantic + lexical search with automatic lexical fallback
  */
 export async function searchActions(request: Request, response: Response): Promise<void> {
   try {
-    const { q, limit } = request.query;
+    const { q, limit, projectId } = request.query;
 
     if (typeof q !== 'string' || q.trim().length < 3) {
       response.status(400).json({ message: 'Search query must be at least 3 characters' });
+      return;
+    }
+
+    if (!sanitizeActionSearchQuery(q)) {
+      response.status(400).json({ message: 'Search query must contain searchable text' });
       return;
     }
 
@@ -141,12 +179,17 @@ export async function searchActions(request: Request, response: Response): Promi
     if (typeof limit === 'string') {
       const parsed = Number.parseInt(limit, 10);
       if (Number.isFinite(parsed) && parsed > 0) {
-        parsedLimit = parsed;
+        parsedLimit = Math.min(parsed, env.actionSearchMaxResults);
       }
     }
 
-    const results = await querySearchActions(q.trim(), parsedLimit);
-    response.status(200).json(results);
+    const result = await querySearchActions({
+      query: q.trim(),
+      limit: parsedLimit,
+      projectId: typeof projectId === 'string' && projectId.trim() ? projectId.trim() : undefined,
+    });
+    response.setHeader('x-action-search-mode', result.mode);
+    response.status(200).json(result.rows);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to search actions';
     response.status(500).json({ message });

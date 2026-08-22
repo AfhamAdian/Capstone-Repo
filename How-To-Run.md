@@ -50,6 +50,62 @@ Then open **http://localhost:5173** in your browser.
 
 ---
 
+## Enable semantic action search (SiliconFlow + Supabase pgvector)
+
+The API always works: without SiliconFlow configuration it reports and uses
+`lexical_fallback`. No paid provider is used as a fallback.
+
+1. Create a SiliconFlow API key for an account with embedding allowance or free credits.
+2. Add at minimum this value to `backend/.env`:
+
+```dotenv
+SILICONFLOW_API_KEY=your-key
+```
+
+The defaults in `backend/.env.example` use SiliconFlow's official OpenAI-compatible
+endpoint, `Qwen/Qwen3-Embedding-0.6B`, 1024 dimensions, and a versioned embedding ID.
+Override them only when the SiliconFlow account exposes a different model under
+its free allowance. The currently configured test account exposes this Qwen model
+but returned HTTP 402 after its allowance was exhausted; in that state the app
+continues in lexical fallback mode until free allowance is available again.
+
+3. Apply the migration to a new environment (it has already been applied to the
+currently configured Supabase database):
+
+```bash
+set -a
+. backend/.env
+set +a
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -f supabase/migrations/20260822000000_action_semantic_search.sql
+```
+
+4. Start Redis, the API, and the worker, then backfill existing actions:
+
+```bash
+cd backend
+npm run backfill:action-embeddings
+```
+
+Safe inspection without writes:
+
+```bash
+cd backend
+npm run backfill:action-embeddings -- --dry-run
+```
+
+5. Verify API mode:
+
+```bash
+curl -i 'localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5'
+```
+
+The `x-action-search-mode` response header is `hybrid`, `semantic`, or `lexical`.
+The Log Action modal, global Actions view, and project Actions Library all use
+this endpoint with debouncing and stale-request cancellation.
+
+---
+
 ## Role-based testing
 
 The frontend login screen has a "Sign in as" picker with 3 options:

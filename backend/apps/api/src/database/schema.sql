@@ -180,6 +180,30 @@ CREATE TABLE public.actions (
 CREATE INDEX idx_actions_project_ids ON public.actions USING GIN (project_ids);
 CREATE INDEX idx_actions_action_date ON public.actions (action_date DESC);
 CREATE INDEX idx_actions_pending ON public.actions (effectiveness) WHERE effectiveness IS NULL;
+CREATE TABLE public.action_embeddings (
+  action_id uuid NOT NULL,
+  embedding_version text NOT NULL,
+  provider text NOT NULL,
+  model text NOT NULL,
+  dimensions integer NOT NULL,
+  content_hash text NOT NULL,
+  status text NOT NULL DEFAULT 'pending'::text,
+  embedding extensions.vector,
+  attempt_count integer NOT NULL DEFAULT 0,
+  last_error text,
+  embedded_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT action_embeddings_pkey PRIMARY KEY (action_id, embedding_version),
+  CONSTRAINT action_embeddings_action_id_fkey FOREIGN KEY (action_id) REFERENCES public.actions(id) ON DELETE CASCADE,
+  CONSTRAINT action_embeddings_provider_check CHECK (provider = 'siliconflow'::text),
+  CONSTRAINT action_embeddings_dimensions_check CHECK (dimensions > 0),
+  CONSTRAINT action_embeddings_status_check CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text])),
+  CONSTRAINT action_embeddings_attempt_count_check CHECK (attempt_count >= 0),
+  CONSTRAINT action_embeddings_ready_has_vector CHECK (status <> 'ready'::text OR embedding IS NOT NULL)
+);
+CREATE INDEX idx_action_embeddings_pending ON public.action_embeddings (status, updated_at)
+  WHERE status = ANY (ARRAY['pending'::text, 'failed'::text]);
 CREATE TABLE public.versioncontrolmetrics (
   id integer NOT NULL DEFAULT nextval('versioncontrolmetrics_id_seq'::regclass),
   snapshot_id integer NOT NULL UNIQUE,
