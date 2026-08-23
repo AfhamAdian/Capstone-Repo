@@ -7,6 +7,7 @@ export type {
   SurveyQuestionCategory,
   SurveyQuestionType,
   SurveyHealthContext,
+  SurveyIncidentSignals,
   GeneratedSurveyQuestion,
   GenerateSurveyQuestionsInput,
   QuestionScore,

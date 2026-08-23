@@ -5,6 +5,7 @@ import {
   listProjectsHandler,
   listProjectsHealthHandler,
   getProjectHealthDetail,
+  getProjectHealthProvenanceHandler,
 } from '../controllers/project.controller.js';
 import { requireAuth } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../utils/async-handler.js';
@@ -17,5 +18,6 @@ projectRouter.post('/', requireAuth, asyncHandler(createProjectHandler));
 // Read-only project + health-score dashboard feed, scoped to the caller's company. Registered
 // before '/:id' so the literal '/health' segment isn't swallowed by the :id param.
 projectRouter.get('/health', requireAuth, asyncHandler(listProjectsHealthHandler));
+projectRouter.get('/:projectId/health/provenance', requireAuth, asyncHandler(getProjectHealthProvenanceHandler));
 projectRouter.get('/:id', requireAuth, asyncHandler(getProjectHandler));
 projectRouter.get('/:projectId/health', requireAuth, asyncHandler(getProjectHealthDetail));

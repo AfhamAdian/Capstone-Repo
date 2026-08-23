@@ -10,6 +10,7 @@ import {
   listProjectsWithHealth,
   getProjectHealth,
 } from '../services/project.service.js';
+import { getProjectHealthProvenance } from '../services/health-provenance.service.js';
 
 function handleProjectError(error: unknown, response: Response): void {
   if (error instanceof ProjectError) {
@@ -86,6 +87,27 @@ export async function getProjectHealthDetail(request: Request, response: Respons
     response.status(200).json(health);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load project health';
+    response.status(500).json({ message });
+  }
+}
+
+/** GET /api/v1/projects/:projectId/health/provenance */
+export async function getProjectHealthProvenanceHandler(request: Request, response: Response): Promise<void> {
+  const projectId = Number(request.params.projectId);
+  if (!Number.isFinite(projectId) || projectId <= 0) {
+    response.status(400).json({ message: 'projectId must be a positive number' });
+    return;
+  }
+
+  try {
+    const provenance = await getProjectHealthProvenance(projectId);
+    if (!provenance) {
+      response.status(404).json({ message: 'No health score to explain yet' });
+      return;
+    }
+    response.status(200).json(provenance);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to load score provenance';
     response.status(500).json({ message });
   }
 }

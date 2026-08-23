@@ -464,13 +464,15 @@ function buildProjectHealth(
 
   const team = project.owner && project.repo ? `${project.owner}/${project.repo}` : (project.owner ?? '');
 
+  const round = (value: number | null | undefined): number => Math.round(value ?? 0);
+
   const subscores: HealthSubscores | null = latest
     ? {
-        delivery: latest.delivery_score ?? 0,
-        codeQuality: latest.code_quality_score ?? 0,
-        cicd: latest.cicd_score ?? 0,
-        teamHealth: latest.team_health_score ?? 0,
-        blockers: latest.blockers_score ?? 0,
+        delivery: round(latest.delivery_score),
+        codeQuality: round(latest.code_quality_score),
+        cicd: round(latest.cicd_score),
+        teamHealth: round(latest.team_health_score),
+        blockers: round(latest.blockers_score),
       }
     : null;
 

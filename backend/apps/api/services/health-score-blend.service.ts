@@ -11,26 +11,9 @@ import { logger } from '@libs/logger.js';
 import { getLatestRiskScoreForProject } from '../database/risk-score.js';
 import { getLatestInsightForProject, getSurveyById } from '../database/survey.js';
 import { saveProjectHealthScore } from '../database/project-health-score.js';
+import { blendCategory, blendOverall } from './health-score-weights.js';
 
 const log = logger.child({ component: 'health-score-blend-service' });
-
-const METRICS_WEIGHT = 0.6;
-const SURVEY_WEIGHT = 0.4;
-
-const CATEGORY_WEIGHTS = {
-  delivery: 0.25,
-  codeQuality: 0.2,
-  cicd: 0.2,
-  teamHealth: 0.2,
-  blockers: 0.15,
-} as const;
-
-function blend(metricsScore: number | null, surveyScore: number | null): number | null {
-  if (metricsScore === null && surveyScore === null) return null;
-  if (surveyScore === null) return metricsScore;
-  if (metricsScore === null) return surveyScore;
-  return metricsScore * METRICS_WEIGHT + surveyScore * SURVEY_WEIGHT;
-}
 
 export async function blendAndSaveProjectHealthScore(projectId: number, surveyId: number | null = null): Promise<void> {
   try {
@@ -44,25 +27,19 @@ export async function blendAndSaveProjectHealthScore(projectId: number, surveyId
     ]);
     const insight = insightRecord?.insight ?? null;
 
-    const deliveryScore = blend(riskScore?.delivery_score ?? null, insight?.scores?.delivery ?? null);
-    const codeQualityScore = blend(riskScore?.code_qaulity_score ?? null, insight?.scores?.codeQuality ?? null);
-    const cicdScore = blend(riskScore?.cicd_reliability_score ?? null, insight?.scores?.cicd ?? null);
-    const teamHealthScore = blend(riskScore?.team_health_score ?? null, insight?.scores?.teamHealth ?? null);
-    const blockersScore = blend(riskScore?.blockers_score ?? null, insight?.scores?.blockers ?? null);
+    const deliveryScore = blendCategory(riskScore?.delivery_score ?? null, insight?.scores?.delivery ?? null);
+    const codeQualityScore = blendCategory(riskScore?.code_qaulity_score ?? null, insight?.scores?.codeQuality ?? null);
+    const cicdScore = blendCategory(riskScore?.cicd_reliability_score ?? null, insight?.scores?.cicd ?? null);
+    const teamHealthScore = blendCategory(riskScore?.team_health_score ?? null, insight?.scores?.teamHealth ?? null);
+    const blockersScore = blendCategory(riskScore?.blockers_score ?? null, insight?.scores?.blockers ?? null);
 
-    const weighted = [
-      [deliveryScore, CATEGORY_WEIGHTS.delivery],
-      [codeQualityScore, CATEGORY_WEIGHTS.codeQuality],
-      [cicdScore, CATEGORY_WEIGHTS.cicd],
-      [teamHealthScore, CATEGORY_WEIGHTS.teamHealth],
-      [blockersScore, CATEGORY_WEIGHTS.blockers],
-    ] as const;
-
-    const presentWeight = weighted.filter(([score]) => score !== null).reduce((sum, [, w]) => sum + w, 0);
-    const overallScore =
-      presentWeight > 0
-        ? weighted.reduce((sum, [score, w]) => sum + (score ?? 0) * w, 0) / presentWeight
-        : null;
+    const overallScore = blendOverall({
+      delivery: deliveryScore,
+      codeQuality: codeQualityScore,
+      cicd: cicdScore,
+      teamHealth: teamHealthScore,
+      blockers: blockersScore,
+    });
 
     await saveProjectHealthScore({
       projectId,

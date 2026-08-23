@@ -13,6 +13,28 @@ export type SurveyQuestionType = 'text' | 'scale';
  * Gemini receives this as context, while survey sentiment is still scored from
  * response evidence independently to avoid circular health calculations.
  */
+/**
+ * Immutable project-health snapshot captured when a survey draft is generated.
+ * Gemini receives this as context, while survey sentiment is still scored from
+ * response evidence independently to avoid circular health calculations.
+ */
+export interface SurveyIncidentSignals {
+  snapshotId: number | null;
+  snapshotTime: string | null;
+  spilloverRatio: number | null;
+  consecutiveSpilloverCount: number | null;
+  blockedItemsCount: number | null;
+  overdueItemsCount: number | null;
+  scopeChurnRatio: number | null;
+  midSprintAdditions: number | null;
+  deploymentsPerWeek: number | null;
+  deploymentFailureRatePercent: number | null;
+  pipelineSuccessRatePercent: number | null;
+  stalePrCount: number | null;
+  prCycleTimeHours: number | null;
+  commitsPerWeek: number | null;
+}
+
 export interface SurveyHealthContext {
   capturedAt: string;
   overallScore: number | null;
@@ -26,6 +48,8 @@ export interface SurveyHealthContext {
   trendDelta: number | null;
   metricsSnapshotId: number | null;
   source: 'project_health_score' | 'unavailable';
+  /** Last-cycle delivery/CI facts. Optional so older stored surveys still parse. */
+  incidents?: SurveyIncidentSignals | null;
 }
 
 export interface GeneratedSurveyQuestion {
