@@ -1,0 +1,38 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.projectmanagementmetrics (
+  id integer NOT NULL DEFAULT nextval('projectmanagementmetrics_id_seq'::regclass),
+  snapshot_id integer NOT NULL UNIQUE,
+  sprint_completion_rate numeric,
+  issue_cycle_time_avg_days numeric,
+  throughput_per_week integer,
+  carryover_rate numeric,
+  scope_creep_rate numeric,
+  estimation_accuracy numeric,
+  blocked_items_count integer,
+  blocked_items_avg_age_days numeric,
+  overdue_items_count integer,
+  lead_time_avg_days numeric,
+  lead_time_median_days numeric,
+  lead_time_p95_days numeric,
+  lead_time_variance numeric,
+  spillover_ratio numeric,
+  story_point_spillover numeric,
+  consecutive_spillover_count integer,
+  carryover_avg_age_days numeric,
+  blocked_ticket_percent numeric,
+  avg_blocked_duration_days numeric,
+  max_blocked_duration_days numeric,
+  blocked_reentry_count integer,
+  mid_sprint_additions integer,
+  scope_churn_ratio numeric,
+  priority_change_count integer,
+  removed_scope_ratio numeric,
+  in_progress_avg_age_days numeric,
+  stale_ticket_ratio numeric,
+  state_movement_count integer,
+  health_score numeric,
+  CONSTRAINT projectmanagementmetrics_pkey PRIMARY KEY (id),
+  CONSTRAINT projectmanagementmetrics_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.projectsnapshot(id)
+);

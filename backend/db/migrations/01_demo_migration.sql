@@ -1,0 +1,3 @@
+-- this is a demo migration file for testing purposes
+-- use numbered migration files for actual migrations
+-- run that migration files serially.
