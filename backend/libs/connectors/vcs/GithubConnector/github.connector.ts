@@ -4,17 +4,18 @@
 
 import { Octokit } from '@octokit/rest';
 import { IVcsConnector, VcsConnectorOutput } from '../connector.interface.js';
-import { CreateVcsConnectorInput } from '../types.js';
+import { CreateVcsConnectorInput, VcsConnectorOptions } from '../types.js';
 import { GitHubMetricsResponse } from '../github-metrics.types.js';
 import type { IConnector } from '@libs/sync/index.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
-const GRAPHQL_PAGE_SIZE = 50;
-const GRAPHQL_REVIEWS_PAGE_SIZE = 50;
-const GRAPHQL_THREADS_PAGE_SIZE = 100;
-const GRAPHQL_LABELS_PAGE_SIZE = 20;
+const DEFAULT_COMMIT_WINDOW_DAYS = 30;
+const DEFAULT_GRAPHQL_PAGE_SIZE = 50;
+const DEFAULT_GRAPHQL_REVIEWS_PAGE_SIZE = 50;
+const DEFAULT_GRAPHQL_THREADS_PAGE_SIZE = 100;
+const DEFAULT_GRAPHQL_LABELS_PAGE_SIZE = 20;
 
 const STALE_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT = 50;
@@ -22,13 +23,13 @@ const BUG_LABEL_PATTERNS = [/bug/i, /defect/i, /error/i, /type:\s*bug/i, /kind\/
 const FEATURE_LABEL_PATTERNS = [/feature/i, /enhancement/i, /\bfeat\b/i, /improvement/i, /type:\s*feature/i, /story/i];
 
 const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
-	query($owner: String!, $repo: String!, $cursor: String, $reviewsPageSize: Int!, $threadsPageSize: Int!) {
+	query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!, $reviewsPageSize: Int!, $threadsPageSize: Int!) {
 		rateLimit {
 			remaining
 			resetAt
 		}
 		repository(owner: $owner, name: $repo) {
-			pullRequests(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+			pullRequests(first: $pageSize, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
 				pageInfo {
 					hasNextPage
 					endCursor
@@ -68,13 +69,13 @@ const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
 `;
 
 const BRANCHES_GRAPHQL_QUERY = `
-	query($owner: String!, $repo: String!, $cursor: String) {
+	query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!) {
 		rateLimit {
 			remaining
 			resetAt
 		}
 		repository(owner: $owner, name: $repo) {
-			refs(refPrefix: "refs/heads/", first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
+			refs(refPrefix: "refs/heads/", first: $pageSize, after: $cursor) {
 				pageInfo {
 					hasNextPage
 					endCursor
@@ -93,13 +94,13 @@ const BRANCHES_GRAPHQL_QUERY = `
 `;
 
 const ISSUES_GRAPHQL_QUERY = `
-	query($owner: String!, $repo: String!, $cursor: String, $labelsPageSize: Int!) {
+	query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!, $labelsPageSize: Int!) {
 		rateLimit {
 			remaining
 			resetAt
 		}
 		repository(owner: $owner, name: $repo) {
-			issues(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+			issues(first: $pageSize, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
 				pageInfo {
 					hasNextPage
 					endCursor
@@ -126,6 +127,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	private credentials: { token: string };
 	private project: { owner: string; repo: string };
 	private octokit: Octokit;
+	private options: Required<VcsConnectorOptions>;
 
 	constructor(input: CreateVcsConnectorInput) {
 		if (!input.credentials.token) {
@@ -141,6 +143,13 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			repo: input.project.repo,
 		};
 		this.octokit = new Octokit({ auth: input.credentials.token });
+		this.options = {
+			commitWindowDays: input.options?.commitWindowDays ?? DEFAULT_COMMIT_WINDOW_DAYS,
+			graphqlPageSize: input.options?.graphqlPageSize ?? DEFAULT_GRAPHQL_PAGE_SIZE,
+			reviewsPageSize: input.options?.reviewsPageSize ?? DEFAULT_GRAPHQL_REVIEWS_PAGE_SIZE,
+			threadsPageSize: input.options?.threadsPageSize ?? DEFAULT_GRAPHQL_THREADS_PAGE_SIZE,
+			labelsPageSize: input.options?.labelsPageSize ?? DEFAULT_GRAPHQL_LABELS_PAGE_SIZE,
+		};
 	}
 
 	private async checkRateLimit(): Promise<void> {
@@ -180,7 +189,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			this.fetchAllPullRequests(),
 			this.fetchPullRequestsWithReviews(),
 			this.fetchAllIssuesGraphQL(),
-			this.fetchCommits(30),
+			this.fetchCommits(this.options.commitWindowDays),
 			this.fetchBranchesGraphQL(),
 			this.getDefaultBranch(),
 		]);
@@ -308,6 +317,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 				owner,
 				repo,
 				cursor,
+				pageSize: this.options.graphqlPageSize,
 			});
 
 			await this.checkGraphQLRateLimit(response.rateLimit);
@@ -347,8 +357,9 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 				owner,
 				repo,
 				cursor,
-				reviewsPageSize: GRAPHQL_REVIEWS_PAGE_SIZE,
-				threadsPageSize: GRAPHQL_THREADS_PAGE_SIZE,
+				pageSize: this.options.graphqlPageSize,
+				reviewsPageSize: this.options.reviewsPageSize,
+				threadsPageSize: this.options.threadsPageSize,
 			});
 
 			await this.checkGraphQLRateLimit(response.rateLimit);
@@ -396,7 +407,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 				owner,
 				repo,
 				cursor,
-				labelsPageSize: GRAPHQL_LABELS_PAGE_SIZE,
+				pageSize: this.options.graphqlPageSize,
+				labelsPageSize: this.options.labelsPageSize,
 			});
 
 			await this.checkGraphQLRateLimit(response.rateLimit);
@@ -784,21 +796,83 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 	}
 
+	// Only "==" pins resolve to a concrete version — ranges (">=", "~="), unpinned
+	// entries, and options/comments/blank lines are skipped, same policy as npm's extractPinnedVersion
+	private async fetchRequirementsTxt(): Promise<Record<string, string> | null> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.repos.getContent({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				path: 'requirements.txt',
+			});
+
+			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
+
+			const content = Buffer.from(data.content, 'base64').toString('utf-8');
+			const dependencies: Record<string, string> = {};
+
+			for (const rawLine of content.split('\n')) {
+				const line = rawLine.split('#')[0]?.trim() ?? '';
+				if (!line || line.startsWith('-')) continue;
+
+				const match = line.match(/^([A-Za-z0-9_.-]+)(?:\[[^\]]*\])?\s*==\s*([0-9][^\s;]*)/);
+				if (match?.[1] && match[2]) {
+					dependencies[match[1]] = match[2];
+				}
+			}
+
+			return dependencies;
+		} catch {
+			return null;
+		}
+	}
+
+	private async fetchPyPiDependencyLagDays(packageName: string, currentVersion: string): Promise<number | null> {
+		try {
+			const response = await fetch(`https://pypi.org/pypi/${packageName}/json`);
+			if (!response.ok) return null;
+
+			const data: any = await response.json();
+			const latestVersion = data.info?.version;
+			const releases = data.releases ?? {};
+
+			const currentPublishedAt = releases[currentVersion]?.[0]?.upload_time_iso_8601;
+			const latestPublishedAt = latestVersion ? releases[latestVersion]?.[0]?.upload_time_iso_8601 : null;
+			if (!currentPublishedAt || !latestPublishedAt) return null;
+
+			const lagMs = new Date(latestPublishedAt).getTime() - new Date(currentPublishedAt).getTime();
+			return lagMs > 0 ? lagMs / (24 * 60 * 60 * 1000) : 0;
+		} catch {
+			return null;
+		}
+	}
+
 	private async calculateDependencyUpdateLag(): Promise<number | null> {
-		const manifest = await this.fetchPackageManifest();
-		if (!manifest) return null;
+		const [npmManifest, pythonManifest] = await Promise.all([
+			this.fetchPackageManifest(),
+			this.fetchRequirementsTxt(),
+		]);
 
-		const allDeps = { ...manifest.dependencies, ...manifest.devDependencies };
-		const entries = Object.entries(allDeps);
-		if (entries.length === 0) return null;
+		const lagDaysPromises: Promise<number | null>[] = [];
 
-		const lagDaysResults = await Promise.all(
-			entries.map(([name, versionSpec]) => {
+		if (npmManifest) {
+			const allNpmDeps = { ...npmManifest.dependencies, ...npmManifest.devDependencies };
+			for (const [name, versionSpec] of Object.entries(allNpmDeps)) {
 				const version = this.extractPinnedVersion(versionSpec);
-				return version ? this.fetchDependencyLagDays(name, version) : Promise.resolve(null);
-			}),
-		);
+				if (version) lagDaysPromises.push(this.fetchDependencyLagDays(name, version));
+			}
+		}
 
+		if (pythonManifest) {
+			for (const [name, version] of Object.entries(pythonManifest)) {
+				lagDaysPromises.push(this.fetchPyPiDependencyLagDays(name, version));
+			}
+		}
+
+		if (lagDaysPromises.length === 0) return null;
+
+		const lagDaysResults = await Promise.all(lagDaysPromises);
 		const lagDaysList = lagDaysResults.filter((d): d is number => d !== null);
 		if (lagDaysList.length === 0) return null;
 

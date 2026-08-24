@@ -16,8 +16,17 @@ export interface VcsProject {
   id?: string; // GitLab: project ID (numeric or encoded)
 }
 
+export interface VcsConnectorOptions {
+  commitWindowDays?: number;
+  graphqlPageSize?: number;
+  reviewsPageSize?: number;
+  threadsPageSize?: number;
+  labelsPageSize?: number;
+}
+
 export interface CreateVcsConnectorInput {
   provider: VcsProvider;
   credentials: VcsCredentials;
   project: VcsProject;
+  options?: VcsConnectorOptions;
 }
