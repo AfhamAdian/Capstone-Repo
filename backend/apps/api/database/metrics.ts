@@ -69,7 +69,7 @@ async function insertVersionControlMetrics(snapshotId: number, data: GitHubMetri
         issues_closed_per_week: metrics.issuesClosedPerWeek,
         issue_cycle_time_avg_days: metrics.issueCycleTimeAvgDays,
         pr_review_coverage_percent: metrics.prReviewCoveragePercent,
-        review_per_pr_avg: metrics.reviewPerPrAvg,
+        review_per_pr_avg: metrics.reviewIterationCountAvg,
         self_merged_pr_rate_percent: metrics.selfMergedPrRatePercent,
         time_to_first_review_avg_hours: metrics.timeToFirstReviewAvgHours,
         files_modified_gte_10_times: metrics.codeChurn.filesModifiedGte10Times,

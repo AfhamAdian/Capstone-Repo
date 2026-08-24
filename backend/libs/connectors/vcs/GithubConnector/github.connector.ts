@@ -11,6 +11,44 @@ import type { IConnector } from '@libs/sync/index.js';
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
+const GRAPHQL_PAGE_SIZE = 50;
+const GRAPHQL_REVIEWS_PAGE_SIZE = 50;
+
+const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
+	query($owner: String!, $repo: String!, $cursor: String, $reviewsPageSize: Int!) {
+		rateLimit {
+			remaining
+			resetAt
+		}
+		repository(owner: $owner, name: $repo) {
+			pullRequests(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					number
+					createdAt
+					mergedAt
+					author {
+						login
+					}
+					mergedBy {
+						login
+					}
+					reviews(first: $reviewsPageSize) {
+						nodes {
+							submittedAt
+							author {
+								login
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+`;
 
 export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IConnector {
 	private credentials: { token: string };
@@ -48,6 +86,15 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 	}
 
+	private async checkGraphQLRateLimit(rateLimit: { remaining: number; resetAt: string }): Promise<void> {
+		if (!rateLimit) return;
+		if (rateLimit.remaining < RATE_LIMIT_THRESHOLD) {
+			const resetAt = new Date(rateLimit.resetAt).getTime();
+			const waitMs = Math.max(resetAt - Date.now(), RATE_LIMIT_PAUSE_MS);
+			await new Promise((resolve) => setTimeout(resolve, waitMs));
+		}
+	}
+
 	private getTimeframe(days: number): string {
 		return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 	}
@@ -56,9 +103,10 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const { owner, repo } = this.project;
 		const now = new Date();
 
-		const [issues, prs, commits, branches, defaultBranch] = await Promise.all([
+		const [issues, prs, reviewPrs, commits, branches, defaultBranch] = await Promise.all([
 			this.fetchClosedIssues(),
 			this.fetchAllPullRequests(),
+			this.fetchPullRequestsWithReviews(),
 			this.fetchCommits(30),
 			this.fetchBranches(),
 			this.getDefaultBranch(),
@@ -69,10 +117,10 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const issueReopenRatePercent = await this.calculateIssueReopenRate();
 		const bugVsFeatureRatio = await this.calculateBugVsFeatureRatio();
 		const codeChurn = await this.calculateCodeChurn(commits);
-		const prReviewCoverage = await this.calculatePrReviewCoverage(prs);
-		const reviewIterationCountAvg = await this.calculateReviewIterationCount(prs);
-		const selfMergedPrRate = await this.calculateSelfMergedPrRate(prs);
-		const timeToFirstReview = await this.calculateTimeToFirstReview(prs);
+		const prReviewCoverage = this.calculatePrReviewCoverage(reviewPrs);
+		const reviewIterationCountAvg = this.calculateReviewIterationCount(reviewPrs);
+		const selfMergedPrRate = this.calculateSelfMergedPrRate(reviewPrs);
+		const timeToFirstReview = this.calculateTimeToFirstReview(reviewPrs);
 		const prsMergedPerWeek = await this.calculatePrsMergedPerWeek();
 		const prMergeTimeAvgHours = await this.calculatePrMergeTime();
 		const reviewCommentsPerPrAvg = await this.calculateReviewCommentsPerPr();
@@ -195,14 +243,42 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return data.default_branch;
 	}
 
-	private async fetchReviewsForPr(prNumber: number): Promise<any[]> {
-		await this.checkRateLimit();
-		return this.octokit.paginate(this.octokit.pulls.listReviews, {
-			owner: this.project.owner,
-			repo: this.project.repo,
-			pull_number: prNumber,
-			per_page: PAGE_SIZE,
-		});
+	private async fetchPullRequestsWithReviews(): Promise<any[]> {
+		const { owner, repo } = this.project;
+		const prs: any[] = [];
+		let cursor: string | null = null;
+		let hasNextPage = true;
+
+		while (hasNextPage) {
+			const response: any = await this.octokit.graphql(PULL_REQUESTS_WITH_REVIEWS_QUERY, {
+				owner,
+				repo,
+				cursor,
+				reviewsPageSize: GRAPHQL_REVIEWS_PAGE_SIZE,
+			});
+
+			await this.checkGraphQLRateLimit(response.rateLimit);
+
+			const connection = response.repository.pullRequests;
+			for (const node of connection.nodes) {
+				prs.push({
+					number: node.number,
+					authorLogin: node.author?.login ?? null,
+					createdAt: node.createdAt,
+					mergedAt: node.mergedAt,
+					mergedByLogin: node.mergedBy?.login ?? null,
+					reviews: (node.reviews?.nodes ?? []).map((r: any) => ({
+						authorLogin: r.author?.login ?? null,
+						submittedAt: r.submittedAt,
+					})),
+				});
+			}
+
+			hasNextPage = connection.pageInfo.hasNextPage;
+			cursor = connection.pageInfo.endCursor;
+		}
+
+		return prs;
 	}
 
 	private calculateIssuesClosedPerWeek(issues: any[]): number {
@@ -261,99 +337,66 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return { filesModifiedGte10Times, filesModifiedByGte3People };
 	}
 
-	private async calculatePrReviewCoverage(prs: any[]): Promise<number> {
+	private calculatePrReviewCoverage(prs: any[]): number {
 		if (prs.length === 0) return 0;
 
 		let reviewed = 0;
 		for (const pr of prs) {
-			try {
-				const reviews = await this.fetchReviewsForPr(pr.number);
-				const hasNonAuthorReview = reviews.some(
-					(r: any) => r.user?.login && r.user.login !== pr.user?.login,
-				);
+			const hasNonAuthorReview = pr.reviews.some(
+				(r: any) => r.authorLogin && r.authorLogin !== pr.authorLogin,
+			);
 
-				if (hasNonAuthorReview) reviewed += 1;
-			} catch {
-				// Skip on error
-			}
+			if (hasNonAuthorReview) reviewed += 1;
 		}
 
 		return Math.round((reviewed / prs.length) * 100);
 	}
 
-	private async calculateReviewIterationCount(prs: any[]): Promise<number> {
+	private calculateReviewIterationCount(prs: any[]): number {
 		if (prs.length === 0) return 0;
 
 		let total = 0;
 		for (const pr of prs) {
-			try {
-				const reviews = await this.fetchReviewsForPr(pr.number);
-				const nonAuthorReviews = reviews.filter(
-					(r: any) => r.user?.login && r.user.login !== pr.user?.login,
-				);
+			const nonAuthorReviews = pr.reviews.filter(
+				(r: any) => r.authorLogin && r.authorLogin !== pr.authorLogin,
+			);
 
-				total += nonAuthorReviews.length;
-			} catch {
-				// Skip on error
-			}
+			total += nonAuthorReviews.length;
 		}
 
 		return Math.round((total / prs.length) * 10) / 10;
 	}
 
-	private async calculateSelfMergedPrRate(prs: any[]): Promise<number> {
-		const mergedPrs = prs.filter((pr: any) => pr.merged_at);
+	private calculateSelfMergedPrRate(prs: any[]): number {
+		const mergedPrs = prs.filter((pr: any) => pr.mergedAt);
 		if (mergedPrs.length === 0) return 0;
 
 		let selfMerged = 0;
-
 		for (const pr of mergedPrs) {
-			try {
-				let mergedByLogin = pr.merged_by?.login;
-
-				if (!mergedByLogin) {
-					await this.checkRateLimit();
-					const { data: fullPr } = await this.octokit.pulls.get({
-						owner: this.project.owner,
-						repo: this.project.repo,
-						pull_number: pr.number,
-					});
-					mergedByLogin = fullPr.merged_by?.login;
-				}
-
-				if (pr.user?.login && mergedByLogin && pr.user.login === mergedByLogin) {
-					selfMerged += 1;
-				}
-			} catch {
-				// Skip on error
+			if (pr.authorLogin && pr.mergedByLogin && pr.authorLogin === pr.mergedByLogin) {
+				selfMerged += 1;
 			}
 		}
 
 		return Math.round((selfMerged / mergedPrs.length) * 100);
 	}
 
-	private async calculateTimeToFirstReview(prs: any[]): Promise<number | null> {
+	private calculateTimeToFirstReview(prs: any[]): number | null {
 		if (prs.length === 0) return null;
 
 		let totalHours = 0;
 		let prWithReviews = 0;
 
 		for (const pr of prs) {
-			try {
-				const reviews = await this.fetchReviewsForPr(pr.number);
+			const nonAuthorReview = pr.reviews.find(
+				(r: any) => r.authorLogin !== pr.authorLogin && r.submittedAt,
+			);
 
-				const nonAuthorReview = reviews.find(
-					(r: any) => r.user?.login !== pr.user?.login && r.submitted_at,
-				);
-
-				if (nonAuthorReview) {
-					const createdAt = new Date(pr.created_at).getTime();
-					const reviewedAt = new Date(nonAuthorReview.submitted_at || new Date()).getTime();
-					totalHours += (reviewedAt - createdAt) / (1000 * 60 * 60);
-					prWithReviews += 1;
-				}
-			} catch {
-				// Skip on error
+			if (nonAuthorReview) {
+				const createdAt = new Date(pr.createdAt).getTime();
+				const reviewedAt = new Date(nonAuthorReview.submittedAt).getTime();
+				totalHours += (reviewedAt - createdAt) / (1000 * 60 * 60);
+				prWithReviews += 1;
 			}
 		}
 
