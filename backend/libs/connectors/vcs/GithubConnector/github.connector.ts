@@ -3,16 +3,16 @@
  */
 
 import { Octokit } from '@octokit/rest';
-import { IVcsConnector } from '../connector.interface.js';
+import { IVcsConnector, VcsConnectorOutput } from '../connector.interface.js';
 import { CreateVcsConnectorInput } from '../types.js';
 import { GitHubMetricsResponse } from '../github-metrics.types.js';
-import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
+import type { IConnector } from '@libs/sync/index.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
 
-export class GitHubConnector implements IVcsConnector, IConnector {
+export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IConnector {
 	private credentials: { token: string };
 	private project: { owner: string; repo: string };
 	private octokit: Octokit;
@@ -52,7 +52,7 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 		return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 	}
 
-	async getData(): Promise<ConnectorOutput> {
+	async getData(): Promise<VcsConnectorOutput<GitHubMetricsResponse>> {
 		const { owner, repo } = this.project;
 		const now = new Date();
 
@@ -66,13 +66,22 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 
 		const issuesClosedPerWeek = this.calculateIssuesClosedPerWeek(issues);
 		const issueCycleTimeAvgDays = this.calculateIssueCycleTime(issues);
+		const issueReopenRatePercent = await this.calculateIssueReopenRate();
+		const bugVsFeatureRatio = await this.calculateBugVsFeatureRatio();
 		const codeChurn = await this.calculateCodeChurn(commits);
 		const prReviewCoverage = await this.calculatePrReviewCoverage(prs);
-		const reviewPerPrAvg = await this.calculateReviewPerPr(prs);
+		const reviewIterationCountAvg = await this.calculateReviewIterationCount(prs);
 		const selfMergedPrRate = await this.calculateSelfMergedPrRate(prs);
 		const timeToFirstReview = await this.calculateTimeToFirstReview(prs);
+		const prsMergedPerWeek = await this.calculatePrsMergedPerWeek();
+		const prMergeTimeAvgHours = await this.calculatePrMergeTime();
+		const reviewCommentsPerPrAvg = await this.calculateReviewCommentsPerPr();
+		const unresolvedDiscussionThreadsAtMergeCount =
+			await this.calculateUnresolvedDiscussionThreads();
+		const reviewCommentsPer100LinesAvg = await this.calculateReviewCommentsPer100Lines();
 		const commitMessageQuality = this.calculateCommitMessageQuality(commits);
 		const stalePrCount = this.calculateStalePrCount(prs);
+		const staleIssuesCount = await this.calculateStaleIssuesCount();
 		const longLivedBranches = this.calculateLongLivedBranches(branches, defaultBranch);
 		const busFactor = this.calculateBusFactor(commits);
 		const codeOwnershipConcentration = await this.calculateCodeOwnershipConcentration(
@@ -85,6 +94,7 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 		);
 		const reviewNetworkDensity = this.calculateReviewNetworkDensity(prs);
 		const prRevertRate = this.calculatePrRevertRate(prs);
+		const securityVulnerabilityCount = await this.calculateSecurityVulnerabilityCount();
 		const dependencyUpdateLag = await this.calculateDependencyUpdateLag();
 
 		const metrics: GitHubMetricsResponse = {
@@ -97,19 +107,28 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 			metrics: {
 				issuesClosedPerWeek,
 				issueCycleTimeAvgDays,
-				codeChurn,
-				prReviewCoveragePercent: prReviewCoverage,
-				reviewPerPrAvg,
-				selfMergedPrRatePercent: selfMergedPrRate,
+				issueReopenRatePercent,
+				bugVsFeatureRatio,
+				prsMergedPerWeek,
+				prMergeTimeAvgHours,
 				timeToFirstReviewAvgHours: timeToFirstReview,
+				reviewCommentsPerPrAvg,
+				prRevertRatePercent: prRevertRate,
+				codeChurn,
 				commitMessageQuality,
-				stalePrCount,
-				longLivedBranchesCount: longLivedBranches,
+				unresolvedDiscussionThreadsAtMergeCount,
+				reviewCommentsPer100LinesAvg,
 				busFactor,
 				codeOwnershipConcentration,
-				activeContributionsPerWeek,
 				reviewNetworkDensity,
-				prRevertRatePercent: prRevertRate,
+				securityVulnerabilityCount,
+				staleIssuesCount,
+				stalePrCount,
+				reviewIterationCountAvg,
+				prReviewCoveragePercent: prReviewCoverage,
+				selfMergedPrRatePercent: selfMergedPrRate,
+				longLivedBranchesCount: longLivedBranches,
+				activeContributionsPerWeek,
 				dependencyUpdateLagAvgDays: dependencyUpdateLag,
 			},
 		};
@@ -262,7 +281,7 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 		return Math.round((reviewed / prs.length) * 100);
 	}
 
-	private async calculateReviewPerPr(prs: any[]): Promise<number> {
+	private async calculateReviewIterationCount(prs: any[]): Promise<number> {
 		if (prs.length === 0) return 0;
 
 		let total = 0;
@@ -530,6 +549,44 @@ export class GitHubConnector implements IVcsConnector, IConnector {
 	}
 
 	private async calculateDependencyUpdateLag(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateIssueReopenRate(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateBugVsFeatureRatio(): Promise<
+		GitHubMetricsResponse['metrics']['bugVsFeatureRatio']
+	> {
+		return { bugCount: 0, featureCount: 0, totalIssues: 0, classificationCoveragePercent: 0, ratio: null };
+	}
+
+	private async calculatePrsMergedPerWeek(): Promise<number> {
+		return 0;
+	}
+
+	private async calculatePrMergeTime(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateReviewCommentsPerPr(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateUnresolvedDiscussionThreads(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateReviewCommentsPer100Lines(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateSecurityVulnerabilityCount(): Promise<number | null> {
+		return null;
+	}
+
+	private async calculateStaleIssuesCount(): Promise<number | null> {
 		return null;
 	}
 }
