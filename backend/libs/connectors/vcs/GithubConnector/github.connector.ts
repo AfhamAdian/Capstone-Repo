@@ -215,7 +215,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const commitMessageQuality = this.calculateCommitMessageQuality(commits);
 		const stalePrCount = this.calculateStalePrCount(prs);
 		const staleIssuesCount = this.calculateStaleIssuesCount(graphqlIssues);
-		const longLivedBranches = this.calculateLongLivedBranches(branches, defaultBranch);
+		const longLivedBranches = await this.calculateLongLivedBranches(branches, defaultBranch);
 		const busFactor = this.calculateBusFactor(commits);
 		const codeOwnershipConcentration = await this.calculateCodeOwnershipConcentration(
 			commits,
@@ -596,13 +596,37 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		).length;
 	}
 
-	private calculateLongLivedBranches(branches: any[], defaultBranch: string): number {
+	// ahead_by === 0 means every commit on the branch is already reachable from
+	// defaultBranch — i.e. it's fully merged, just not deleted yet. On failure
+	// (e.g. branch/network issue) we don't assume it's merged, so it still counts.
+	private async isBranchMerged(branchName: string, defaultBranch: string): Promise<boolean> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.repos.compareCommitsWithBasehead({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				basehead: `${defaultBranch}...${branchName}`,
+			});
+			return data.ahead_by === 0;
+		} catch {
+			return false;
+		}
+	}
+
+	private async calculateLongLivedBranches(branches: any[], defaultBranch: string): Promise<number> {
 		const threshold = Date.now() - this.options.longLivedBranchThresholdDays * 24 * 60 * 60 * 1000;
-		return branches.filter((branch: any) => {
+
+		const staleCandidates = branches.filter((branch: any) => {
 			if (branch.name === defaultBranch) return false;
 			if (!branch.lastCommitDate) return false;
 			return new Date(branch.lastCommitDate).getTime() < threshold;
-		}).length;
+		});
+
+		const mergedFlags = await Promise.all(
+			staleCandidates.map((branch: any) => this.isBranchMerged(branch.name, defaultBranch)),
+		);
+
+		return staleCandidates.filter((_, i) => !mergedFlags[i]).length;
 	}
 
 	private calculateBusFactor(commits: any[]): number {
