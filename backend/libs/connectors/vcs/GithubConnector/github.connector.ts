@@ -37,7 +37,10 @@ const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
 				}
 				nodes {
 					number
+					title
+					state
 					createdAt
+					updatedAt
 					mergedAt
 					additions
 					deletions
@@ -189,9 +192,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const { owner, repo } = this.project;
 		const now = new Date();
 
-		const [issues, prs, reviewPrs, graphqlIssues, commits, branches, defaultBranch] = await Promise.all([
+		const [issues, reviewPrs, graphqlIssues, commits, branches, defaultBranch] = await Promise.all([
 			this.fetchClosedIssues(),
-			this.fetchAllPullRequests(),
 			this.fetchPullRequestsWithReviews(),
 			this.fetchAllIssuesGraphQL(),
 			this.fetchCommits(this.options.commitWindowDays),
@@ -215,7 +217,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			this.calculateUnresolvedDiscussionThreads(reviewPrs);
 		const reviewCommentsPer100LinesAvg = this.calculateReviewCommentsPer100Lines(reviewPrs);
 		const commitMessageQuality = this.calculateCommitMessageQuality(commits);
-		const stalePrCount = this.calculateStalePrCount(prs);
+		const stalePrCount = this.calculateStalePrCount(reviewPrs);
 		const staleIssuesCount = this.calculateStaleIssuesCount(graphqlIssues);
 		const longLivedBranches = await this.calculateLongLivedBranches(branches, defaultBranch);
 		const busFactor = this.calculateBusFactor(commits);
@@ -224,11 +226,11 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		);
 		const activeContributionsPerWeek = this.calculateActiveContributionsPerWeek(
 			commits,
-			prs,
+			reviewPrs,
 			issues,
 		);
 		const reviewNetworkDensity = this.calculateReviewNetworkDensity(reviewPrs);
-		const prRevertRate = this.calculatePrRevertRate(prs);
+		const prRevertRate = this.calculatePrRevertRate(reviewPrs);
 		const securityVulnerabilityCount = await this.calculateSecurityVulnerabilityCount();
 		const dependencyUpdateLag = await this.calculateDependencyUpdateLag(defaultBranch);
 
@@ -288,18 +290,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return issues.filter((i: any) => !('pull_request' in i));
 	}
 
-	private async fetchAllPullRequests(): Promise<any[]> {
-		await this.checkRateLimit();
-		const prs = await this.octokit.paginate(this.octokit.pulls.list, {
-			owner: this.project.owner,
-			repo: this.project.repo,
-			state: 'all',
-			per_page: PAGE_SIZE,
-		});
-		return prs;
-	}
-
-	private async fetchCommits(daysBack: number): Promise<any[]> {
+private async fetchCommits(daysBack: number): Promise<any[]> {
 		await this.checkRateLimit();
 		const since = this.getTimeframe(daysBack);
 		const commits = await this.octokit.paginate(this.octokit.repos.listCommits, {
@@ -376,8 +367,11 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 
 				prs.push({
 					number: node.number,
+					title: node.title,
+					state: node.state,
 					authorLogin: node.author?.login ?? null,
 					createdAt: node.createdAt,
+					updatedAt: node.updatedAt,
 					mergedAt: node.mergedAt,
 					mergedByLogin: node.mergedBy?.login ?? null,
 					additions: node.additions ?? 0,
@@ -594,7 +588,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	private calculateStalePrCount(prs: any[]): number {
 		const twoWeeksAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
 		return prs.filter(
-			(pr: any) => pr.state === 'open' && new Date(pr.updated_at).getTime() < twoWeeksAgo,
+			(pr: any) => pr.state === 'OPEN' && new Date(pr.updatedAt).getTime() < twoWeeksAgo,
 		).length;
 	}
 
@@ -721,8 +715,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 
 		for (const pr of prs) {
-			if (new Date(pr.created_at).getTime() > oneWeekAgo) {
-				contributors.add(pr.user?.login || 'unknown');
+			if (new Date(pr.createdAt).getTime() > oneWeekAgo) {
+				contributors.add(pr.authorLogin || 'unknown');
 			}
 		}
 
@@ -759,7 +753,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	}
 
 	private calculatePrRevertRate(prs: any[]): number {
-		const mergedPrs = prs.filter((pr: any) => pr.merged_at);
+		const mergedPrs = prs.filter((pr: any) => pr.mergedAt);
 		if (mergedPrs.length === 0) return 0;
 
 		let revertedCount = 0;
