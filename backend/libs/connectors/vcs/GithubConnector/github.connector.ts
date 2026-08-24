@@ -94,6 +94,8 @@ const BRANCHES_GRAPHQL_QUERY = `
 	}
 `;
 
+type JavaDependency = { groupId: string; artifactId: string; version: string };
+
 const ISSUES_GRAPHQL_QUERY = `
 	query($owner: String!, $repo: String!, $cursor: String, $pageSize: Int!, $labelsPageSize: Int!) {
 		rateLimit {
@@ -772,9 +774,10 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 
 	// Vendor/build directories are excluded since a committed one (accidentally
 	// or otherwise) would otherwise flood results with manifests that aren't this project's own
-	private static readonly VENDOR_DIR_PATTERN = /(^|\/)(node_modules|vendor|\.venv|venv|dist|build)\//;
+	private static readonly VENDOR_DIR_PATTERN =
+		/(^|\/)(node_modules|vendor|\.venv|venv|dist|build|target|\.gradle)\//;
 
-	private async findManifestPaths(filename: string, treeSha: string): Promise<string[]> {
+	private async findManifestPaths(filenames: string[], treeSha: string): Promise<string[]> {
 		try {
 			await this.checkRateLimit();
 			const { data } = await this.octokit.git.getTree({
@@ -789,7 +792,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 					(entry: any) =>
 						entry.type === 'blob' &&
 						typeof entry.path === 'string' &&
-						entry.path.split('/').pop() === filename &&
+						filenames.includes(entry.path.split('/').pop()) &&
 						!GitHubConnector.VENDOR_DIR_PATTERN.test(entry.path),
 				)
 				.map((entry: any) => entry.path as string);
@@ -903,15 +906,119 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 	}
 
-	private async calculateDependencyUpdateLag(defaultBranch: string): Promise<number | null> {
-		const [npmManifestPaths, pythonManifestPaths] = await Promise.all([
-			this.findManifestPaths('package.json', defaultBranch),
-			this.findManifestPaths('requirements.txt', defaultBranch),
-		]);
+	// Skips versions we can't resolve to a literal: Maven property placeholders
+	// ("${spring.version}") and dependencies with no explicit <version> (inherited from a parent/BOM)
+	private async fetchPomXmlAt(path: string): Promise<JavaDependency[] | null> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.repos.getContent({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				path,
+			});
 
-		const [npmManifests, pythonManifests] = await Promise.all([
+			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
+
+			const content = Buffer.from(data.content, 'base64').toString('utf-8');
+			const dependencies: JavaDependency[] = [];
+
+			const depBlocks = content.match(/<dependency>[\s\S]*?<\/dependency>/g) ?? [];
+			for (const block of depBlocks) {
+				const groupId = block.match(/<groupId>([^<]+)<\/groupId>/)?.[1]?.trim();
+				const artifactId = block.match(/<artifactId>([^<]+)<\/artifactId>/)?.[1]?.trim();
+				const version = block.match(/<version>([^<]+)<\/version>/)?.[1]?.trim();
+
+				if (!groupId || !artifactId || !version) continue;
+				if (version.includes('${') || !/^\d/.test(version)) continue;
+
+				dependencies.push({ groupId, artifactId, version });
+			}
+
+			return dependencies;
+		} catch {
+			return null;
+		}
+	}
+
+	// Best-effort regex over the common Groovy/Kotlin DSL dependency declaration shapes
+	// (implementation("group:artifact:version") / implementation 'group:artifact:version').
+	// Map-style declarations (group: 'x', name: 'y', version: 'z') and version-catalog
+	// references (libs.someLib) aren't matched — same "majority case, not exhaustive" tradeoff as elsewhere.
+	private static readonly GRADLE_DEPENDENCY_PATTERN =
+		/(?:implementation|api|compile|testImplementation|testCompile|runtimeOnly|compileOnly|annotationProcessor)\s*[( ]\s*['"]([^:'"]+):([^:'"]+):([^:'")]+)['"]/g;
+
+	private async fetchGradleDependenciesAt(path: string): Promise<JavaDependency[] | null> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.repos.getContent({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				path,
+			});
+
+			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
+
+			const content = Buffer.from(data.content, 'base64').toString('utf-8');
+			const dependencies: JavaDependency[] = [];
+
+			for (const match of content.matchAll(GitHubConnector.GRADLE_DEPENDENCY_PATTERN)) {
+				const [, groupId, artifactId, version] = match;
+				if (!groupId || !artifactId || !version) continue;
+				if (version.includes('$') || !/^\d/.test(version)) continue;
+
+				dependencies.push({ groupId, artifactId, version });
+			}
+
+			return dependencies;
+		} catch {
+			return null;
+		}
+	}
+
+	// Fetches the whole gav version history in one request (like the npm/PyPI lookups) rather
+	// than a separate "latest" query, then finds our version's timestamp and the max timestamp ourselves —
+	// avoids depending on an undocumented sort order from Maven Central's search API
+	private async fetchMavenDependencyLagDays(
+		groupId: string,
+		artifactId: string,
+		currentVersion: string,
+	): Promise<number | null> {
+		try {
+			const query = encodeURIComponent(`g:"${groupId}" AND a:"${artifactId}"`);
+			const response = await fetch(
+				`https://search.maven.org/solrsearch/select?q=${query}&core=gav&rows=200&wt=json`,
+			);
+			if (!response.ok) return null;
+
+			const data: any = await response.json();
+			const docs: any[] = data.response?.docs ?? [];
+			if (docs.length === 0) return null;
+
+			const currentTimestamp = docs.find((doc: any) => doc.v === currentVersion)?.timestamp;
+			const latestTimestamp = Math.max(...docs.map((doc: any) => doc.timestamp ?? 0));
+			if (!currentTimestamp || !latestTimestamp) return null;
+
+			const lagMs = latestTimestamp - currentTimestamp;
+			return lagMs > 0 ? lagMs / (24 * 60 * 60 * 1000) : 0;
+		} catch {
+			return null;
+		}
+	}
+
+	private async calculateDependencyUpdateLag(defaultBranch: string): Promise<number | null> {
+		const [npmManifestPaths, pythonManifestPaths, pomManifestPaths, gradleManifestPaths] =
+			await Promise.all([
+				this.findManifestPaths(['package.json'], defaultBranch),
+				this.findManifestPaths(['requirements.txt'], defaultBranch),
+				this.findManifestPaths(['pom.xml'], defaultBranch),
+				this.findManifestPaths(['build.gradle', 'build.gradle.kts'], defaultBranch),
+			]);
+
+		const [npmManifests, pythonManifests, pomManifests, gradleManifests] = await Promise.all([
 			Promise.all(npmManifestPaths.map((path) => this.fetchPackageManifestAt(path))),
 			Promise.all(pythonManifestPaths.map((path) => this.fetchRequirementsTxtAt(path))),
+			Promise.all(pomManifestPaths.map((path) => this.fetchPomXmlAt(path))),
+			Promise.all(gradleManifestPaths.map((path) => this.fetchGradleDependenciesAt(path))),
 		]);
 
 		const lagDaysPromises: Promise<number | null>[] = [];
@@ -929,6 +1036,13 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			if (!manifest) continue;
 			for (const [name, version] of Object.entries(manifest)) {
 				lagDaysPromises.push(this.fetchPyPiDependencyLagDays(name, version));
+			}
+		}
+
+		for (const deps of [...pomManifests, ...gradleManifests]) {
+			if (!deps) continue;
+			for (const { groupId, artifactId, version } of deps) {
+				lagDaysPromises.push(this.fetchMavenDependencyLagDays(groupId, artifactId, version));
 			}
 		}
 
