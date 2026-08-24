@@ -22,6 +22,7 @@ export interface VcsConnectorOptions {
   reviewsPageSize?: number;
   threadsPageSize?: number;
   labelsPageSize?: number;
+  longLivedBranchThresholdDays?: number;
 }
 
 export interface CreateVcsConnectorInput {

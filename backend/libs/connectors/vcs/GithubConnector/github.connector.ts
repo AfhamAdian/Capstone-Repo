@@ -16,6 +16,7 @@ const DEFAULT_GRAPHQL_PAGE_SIZE = 50;
 const DEFAULT_GRAPHQL_REVIEWS_PAGE_SIZE = 50;
 const DEFAULT_GRAPHQL_THREADS_PAGE_SIZE = 100;
 const DEFAULT_GRAPHQL_LABELS_PAGE_SIZE = 20;
+const DEFAULT_LONG_LIVED_BRANCH_THRESHOLD_DAYS = 30;
 
 const STALE_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT = 50;
@@ -149,6 +150,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			reviewsPageSize: input.options?.reviewsPageSize ?? DEFAULT_GRAPHQL_REVIEWS_PAGE_SIZE,
 			threadsPageSize: input.options?.threadsPageSize ?? DEFAULT_GRAPHQL_THREADS_PAGE_SIZE,
 			labelsPageSize: input.options?.labelsPageSize ?? DEFAULT_GRAPHQL_LABELS_PAGE_SIZE,
+			longLivedBranchThresholdDays:
+				input.options?.longLivedBranchThresholdDays ?? DEFAULT_LONG_LIVED_BRANCH_THRESHOLD_DAYS,
 		};
 	}
 
@@ -594,11 +597,11 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	}
 
 	private calculateLongLivedBranches(branches: any[], defaultBranch: string): number {
-		const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+		const threshold = Date.now() - this.options.longLivedBranchThresholdDays * 24 * 60 * 60 * 1000;
 		return branches.filter((branch: any) => {
 			if (branch.name === defaultBranch) return false;
 			if (!branch.lastCommitDate) return false;
-			return new Date(branch.lastCommitDate).getTime() < thirtyDaysAgo;
+			return new Date(branch.lastCommitDate).getTime() < threshold;
 		}).length;
 	}
 
