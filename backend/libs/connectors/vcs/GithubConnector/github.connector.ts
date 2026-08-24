@@ -688,8 +688,79 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return Math.round((revertedCount / mergedPrs.length) * 100);
 	}
 
+	private async fetchPackageManifest(): Promise<{
+		dependencies: Record<string, string>;
+		devDependencies: Record<string, string>;
+	} | null> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.repos.getContent({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				path: 'package.json',
+			});
+
+			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
+
+			const content = Buffer.from(data.content, 'base64').toString('utf-8');
+			const parsed = JSON.parse(content);
+
+			return {
+				dependencies: parsed.dependencies ?? {},
+				devDependencies: parsed.devDependencies ?? {},
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	// Only accepts an exact semver (e.g. "1.2.3", from "^1.2.3"/"~1.2.3") — ranges, tags
+	// ("latest", "workspace:*") and git/URL specifiers aren't resolvable without a lockfile
+	private extractPinnedVersion(versionSpec: string): string | null {
+		const cleaned = versionSpec.trim().replace(/^[\^~>=<]+/, '');
+		return /^\d+\.\d+\.\d+/.test(cleaned) ? cleaned : null;
+	}
+
+	private async fetchDependencyLagDays(packageName: string, currentVersion: string): Promise<number | null> {
+		try {
+			const response = await fetch(`https://registry.npmjs.org/${packageName}`);
+			if (!response.ok) return null;
+
+			const data: any = await response.json();
+			const latestVersion = data['dist-tags']?.latest;
+			const times = data.time ?? {};
+
+			const currentPublishedAt = times[currentVersion];
+			const latestPublishedAt = latestVersion ? times[latestVersion] : null;
+			if (!currentPublishedAt || !latestPublishedAt) return null;
+
+			const lagMs = new Date(latestPublishedAt).getTime() - new Date(currentPublishedAt).getTime();
+			return lagMs > 0 ? lagMs / (24 * 60 * 60 * 1000) : 0;
+		} catch {
+			return null;
+		}
+	}
+
 	private async calculateDependencyUpdateLag(): Promise<number | null> {
-		return null;
+		const manifest = await this.fetchPackageManifest();
+		if (!manifest) return null;
+
+		const allDeps = { ...manifest.dependencies, ...manifest.devDependencies };
+		const entries = Object.entries(allDeps);
+		if (entries.length === 0) return null;
+
+		const lagDaysResults = await Promise.all(
+			entries.map(([name, versionSpec]) => {
+				const version = this.extractPinnedVersion(versionSpec);
+				return version ? this.fetchDependencyLagDays(name, version) : Promise.resolve(null);
+			}),
+		);
+
+		const lagDaysList = lagDaysResults.filter((d): d is number => d !== null);
+		if (lagDaysList.length === 0) return null;
+
+		const avgLagDays = lagDaysList.reduce((sum, d) => sum + d, 0) / lagDaysList.length;
+		return Math.round(avgLagDays * 10) / 10;
 	}
 
 	private calculateIssueReopenRate(issues: any[]): number | null {
