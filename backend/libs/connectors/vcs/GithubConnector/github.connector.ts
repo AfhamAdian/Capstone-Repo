@@ -225,7 +225,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const reviewNetworkDensity = this.calculateReviewNetworkDensity(reviewPrs);
 		const prRevertRate = this.calculatePrRevertRate(prs);
 		const securityVulnerabilityCount = await this.calculateSecurityVulnerabilityCount();
-		const dependencyUpdateLag = await this.calculateDependencyUpdateLag();
+		const dependencyUpdateLag = await this.calculateDependencyUpdateLag(defaultBranch);
 
 		const metrics: GitHubMetricsResponse = {
 			generatedAt: now.toISOString(),
@@ -743,7 +743,35 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return Math.round((revertedCount / mergedPrs.length) * 100);
 	}
 
-	private async fetchPackageManifest(): Promise<{
+	// Vendor/build directories are excluded since a committed one (accidentally
+	// or otherwise) would otherwise flood results with manifests that aren't this project's own
+	private static readonly VENDOR_DIR_PATTERN = /(^|\/)(node_modules|vendor|\.venv|venv|dist|build)\//;
+
+	private async findManifestPaths(filename: string, treeSha: string): Promise<string[]> {
+		try {
+			await this.checkRateLimit();
+			const { data } = await this.octokit.git.getTree({
+				owner: this.project.owner,
+				repo: this.project.repo,
+				tree_sha: treeSha,
+				recursive: 'true',
+			});
+
+			return (data.tree ?? [])
+				.filter(
+					(entry: any) =>
+						entry.type === 'blob' &&
+						typeof entry.path === 'string' &&
+						entry.path.split('/').pop() === filename &&
+						!GitHubConnector.VENDOR_DIR_PATTERN.test(entry.path),
+				)
+				.map((entry: any) => entry.path as string);
+		} catch {
+			return [];
+		}
+	}
+
+	private async fetchPackageManifestAt(path: string): Promise<{
 		dependencies: Record<string, string>;
 		devDependencies: Record<string, string>;
 	} | null> {
@@ -752,7 +780,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
-				path: 'package.json',
+				path,
 			});
 
 			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
@@ -798,13 +826,13 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 
 	// Only "==" pins resolve to a concrete version — ranges (">=", "~="), unpinned
 	// entries, and options/comments/blank lines are skipped, same policy as npm's extractPinnedVersion
-	private async fetchRequirementsTxt(): Promise<Record<string, string> | null> {
+	private async fetchRequirementsTxtAt(path: string): Promise<Record<string, string> | null> {
 		try {
 			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
-				path: 'requirements.txt',
+				path,
 			});
 
 			if (Array.isArray(data) || data.type !== 'file' || !data.content) return null;
@@ -848,24 +876,31 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 	}
 
-	private async calculateDependencyUpdateLag(): Promise<number | null> {
-		const [npmManifest, pythonManifest] = await Promise.all([
-			this.fetchPackageManifest(),
-			this.fetchRequirementsTxt(),
+	private async calculateDependencyUpdateLag(defaultBranch: string): Promise<number | null> {
+		const [npmManifestPaths, pythonManifestPaths] = await Promise.all([
+			this.findManifestPaths('package.json', defaultBranch),
+			this.findManifestPaths('requirements.txt', defaultBranch),
+		]);
+
+		const [npmManifests, pythonManifests] = await Promise.all([
+			Promise.all(npmManifestPaths.map((path) => this.fetchPackageManifestAt(path))),
+			Promise.all(pythonManifestPaths.map((path) => this.fetchRequirementsTxtAt(path))),
 		]);
 
 		const lagDaysPromises: Promise<number | null>[] = [];
 
-		if (npmManifest) {
-			const allNpmDeps = { ...npmManifest.dependencies, ...npmManifest.devDependencies };
+		for (const manifest of npmManifests) {
+			if (!manifest) continue;
+			const allNpmDeps = { ...manifest.dependencies, ...manifest.devDependencies };
 			for (const [name, versionSpec] of Object.entries(allNpmDeps)) {
 				const version = this.extractPinnedVersion(versionSpec);
 				if (version) lagDaysPromises.push(this.fetchDependencyLagDays(name, version));
 			}
 		}
 
-		if (pythonManifest) {
-			for (const [name, version] of Object.entries(pythonManifest)) {
+		for (const manifest of pythonManifests) {
+			if (!manifest) continue;
+			for (const [name, version] of Object.entries(manifest)) {
 				lagDaysPromises.push(this.fetchPyPiDependencyLagDays(name, version));
 			}
 		}
