@@ -60,7 +60,7 @@ export interface GitHubMetricsResponse {
     // Security Vulnerability Count — null when Dependabot/secret-scanning is disabled for the repo, not measured
     securityVulnerabilityCount: number | null;
     // Stale Issues Count
-    staleIssuesCount: number | null;
+    staleIssuesCount: number;
     // Stale MRs Count
     stalePrCount: number;
     // Review Iteration Count

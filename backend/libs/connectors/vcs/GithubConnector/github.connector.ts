@@ -13,9 +13,16 @@ const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
 const GRAPHQL_PAGE_SIZE = 50;
 const GRAPHQL_REVIEWS_PAGE_SIZE = 50;
+const GRAPHQL_THREADS_PAGE_SIZE = 100;
+const GRAPHQL_LABELS_PAGE_SIZE = 20;
+
+const STALE_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
+const BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT = 50;
+const BUG_LABEL_PATTERNS = [/bug/i, /defect/i, /error/i, /type:\s*bug/i, /kind\/bug/i];
+const FEATURE_LABEL_PATTERNS = [/feature/i, /enhancement/i, /\bfeat\b/i, /improvement/i, /type:\s*feature/i, /story/i];
 
 const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
-	query($owner: String!, $repo: String!, $cursor: String, $reviewsPageSize: Int!) {
+	query($owner: String!, $repo: String!, $cursor: String, $reviewsPageSize: Int!, $threadsPageSize: Int!) {
 		rateLimit {
 			remaining
 			resetAt
@@ -30,6 +37,8 @@ const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
 					number
 					createdAt
 					mergedAt
+					additions
+					deletions
 					author {
 						login
 					}
@@ -42,7 +51,45 @@ const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
 							author {
 								login
 							}
+							comments {
+								totalCount
+							}
 						}
+					}
+					reviewThreads(first: $threadsPageSize) {
+						nodes {
+							isResolved
+						}
+					}
+				}
+			}
+		}
+	}
+`;
+
+const ISSUES_GRAPHQL_QUERY = `
+	query($owner: String!, $repo: String!, $cursor: String, $labelsPageSize: Int!) {
+		rateLimit {
+			remaining
+			resetAt
+		}
+		repository(owner: $owner, name: $repo) {
+			issues(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					number
+					state
+					updatedAt
+					labels(first: $labelsPageSize) {
+						nodes {
+							name
+						}
+					}
+					timelineItems(itemTypes: [REOPENED_EVENT], first: 1) {
+						totalCount
 					}
 				}
 			}
@@ -103,10 +150,11 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const { owner, repo } = this.project;
 		const now = new Date();
 
-		const [issues, prs, reviewPrs, commits, branches, defaultBranch] = await Promise.all([
+		const [issues, prs, reviewPrs, graphqlIssues, commits, branches, defaultBranch] = await Promise.all([
 			this.fetchClosedIssues(),
 			this.fetchAllPullRequests(),
 			this.fetchPullRequestsWithReviews(),
+			this.fetchAllIssuesGraphQL(),
 			this.fetchCommits(30),
 			this.fetchBranches(),
 			this.getDefaultBranch(),
@@ -114,22 +162,22 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 
 		const issuesClosedPerWeek = this.calculateIssuesClosedPerWeek(issues);
 		const issueCycleTimeAvgDays = this.calculateIssueCycleTime(issues);
-		const issueReopenRatePercent = await this.calculateIssueReopenRate();
-		const bugVsFeatureRatio = await this.calculateBugVsFeatureRatio();
+		const issueReopenRatePercent = this.calculateIssueReopenRate(graphqlIssues);
+		const bugVsFeatureRatio = this.calculateBugVsFeatureRatio(graphqlIssues);
 		const codeChurn = await this.calculateCodeChurn(commits);
 		const prReviewCoverage = this.calculatePrReviewCoverage(reviewPrs);
 		const reviewIterationCountAvg = this.calculateReviewIterationCount(reviewPrs);
 		const selfMergedPrRate = this.calculateSelfMergedPrRate(reviewPrs);
 		const timeToFirstReview = this.calculateTimeToFirstReview(reviewPrs);
-		const prsMergedPerWeek = await this.calculatePrsMergedPerWeek();
-		const prMergeTimeAvgHours = await this.calculatePrMergeTime();
-		const reviewCommentsPerPrAvg = await this.calculateReviewCommentsPerPr();
+		const prsMergedPerWeek = this.calculatePrsMergedPerWeek(reviewPrs);
+		const prMergeTimeAvgHours = this.calculatePrMergeTime(reviewPrs);
+		const reviewCommentsPerPrAvg = this.calculateReviewCommentsPerPr(reviewPrs);
 		const unresolvedDiscussionThreadsAtMergeCount =
-			await this.calculateUnresolvedDiscussionThreads();
-		const reviewCommentsPer100LinesAvg = await this.calculateReviewCommentsPer100Lines();
+			this.calculateUnresolvedDiscussionThreads(reviewPrs);
+		const reviewCommentsPer100LinesAvg = this.calculateReviewCommentsPer100Lines(reviewPrs);
 		const commitMessageQuality = this.calculateCommitMessageQuality(commits);
 		const stalePrCount = this.calculateStalePrCount(prs);
-		const staleIssuesCount = await this.calculateStaleIssuesCount();
+		const staleIssuesCount = this.calculateStaleIssuesCount(graphqlIssues);
 		const longLivedBranches = this.calculateLongLivedBranches(branches, defaultBranch);
 		const busFactor = this.calculateBusFactor(commits);
 		const codeOwnershipConcentration = await this.calculateCodeOwnershipConcentration(
@@ -255,19 +303,30 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 				repo,
 				cursor,
 				reviewsPageSize: GRAPHQL_REVIEWS_PAGE_SIZE,
+				threadsPageSize: GRAPHQL_THREADS_PAGE_SIZE,
 			});
 
 			await this.checkGraphQLRateLimit(response.rateLimit);
 
 			const connection = response.repository.pullRequests;
 			for (const node of connection.nodes) {
+				const reviewNodes = node.reviews?.nodes ?? [];
+				const threadNodes = node.reviewThreads?.nodes ?? [];
+
 				prs.push({
 					number: node.number,
 					authorLogin: node.author?.login ?? null,
 					createdAt: node.createdAt,
 					mergedAt: node.mergedAt,
 					mergedByLogin: node.mergedBy?.login ?? null,
-					reviews: (node.reviews?.nodes ?? []).map((r: any) => ({
+					additions: node.additions ?? 0,
+					deletions: node.deletions ?? 0,
+					reviewCommentsCount: reviewNodes.reduce(
+						(sum: number, r: any) => sum + (r.comments?.totalCount ?? 0),
+						0,
+					),
+					unresolvedThreadCount: threadNodes.filter((t: any) => !t.isResolved).length,
+					reviews: reviewNodes.map((r: any) => ({
 						authorLogin: r.author?.login ?? null,
 						submittedAt: r.submittedAt,
 					})),
@@ -279,6 +338,40 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		}
 
 		return prs;
+	}
+
+	private async fetchAllIssuesGraphQL(): Promise<any[]> {
+		const { owner, repo } = this.project;
+		const issues: any[] = [];
+		let cursor: string | null = null;
+		let hasNextPage = true;
+
+		while (hasNextPage) {
+			const response: any = await this.octokit.graphql(ISSUES_GRAPHQL_QUERY, {
+				owner,
+				repo,
+				cursor,
+				labelsPageSize: GRAPHQL_LABELS_PAGE_SIZE,
+			});
+
+			await this.checkGraphQLRateLimit(response.rateLimit);
+
+			const connection = response.repository.issues;
+			for (const node of connection.nodes) {
+				issues.push({
+					number: node.number,
+					state: node.state,
+					updatedAt: node.updatedAt,
+					labels: (node.labels?.nodes ?? []).map((l: any) => l.name),
+					reopenedCount: node.timelineItems?.totalCount ?? 0,
+				});
+			}
+
+			hasNextPage = connection.pageInfo.hasNextPage;
+			cursor = connection.pageInfo.endCursor;
+		}
+
+		return issues;
 	}
 
 	private calculateIssuesClosedPerWeek(issues: any[]): number {
@@ -595,41 +688,98 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return null;
 	}
 
-	private async calculateIssueReopenRate(): Promise<number | null> {
-		return null;
+	private calculateIssueReopenRate(issues: any[]): number | null {
+		if (issues.length === 0) return null;
+		const reopened = issues.filter((issue: any) => issue.reopenedCount > 0).length;
+		return Math.round((reopened / issues.length) * 100);
 	}
 
-	private async calculateBugVsFeatureRatio(): Promise<
-		GitHubMetricsResponse['metrics']['bugVsFeatureRatio']
-	> {
-		return { bugCount: 0, featureCount: 0, totalIssues: 0, classificationCoveragePercent: 0, ratio: null };
+	private calculateBugVsFeatureRatio(
+		issues: any[],
+	): GitHubMetricsResponse['metrics']['bugVsFeatureRatio'] {
+		const totalIssues = issues.length;
+		if (totalIssues === 0) {
+			return { bugCount: 0, featureCount: 0, totalIssues: 0, classificationCoveragePercent: 0, ratio: null };
+		}
+
+		let bugCount = 0;
+		let featureCount = 0;
+
+		for (const issue of issues) {
+			const labels: string[] = issue.labels ?? [];
+			const isBug = labels.some((label) => BUG_LABEL_PATTERNS.some((p) => p.test(label)));
+			const isFeature = labels.some((label) => FEATURE_LABEL_PATTERNS.some((p) => p.test(label)));
+
+			if (isBug) bugCount += 1;
+			else if (isFeature) featureCount += 1;
+		}
+
+		const classificationCoveragePercent = Math.round(
+			((bugCount + featureCount) / totalIssues) * 100,
+		);
+		const meetsCoverageThreshold =
+			classificationCoveragePercent >= BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT;
+		const ratio =
+			meetsCoverageThreshold && featureCount > 0
+				? Math.round((bugCount / featureCount) * 100) / 100
+				: null;
+
+		return { bugCount, featureCount, totalIssues, classificationCoveragePercent, ratio };
 	}
 
-	private async calculatePrsMergedPerWeek(): Promise<number> {
-		return 0;
+	private calculatePrsMergedPerWeek(prs: any[]): number {
+		const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+		return prs.filter(
+			(pr: any) => pr.mergedAt && new Date(pr.mergedAt).getTime() > oneWeekAgo,
+		).length;
 	}
 
-	private async calculatePrMergeTime(): Promise<number | null> {
-		return null;
+	private calculatePrMergeTime(prs: any[]): number | null {
+		const mergedPrs = prs.filter((pr: any) => pr.mergedAt);
+		if (mergedPrs.length === 0) return null;
+
+		const totalHours = mergedPrs.reduce((sum: number, pr: any) => {
+			const created = new Date(pr.createdAt).getTime();
+			const merged = new Date(pr.mergedAt).getTime();
+			return sum + (merged - created) / (1000 * 60 * 60);
+		}, 0);
+
+		return Math.round(totalHours / mergedPrs.length);
 	}
 
-	private async calculateReviewCommentsPerPr(): Promise<number | null> {
-		return null;
+	private calculateReviewCommentsPerPr(prs: any[]): number | null {
+		if (prs.length === 0) return null;
+		const total = prs.reduce((sum: number, pr: any) => sum + (pr.reviewCommentsCount ?? 0), 0);
+		return Math.round((total / prs.length) * 10) / 10;
 	}
 
-	private async calculateUnresolvedDiscussionThreads(): Promise<number | null> {
-		return null;
+	private calculateUnresolvedDiscussionThreads(prs: any[]): number | null {
+		const mergedPrs = prs.filter((pr: any) => pr.mergedAt);
+		if (mergedPrs.length === 0) return null;
+		return mergedPrs.reduce((sum: number, pr: any) => sum + (pr.unresolvedThreadCount ?? 0), 0);
 	}
 
-	private async calculateReviewCommentsPer100Lines(): Promise<number | null> {
-		return null;
+	private calculateReviewCommentsPer100Lines(prs: any[]): number | null {
+		const eligiblePrs = prs.filter((pr: any) => (pr.additions ?? 0) + (pr.deletions ?? 0) > 0);
+		if (eligiblePrs.length === 0) return null;
+
+		const ratios = eligiblePrs.map((pr: any) => {
+			const linesChanged = pr.additions + pr.deletions;
+			return ((pr.reviewCommentsCount ?? 0) / linesChanged) * 100;
+		});
+
+		const avgRatio = ratios.reduce((sum: number, r: number) => sum + r, 0) / ratios.length;
+		return Math.round(avgRatio * 100) / 100;
 	}
 
 	private async calculateSecurityVulnerabilityCount(): Promise<number | null> {
 		return null;
 	}
 
-	private async calculateStaleIssuesCount(): Promise<number | null> {
-		return null;
+	private calculateStaleIssuesCount(issues: any[]): number {
+		const staleThreshold = Date.now() - STALE_THRESHOLD_MS;
+		return issues.filter(
+			(issue: any) => issue.state === 'OPEN' && new Date(issue.updatedAt).getTime() < staleThreshold,
+		).length;
 	}
 }
