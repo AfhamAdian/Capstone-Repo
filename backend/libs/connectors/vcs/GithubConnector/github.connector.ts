@@ -188,7 +188,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			prs,
 			issues,
 		);
-		const reviewNetworkDensity = this.calculateReviewNetworkDensity(prs);
+		const reviewNetworkDensity = this.calculateReviewNetworkDensity(reviewPrs);
 		const prRevertRate = this.calculatePrRevertRate(prs);
 		const securityVulnerabilityCount = await this.calculateSecurityVulnerabilityCount();
 		const dependencyUpdateLag = await this.calculateDependencyUpdateLag();
@@ -652,22 +652,26 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	}
 
 	private calculateReviewNetworkDensity(prs: any[]): number {
-		const pairs = new Set<string>();
-		const authors = new Set<string>();
+		const participants = new Set<string>();
+		const edges = new Set<string>();
 
 		for (const pr of prs) {
-			const author = pr.user?.login;
-			if (author) {
-				authors.add(author);
-				if ((pr.review_comments || 0) > 0) {
-					pairs.add(`${author}-reviewed`);
-				}
+			const authorLogin = pr.authorLogin;
+			if (!authorLogin) continue;
+			participants.add(authorLogin);
+
+			for (const review of pr.reviews ?? []) {
+				const reviewerLogin = review.authorLogin;
+				if (!reviewerLogin || reviewerLogin === authorLogin) continue;
+
+				participants.add(reviewerLogin);
+				edges.add(`${reviewerLogin}->${authorLogin}`);
 			}
 		}
 
-		const n = authors.size;
-		const possiblePairs = n * (n - 1);
-		return possiblePairs > 0 ? Math.round((pairs.size / possiblePairs) * 100) / 100 : 0;
+		const n = participants.size;
+		const possibleEdges = n * (n - 1);
+		return possibleEdges > 0 ? Math.round((edges.size / possibleEdges) * 100) / 100 : 0;
 	}
 
 	private calculatePrRevertRate(prs: any[]): number {
