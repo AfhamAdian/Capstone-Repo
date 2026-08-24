@@ -772,8 +772,47 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return Math.round(avgRatio * 100) / 100;
 	}
 
+	private async fetchDependabotAlertCount(): Promise<number | null> {
+		try {
+			await this.checkRateLimit();
+			const alerts = await this.octokit.paginate(this.octokit.dependabot.listAlertsForRepo, {
+				owner: this.project.owner,
+				repo: this.project.repo,
+				state: 'open',
+				per_page: PAGE_SIZE,
+			});
+			return alerts.length;
+		} catch {
+			// 403 (Dependabot disabled) and any other failure are both "not measurable", not zero
+			return null;
+		}
+	}
+
+	private async fetchSecretScanningAlertCount(): Promise<number | null> {
+		try {
+			await this.checkRateLimit();
+			const alerts = await this.octokit.paginate(this.octokit.secretScanning.listAlertsForRepo, {
+				owner: this.project.owner,
+				repo: this.project.repo,
+				state: 'open',
+				per_page: PAGE_SIZE,
+			});
+			return alerts.length;
+		} catch {
+			// 404 (secret scanning disabled / no GHAS) and any other failure are both "not measurable", not zero
+			return null;
+		}
+	}
+
 	private async calculateSecurityVulnerabilityCount(): Promise<number | null> {
-		return null;
+		const [dependabotCount, secretScanningCount] = await Promise.all([
+			this.fetchDependabotAlertCount(),
+			this.fetchSecretScanningAlertCount(),
+		]);
+
+		if (dependabotCount === null && secretScanningCount === null) return null;
+
+		return (dependabotCount ?? 0) + (secretScanningCount ?? 0);
 	}
 
 	private calculateStaleIssuesCount(issues: any[]): number {
