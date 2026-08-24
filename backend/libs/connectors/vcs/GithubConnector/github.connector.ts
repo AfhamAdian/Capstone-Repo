@@ -67,6 +67,31 @@ const PULL_REQUESTS_WITH_REVIEWS_QUERY = `
 	}
 `;
 
+const BRANCHES_GRAPHQL_QUERY = `
+	query($owner: String!, $repo: String!, $cursor: String) {
+		rateLimit {
+			remaining
+			resetAt
+		}
+		repository(owner: $owner, name: $repo) {
+			refs(refPrefix: "refs/heads/", first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
+				pageInfo {
+					hasNextPage
+					endCursor
+				}
+				nodes {
+					name
+					target {
+						... on Commit {
+							committedDate
+						}
+					}
+				}
+			}
+		}
+	}
+`;
+
 const ISSUES_GRAPHQL_QUERY = `
 	query($owner: String!, $repo: String!, $cursor: String, $labelsPageSize: Int!) {
 		rateLimit {
@@ -156,7 +181,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			this.fetchPullRequestsWithReviews(),
 			this.fetchAllIssuesGraphQL(),
 			this.fetchCommits(30),
-			this.fetchBranches(),
+			this.fetchBranchesGraphQL(),
 			this.getDefaultBranch(),
 		]);
 
@@ -272,13 +297,33 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		return commits;
 	}
 
-	private async fetchBranches(): Promise<any[]> {
-		await this.checkRateLimit();
-		const branches = await this.octokit.paginate(this.octokit.repos.listBranches, {
-			owner: this.project.owner,
-			repo: this.project.repo,
-			per_page: PAGE_SIZE,
-		});
+	private async fetchBranchesGraphQL(): Promise<any[]> {
+		const { owner, repo } = this.project;
+		const branches: any[] = [];
+		let cursor: string | null = null;
+		let hasNextPage = true;
+
+		while (hasNextPage) {
+			const response: any = await this.octokit.graphql(BRANCHES_GRAPHQL_QUERY, {
+				owner,
+				repo,
+				cursor,
+			});
+
+			await this.checkGraphQLRateLimit(response.rateLimit);
+
+			const connection = response.repository.refs;
+			for (const node of connection.nodes) {
+				branches.push({
+					name: node.name,
+					lastCommitDate: node.target?.committedDate ?? null,
+				});
+			}
+
+			hasNextPage = connection.pageInfo.hasNextPage;
+			cursor = connection.pageInfo.endCursor;
+		}
+
 		return branches;
 	}
 
@@ -540,10 +585,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
 		return branches.filter((branch: any) => {
 			if (branch.name === defaultBranch) return false;
-			const commitDate =
-				branch.commit?.committed_date || branch.commit?.date || new Date().toISOString();
-			const lastCommitDate = new Date(commitDate).getTime();
-			return lastCommitDate < thirtyDaysAgo;
+			if (!branch.lastCommitDate) return false;
+			return new Date(branch.lastCommitDate).getTime() < thirtyDaysAgo;
 		}).length;
 	}
 
@@ -585,8 +628,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 
 				const author = fullCommit.commit.author?.name || 'unknown';
 				for (const file of fullCommit.files || []) {
-					const dirMatch = file.filename.match(/^[^/]+/);
-					const dir = dirMatch ? dirMatch[0] : 'root';
+					const slashIndex = file.filename.indexOf('/');
+					const dir = slashIndex === -1 ? 'root' : file.filename.slice(0, slashIndex);
 
 					if (!dirStats.has(dir)) {
 						dirStats.set(dir, new Map());
