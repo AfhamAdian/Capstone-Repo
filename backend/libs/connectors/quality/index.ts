@@ -2,7 +2,7 @@
  * Code Quality module exports
  */
 
-export { ICodeQualityConnector } from './connector.interface.js';
+export type { ICodeQualityConnector } from './connector.interface.js';
 export { SonarQubeConnector } from './SonarQubeConnector/sonarqube.connector.js';
 export { createCodeQualityConnector } from './connector-factory.js';
 export type {
