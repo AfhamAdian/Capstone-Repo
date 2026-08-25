@@ -4,6 +4,7 @@ export interface GithubActionsConnectorOptions {
   deploymentEnvironment?: string;
   deploymentWindowDays?: number;
   mttrLookbackDays?: number;
+  testReportArtifactPattern?: string;
 }
 
 export interface CreateGithubActionsConnectorInput extends CreateConnectorInput {
@@ -22,7 +23,7 @@ export interface GithubActionsMetricsResponse {
     avgPipelineDurationMinutes: number;
     flakyTestCount: number;
     testCoveragePercent: number;
-    testFailureRatePercent: number;
+    testFailureRatePercent: number | null;
     avgPipelineRunsPerPr: number;
     deploymentsPerWeek: number;
     deploymentFailureRatePercent: number;

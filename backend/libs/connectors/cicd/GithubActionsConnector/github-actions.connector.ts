@@ -1,4 +1,6 @@
 import { Octokit } from '@octokit/rest';
+import AdmZip from 'adm-zip';
+import { XMLParser } from 'fast-xml-parser';
 import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 import type {
   GithubActionsMetricsResponse,
@@ -13,6 +15,11 @@ const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
 const DEFAULT_DEPLOYMENT_WINDOW_DAYS = 30;
 const DEFAULT_MTTR_LOOKBACK_DAYS = 90;
 const MAX_MERGE_CANDIDATES_PER_DEPLOYMENT = 5;
+const DEFAULT_TEST_REPORT_ARTIFACT_PATTERN = 'junit|test-results|test-report';
+// How many of the most recent completed runs to sample for artifact-based metrics
+// (Test Failure Rate) — downloading/unzipping every run in a repo's history would be
+// prohibitively expensive, so this trades exhaustiveness for a bounded, recent sample.
+const TEST_ARTIFACT_SAMPLE_SIZE = 20;
 
 export class GithubActionsConnector implements IConnector {
   private credentials: { token: string };
@@ -38,6 +45,8 @@ export class GithubActionsConnector implements IConnector {
       deploymentEnvironment: input.options?.deploymentEnvironment ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
       deploymentWindowDays: input.options?.deploymentWindowDays ?? DEFAULT_DEPLOYMENT_WINDOW_DAYS,
       mttrLookbackDays: input.options?.mttrLookbackDays ?? DEFAULT_MTTR_LOOKBACK_DAYS,
+      testReportArtifactPattern:
+        input.options?.testReportArtifactPattern ?? DEFAULT_TEST_REPORT_ARTIFACT_PATTERN,
     };
   }
 
@@ -191,9 +200,122 @@ export class GithubActionsConnector implements IConnector {
     return 75; // Stub value for prototype
   }
 
-  private async calcTestFailureRate(runs: any[]): Promise<number> {
-    // TODO: Download job logs or JUnit artifacts to count exact executed vs failed tests.
-    return 2; // Stub value for prototype (2% failure rate)
+  private async fetchWorkflowRunArtifacts(runId: number): Promise<any[]> {
+    await this.checkRateLimit();
+    return this.octokit.paginate(this.octokit.actions.listWorkflowRunArtifacts, {
+      owner: this.project.owner,
+      repo: this.project.repo,
+      run_id: runId,
+      per_page: PAGE_SIZE,
+    });
+  }
+
+  private async downloadArtifactZip(artifactId: number): Promise<Buffer | null> {
+    try {
+      await this.checkRateLimit();
+      const response = await this.octokit.actions.downloadArtifact({
+        owner: this.project.owner,
+        repo: this.project.repo,
+        artifact_id: artifactId,
+        archive_format: 'zip',
+      });
+      return Buffer.from(response.data as unknown as ArrayBuffer);
+    } catch {
+      return null;
+    }
+  }
+
+  // Finds the first non-expired artifact on this run whose name matches namePattern,
+  // downloads and unzips it, and returns the text of the first file inside matching
+  // fileExtension. No universal artifact-naming convention exists across repos, so a
+  // repo using an unrecognized name or format simply yields null here, same as any
+  // other "can't measure it" case in this codebase.
+  private async fetchReportFileFromRun(
+    runId: number,
+    namePattern: RegExp,
+    fileExtension: string,
+  ): Promise<string | null> {
+    const artifacts = await this.fetchWorkflowRunArtifacts(runId);
+    const matching = artifacts.filter((a: any) => !a.expired && namePattern.test(a.name));
+
+    for (const artifact of matching) {
+      const zipBuffer = await this.downloadArtifactZip(artifact.id);
+      if (!zipBuffer) continue;
+
+      try {
+        const zip = new AdmZip(zipBuffer);
+        const entry = zip.getEntries().find((e) => e.entryName.toLowerCase().endsWith(fileExtension));
+        if (entry) return zip.readAsText(entry);
+      } catch {
+        // Skip a corrupt/unreadable archive and try the next matching artifact, if any
+      }
+    }
+
+    return null;
+  }
+
+  // Sums tests/failures/errors across every <testsuite> found (whether the file's root is a
+  // single <testsuite> or a <testsuites> wrapping several) rather than trusting any aggregate
+  // attribute on <testsuites> itself, to avoid double-counting if both are present.
+  private parseJUnitTestCounts(xml: string): { tests: number; failures: number; errors: number } | null {
+    try {
+      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+      const parsed = parser.parse(xml);
+
+      const root = parsed.testsuites ?? parsed.testsuite;
+      if (!root) return null;
+
+      const suiteList = parsed.testsuites
+        ? (Array.isArray(root.testsuite) ? root.testsuite : root.testsuite ? [root.testsuite] : [])
+        : [root];
+
+      if (suiteList.length === 0) return null;
+
+      let tests = 0;
+      let failures = 0;
+      let errors = 0;
+
+      for (const suite of suiteList) {
+        tests += Number(suite.tests ?? 0);
+        failures += Number(suite.failures ?? 0);
+        errors += Number(suite.errors ?? 0);
+      }
+
+      return tests > 0 ? { tests, failures, errors } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async calcTestFailureRate(runs: any[]): Promise<number | null> {
+    const sampledRuns = runs
+      .filter(r => r.status === 'completed')
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, TEST_ARTIFACT_SAMPLE_SIZE);
+
+    if (sampledRuns.length === 0) return null;
+
+    const namePattern = new RegExp(this.options.testReportArtifactPattern, 'i');
+
+    let totalTests = 0;
+    let totalFailingTests = 0;
+    let runsWithData = 0;
+
+    for (const run of sampledRuns) {
+      const xml = await this.fetchReportFileFromRun(run.id, namePattern, '.xml');
+      if (!xml) continue;
+
+      const counts = this.parseJUnitTestCounts(xml);
+      if (!counts) continue;
+
+      totalTests += counts.tests;
+      totalFailingTests += counts.failures + counts.errors;
+      runsWithData++;
+    }
+
+    if (runsWithData === 0 || totalTests === 0) return null;
+
+    return Math.round((totalFailingTests / totalTests) * 100);
   }
 
   private calcRunsPerPr(runs: any[]): number {
