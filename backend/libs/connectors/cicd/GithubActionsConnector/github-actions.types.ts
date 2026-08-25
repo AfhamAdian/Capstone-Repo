@@ -1,3 +1,15 @@
+import type { CreateConnectorInput } from '@libs/sync/index.js';
+
+export interface GithubActionsConnectorOptions {
+  deploymentEnvironment?: string;
+  deploymentWindowDays?: number;
+  mttrLookbackDays?: number;
+}
+
+export interface CreateGithubActionsConnectorInput extends CreateConnectorInput {
+  options?: GithubActionsConnectorOptions;
+}
+
 export interface GithubActionsMetricsResponse {
   generatedAt: string;
   repo: {

@@ -1,17 +1,25 @@
 import { Octokit } from '@octokit/rest';
-import type { IConnector, ConnectorOutput, CreateConnectorInput } from '@libs/sync/index.js';
-import type { GithubActionsMetricsResponse } from './github-actions.types.js';
+import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
+import type {
+  GithubActionsMetricsResponse,
+  GithubActionsConnectorOptions,
+  CreateGithubActionsConnectorInput,
+} from './github-actions.types.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
+const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
+const DEFAULT_DEPLOYMENT_WINDOW_DAYS = 30;
+const DEFAULT_MTTR_LOOKBACK_DAYS = 90;
 
 export class GithubActionsConnector implements IConnector {
   private credentials: { token: string };
   private project: { owner: string; repo: string };
   private octokit: Octokit;
+  private options: Required<GithubActionsConnectorOptions>;
 
-  constructor(input: CreateConnectorInput) {
+  constructor(input: CreateGithubActionsConnectorInput) {
     if (!input.credentials.token) {
       throw new Error('GitHub token is required');
     }
@@ -25,6 +33,11 @@ export class GithubActionsConnector implements IConnector {
       repo: input.project.repo,
     };
     this.octokit = new Octokit({ auth: input.credentials.token });
+    this.options = {
+      deploymentEnvironment: input.options?.deploymentEnvironment ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
+      deploymentWindowDays: input.options?.deploymentWindowDays ?? DEFAULT_DEPLOYMENT_WINDOW_DAYS,
+      mttrLookbackDays: input.options?.mttrLookbackDays ?? DEFAULT_MTTR_LOOKBACK_DAYS,
+    };
   }
 
   private async checkRateLimit(): Promise<void> {
@@ -46,21 +59,21 @@ export class GithubActionsConnector implements IConnector {
     const { owner, repo } = this.project;
     const now = new Date();
 
-    const [workflowRuns, prRuns, deployments] = await Promise.all([
+    const [workflowRuns, deployments, defaultBranch] = await Promise.all([
       this.fetchWorkflowRuns(),
-      this.fetchPullRequestRuns(),
       this.fetchDeployments(),
+      this.getDefaultBranch(),
     ]);
 
-    const pipelineSuccessRatePercent = this.calcPipelineSuccessRate(workflowRuns);
-    const avgPipelineDurationMinutes = this.calcPipelineDuration(workflowRuns);
+    const pipelineSuccessRatePercent = this.calcPipelineSuccessRate(workflowRuns, defaultBranch);
+    const avgPipelineDurationMinutes = this.calcPipelineDuration(workflowRuns, defaultBranch);
     const flakyTestCount = await this.calcFlakyTests(workflowRuns);
     const testCoveragePercent = await this.calcTestCoverageRate(workflowRuns);
     const testFailureRatePercent = await this.calcTestFailureRate(workflowRuns);
-    const avgPipelineRunsPerPr = this.calcRunsPerPr(prRuns);
+    const avgPipelineRunsPerPr = this.calcRunsPerPr(workflowRuns);
     const deploymentsPerWeek = this.calcDeploymentFrequency(deployments);
     const deploymentFailureRatePercent = await this.calcDeploymentFailureRate(deployments);
-    const mttrHours = this.calcMttr(workflowRuns);
+    const mttrHours = this.calcMttr(workflowRuns, defaultBranch);
     const timeToProdHours = await this.calcTimeToProd(deployments);
 
     const metrics: GithubActionsMetricsResponse = {
@@ -85,7 +98,7 @@ export class GithubActionsConnector implements IConnector {
     };
 
     return {
-      tool: 'github-actions' as any,
+      tool: 'github-actions',
       provider: 'github',
       data: metrics,
       fetchedAt: now,
@@ -102,30 +115,28 @@ export class GithubActionsConnector implements IConnector {
     return runs;
   }
 
-  private async fetchPullRequestRuns(): Promise<any[]> {
-    await this.checkRateLimit();
-    const runs = await this.octokit.paginate(this.octokit.actions.listWorkflowRunsForRepo, {
-      owner: this.project.owner,
-      repo: this.project.repo,
-      event: 'pull_request',
-      per_page: PAGE_SIZE,
-    });
-    return runs;
-  }
-
   private async fetchDeployments(): Promise<any[]> {
     await this.checkRateLimit();
     const deployments = await this.octokit.paginate(this.octokit.repos.listDeployments, {
       owner: this.project.owner,
       repo: this.project.repo,
-      environment: 'production',
+      environment: this.options.deploymentEnvironment,
       per_page: PAGE_SIZE,
     });
     return deployments;
   }
 
-  private calcPipelineSuccessRate(runs: any[]): number {
-    const completed = runs.filter(r => r.status === 'completed');
+  private async getDefaultBranch(): Promise<string> {
+    await this.checkRateLimit();
+    const { data } = await this.octokit.repos.get({
+      owner: this.project.owner,
+      repo: this.project.repo,
+    });
+    return data.default_branch;
+  }
+
+  private calcPipelineSuccessRate(runs: any[], defaultBranch: string): number {
+    const completed = runs.filter(r => r.head_branch === defaultBranch && r.status === 'completed');
     if (completed.length === 0) return 100;
     const successes = completed.filter(r => r.conclusion === 'success').length;
     const totalEvaluated = completed.filter(r => ['success', 'failure', 'timed_out'].includes(r.conclusion)).length;
@@ -133,8 +144,10 @@ export class GithubActionsConnector implements IConnector {
     return Math.round((successes / totalEvaluated) * 100);
   }
 
-  private calcPipelineDuration(runs: any[]): number {
-    const completed = runs.filter(r => r.status === 'completed' && r.run_started_at && r.updated_at);
+  private calcPipelineDuration(runs: any[], defaultBranch: string): number {
+    const completed = runs.filter(
+      r => r.head_branch === defaultBranch && r.status === 'completed' && r.run_started_at && r.updated_at,
+    );
     if (completed.length === 0) return 0;
     let totalMs = 0;
     for (const r of completed) {
@@ -183,21 +196,25 @@ export class GithubActionsConnector implements IConnector {
 
   private calcDeploymentFrequency(deployments: any[]): number {
     if (deployments.length === 0) return 0;
-    
-    const sorted = [...deployments].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-    const recentDeployments = sorted.filter(d => new Date(d.created_at).getTime() > thirtyDaysAgo);
-    
-    const perWeek = recentDeployments.length / (30 / 7);
+
+    const windowDays = this.options.deploymentWindowDays;
+    const windowStart = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+    const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
+
+    const perWeek = recentDeployments.length / (windowDays / 7);
     return Math.round(perWeek * 10) / 10;
   }
 
   private async calcDeploymentFailureRate(deployments: any[]): Promise<number> {
     if (deployments.length === 0) return 0;
+
+    const windowStart = Date.now() - this.options.deploymentWindowDays * 24 * 60 * 60 * 1000;
+    const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
+
     let failureCount = 0;
     let evaluatedCount = 0;
 
-    for (const d of deployments.slice(0, 10)) { // limit checking to recent 10
+    for (const d of recentDeployments) {
       try {
         await this.checkRateLimit();
         const statuses = await this.octokit.paginate(this.octokit.repos.listDeploymentStatuses, {
@@ -207,8 +224,10 @@ export class GithubActionsConnector implements IConnector {
         });
 
         if (statuses.length > 0) {
-          const latestState = statuses[0]!.state;
-          if (latestState === 'failure' || latestState === 'error') {
+          const latestStatus = statuses.reduce((latest, s) =>
+            new Date(s.created_at).getTime() > new Date(latest.created_at).getTime() ? s : latest,
+          );
+          if (latestStatus.state === 'failure' || latestStatus.state === 'error') {
             failureCount++;
           }
           evaluatedCount++;
@@ -217,35 +236,51 @@ export class GithubActionsConnector implements IConnector {
         // ignore
       }
     }
-    
+
     if (evaluatedCount === 0) return 0;
     return Math.round((failureCount / evaluatedCount) * 100);
   }
 
-  private calcMttr(runs: any[]): number {
-    const completed = runs.filter(r => r.status === 'completed');
-    completed.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+  // Groups by workflow_id (not adjacency in a global timeline — a same-workflow
+  // failure->success pair could otherwise be missed if a different workflow's run
+  // happens to land between them) and, within each workflow's own chronological
+  // order, measures the gap from the start of a failure streak to the next success.
+  private calcMttr(runs: any[], defaultBranch: string): number {
+    const lookbackStart = Date.now() - this.options.mttrLookbackDays * 24 * 60 * 60 * 1000;
+    const completed = runs.filter(
+      r =>
+        r.head_branch === defaultBranch &&
+        r.status === 'completed' &&
+        new Date(r.updated_at).getTime() > lookbackStart,
+    );
 
-    let totalMttr = 0;
-    let mttrEvents = 0;
+    const byWorkflow = new Map<number, any[]>();
+    for (const run of completed) {
+      const group = byWorkflow.get(run.workflow_id) ?? [];
+      group.push(run);
+      byWorkflow.set(run.workflow_id, group);
+    }
 
-    for (let i = 0; i < completed.length - 1; i++) {
-      const current = completed[i];
-      const previous = completed[i + 1];
+    let totalMttrMs = 0;
+    let recoveryEvents = 0;
 
-      if (current.conclusion === 'success' && ['failure', 'timed_out'].includes(previous.conclusion)) {
-        if (current.workflow_id === previous.workflow_id) {
-          const timeDiff = new Date(current.updated_at).getTime() - new Date(previous.updated_at).getTime();
-          if (timeDiff > 0) {
-            totalMttr += timeDiff;
-            mttrEvents++;
-          }
+    for (const group of byWorkflow.values()) {
+      group.sort((a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime());
+
+      let failureStartedAt: number | null = null;
+      for (const run of group) {
+        if (['failure', 'timed_out'].includes(run.conclusion) && failureStartedAt === null) {
+          failureStartedAt = new Date(run.updated_at).getTime();
+        } else if (run.conclusion === 'success' && failureStartedAt !== null) {
+          totalMttrMs += new Date(run.updated_at).getTime() - failureStartedAt;
+          recoveryEvents++;
+          failureStartedAt = null;
         }
       }
     }
 
-    if (mttrEvents === 0) return 0;
-    return Math.round((totalMttr / mttrEvents) / 3600000 * 10) / 10;
+    if (recoveryEvents === 0) return 0;
+    return Math.round((totalMttrMs / recoveryEvents) / 3600000 * 10) / 10;
   }
 
   private async calcTimeToProd(deployments: any[]): Promise<number> {
