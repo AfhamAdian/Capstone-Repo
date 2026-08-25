@@ -10,5 +10,6 @@ export type {
   CodeQualityCredentials,
   CodeQualityProject,
   CodeQualityProvider,
+  CodeQualityConnectorOptions,
 } from './types.js';
-export type { SonarQubeMetricsResponse, QualityGateStatus } from './sonarqube-metrics.types.js';
+export type { SonarQubeMetricsResponse } from './sonarqube-metrics.types.js';
