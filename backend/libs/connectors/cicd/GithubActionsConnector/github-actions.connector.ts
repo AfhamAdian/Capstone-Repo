@@ -163,20 +163,22 @@ export class GithubActionsConnector implements IConnector {
     return prs.filter((pr: any) => pr.merged_at && pr.merge_commit_sha);
   }
 
-  private calcPipelineSuccessRate(runs: any[], defaultBranch: string): number {
+  // null (not 100) when there's no evaluable data — a repo with zero default-branch
+  // runs hasn't "succeeded 100% of the time," it just has nothing to judge.
+  private calcPipelineSuccessRate(runs: any[], defaultBranch: string): number | null {
     const completed = runs.filter(r => r.head_branch === defaultBranch && r.status === 'completed');
-    if (completed.length === 0) return 100;
+    if (completed.length === 0) return null;
     const successes = completed.filter(r => r.conclusion === 'success').length;
     const totalEvaluated = completed.filter(r => ['success', 'failure', 'timed_out'].includes(r.conclusion)).length;
-    if (totalEvaluated === 0) return 100;
+    if (totalEvaluated === 0) return null;
     return Math.round((successes / totalEvaluated) * 100);
   }
 
-  private calcPipelineDuration(runs: any[], defaultBranch: string): number {
+  private calcPipelineDuration(runs: any[], defaultBranch: string): number | null {
     const completed = runs.filter(
       r => r.head_branch === defaultBranch && r.status === 'completed' && r.run_started_at && r.updated_at,
     );
-    if (completed.length === 0) return 0;
+    if (completed.length === 0) return null;
     let totalMs = 0;
     for (const r of completed) {
       const start = new Date(r.run_started_at).getTime();
@@ -186,7 +188,11 @@ export class GithubActionsConnector implements IConnector {
     return Math.round((totalMs / completed.length) / 60000);
   }
 
-  private async calcFlakyTests(runs: any[]): Promise<number> {
+  // null only when there's no run history at all to assess — zero retried-then-succeeded
+  // runs among real run data is a legitimate, measured "0", not "unmeasurable".
+  private async calcFlakyTests(runs: any[]): Promise<number | null> {
+    if (runs.length === 0) return null;
+
     const retriedRuns = runs.filter(r => r.run_attempt > 1);
     let flakyCount = 0;
     for (const run of retriedRuns) {
@@ -417,7 +423,9 @@ export class GithubActionsConnector implements IConnector {
     return Math.round((totalFailingTests / totalTests) * 100);
   }
 
-  private calcRunsPerPr(runs: any[]): number {
+  // null (not 0) when there are no PR-linked runs at all — this is an average
+  // (runs per PR), and an average over zero PRs isn't a measured zero.
+  private calcRunsPerPr(runs: any[]): number | null {
     const prMap = new Map<number, number>();
     for (const r of runs) {
       if (r.pull_requests && r.pull_requests.length > 0) {
@@ -426,13 +434,17 @@ export class GithubActionsConnector implements IConnector {
         }
       }
     }
-    if (prMap.size === 0) return 0;
+    if (prMap.size === 0) return null;
     const totalRuns = Array.from(prMap.values()).reduce((a, b) => a + b, 0);
     return Math.round((totalRuns / prMap.size) * 10) / 10;
   }
 
-  private calcDeploymentFrequency(deployments: any[]): number {
-    if (deployments.length === 0) return 0;
+  // null when there's no deployment history at all for this environment (can't tell
+  // whether that means "genuinely no deploys" or "this repo doesn't use this feature").
+  // A real 0 is still reported when there IS history but none fall in the window —
+  // that's an actual measured "zero deploys recently", a materially different fact.
+  private calcDeploymentFrequency(deployments: any[]): number | null {
+    if (deployments.length === 0) return null;
 
     const windowDays = this.options.deploymentWindowDays;
     const windowStart = Date.now() - windowDays * 24 * 60 * 60 * 1000;
@@ -442,8 +454,8 @@ export class GithubActionsConnector implements IConnector {
     return Math.round(perWeek * 10) / 10;
   }
 
-  private async calcDeploymentFailureRate(deployments: any[]): Promise<number> {
-    if (deployments.length === 0) return 0;
+  private async calcDeploymentFailureRate(deployments: any[]): Promise<number | null> {
+    if (deployments.length === 0) return null;
 
     const windowStart = Date.now() - this.options.deploymentWindowDays * 24 * 60 * 60 * 1000;
     const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
@@ -474,7 +486,9 @@ export class GithubActionsConnector implements IConnector {
       }
     }
 
-    if (evaluatedCount === 0) return 0;
+    // No deployment in the window could actually be evaluated — nothing to measure,
+    // not a clean pass ("0% failure").
+    if (evaluatedCount === 0) return null;
     return Math.round((failureCount / evaluatedCount) * 100);
   }
 
@@ -482,7 +496,7 @@ export class GithubActionsConnector implements IConnector {
   // failure->success pair could otherwise be missed if a different workflow's run
   // happens to land between them) and, within each workflow's own chronological
   // order, measures the gap from the start of a failure streak to the next success.
-  private calcMttr(runs: any[], defaultBranch: string): number {
+  private calcMttr(runs: any[], defaultBranch: string): number | null {
     const lookbackStart = Date.now() - this.options.mttrLookbackDays * 24 * 60 * 60 * 1000;
     const completed = runs.filter(
       r =>
@@ -516,7 +530,9 @@ export class GithubActionsConnector implements IConnector {
       }
     }
 
-    if (recoveryEvents === 0) return 0;
+    // No failure->success recovery observed — either zero incidents (good) or zero
+    // data. Either way there's no recovery *time* to report, so null, not "0 hours".
+    if (recoveryEvents === 0) return null;
     return Math.round((totalMttrMs / recoveryEvents) / 3600000 * 10) / 10;
   }
 

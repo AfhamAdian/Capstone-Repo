@@ -20,15 +20,15 @@ export interface GithubActionsMetricsResponse {
     fullName: string;
   };
   metrics: {
-    pipelineSuccessRatePercent: number;
-    avgPipelineDurationMinutes: number;
-    flakyTestCount: number;
+    pipelineSuccessRatePercent: number | null;
+    avgPipelineDurationMinutes: number | null;
+    flakyTestCount: number | null;
     testCoveragePercent: number | null;
     testFailureRatePercent: number | null;
-    avgPipelineRunsPerPr: number;
-    deploymentsPerWeek: number;
-    deploymentFailureRatePercent: number;
-    mttrHours: number;
+    avgPipelineRunsPerPr: number | null;
+    deploymentsPerWeek: number | null;
+    deploymentFailureRatePercent: number | null;
+    mttrHours: number | null;
     timeToProdHours: number | null;
   };
 }
