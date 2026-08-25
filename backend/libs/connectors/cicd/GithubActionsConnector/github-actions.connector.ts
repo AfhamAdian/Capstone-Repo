@@ -12,6 +12,7 @@ const PAGE_SIZE = 100;
 const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
 const DEFAULT_DEPLOYMENT_WINDOW_DAYS = 30;
 const DEFAULT_MTTR_LOOKBACK_DAYS = 90;
+const MAX_MERGE_CANDIDATES_PER_DEPLOYMENT = 5;
 
 export class GithubActionsConnector implements IConnector {
   private credentials: { token: string };
@@ -64,6 +65,7 @@ export class GithubActionsConnector implements IConnector {
       this.fetchDeployments(),
       this.getDefaultBranch(),
     ]);
+    const mergedPrs = await this.fetchMergedPullRequests(defaultBranch);
 
     const pipelineSuccessRatePercent = this.calcPipelineSuccessRate(workflowRuns, defaultBranch);
     const avgPipelineDurationMinutes = this.calcPipelineDuration(workflowRuns, defaultBranch);
@@ -74,7 +76,7 @@ export class GithubActionsConnector implements IConnector {
     const deploymentsPerWeek = this.calcDeploymentFrequency(deployments);
     const deploymentFailureRatePercent = await this.calcDeploymentFailureRate(deployments);
     const mttrHours = this.calcMttr(workflowRuns, defaultBranch);
-    const timeToProdHours = await this.calcTimeToProd(deployments);
+    const timeToProdHours = await this.calcTimeToProd(deployments, mergedPrs);
 
     const metrics: GithubActionsMetricsResponse = {
       generatedAt: now.toISOString(),
@@ -133,6 +135,20 @@ export class GithubActionsConnector implements IConnector {
       repo: this.project.repo,
     });
     return data.default_branch;
+  }
+
+  private async fetchMergedPullRequests(defaultBranch: string): Promise<any[]> {
+    await this.checkRateLimit();
+    const prs = await this.octokit.paginate(this.octokit.pulls.list, {
+      owner: this.project.owner,
+      repo: this.project.repo,
+      state: 'closed',
+      base: defaultBranch,
+      sort: 'updated',
+      direction: 'desc',
+      per_page: PAGE_SIZE,
+    });
+    return prs.filter((pr: any) => pr.merged_at && pr.merge_commit_sha);
   }
 
   private calcPipelineSuccessRate(runs: any[], defaultBranch: string): number {
@@ -283,8 +299,54 @@ export class GithubActionsConnector implements IConnector {
     return Math.round((totalMttrMs / recoveryEvents) / 3600000 * 10) / 10;
   }
 
-  private async calcTimeToProd(deployments: any[]): Promise<number> {
-    // TODO: Cross reference PR merged_at timestamp with Deployment sha timestamp
-    return 12; // Stub value for prototype (12 hours)
+  // ancestorSha's history contains descendantSha's changes iff descendantSha is not
+  // "behind" ancestorSha at all — i.e. everything in ancestorSha is already reachable from descendantSha.
+  private async isCommitAncestor(ancestorSha: string, descendantSha: string): Promise<boolean> {
+    try {
+      await this.checkRateLimit();
+      const { data } = await this.octokit.repos.compareCommitsWithBasehead({
+        owner: this.project.owner,
+        repo: this.project.repo,
+        basehead: `${ancestorSha}...${descendantSha}`,
+      });
+      return data.behind_by === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  // For each deployment, finds the most recently-merged PR (merged before the deployment)
+  // whose merge commit is verified — via commit ancestry, not just timestamp proximity — to
+  // actually be included in that deployment's SHA. Checks at most a few candidates per
+  // deployment (the most-recent-eligible merge is almost always the right one) rather than
+  // every merged PR ever, to keep the API-call cost bounded.
+  private async calcTimeToProd(deployments: any[], mergedPrs: any[]): Promise<number | null> {
+    const windowStart = Date.now() - this.options.deploymentWindowDays * 24 * 60 * 60 * 1000;
+    const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
+    if (recentDeployments.length === 0 || mergedPrs.length === 0) return null;
+
+    const sortedPrs = [...mergedPrs].sort(
+      (a, b) => new Date(b.merged_at).getTime() - new Date(a.merged_at).getTime(),
+    );
+
+    const leadTimesMs: number[] = [];
+
+    for (const deployment of recentDeployments) {
+      const deployedAt = new Date(deployment.created_at).getTime();
+      const candidates = sortedPrs.filter(pr => new Date(pr.merged_at).getTime() <= deployedAt);
+
+      for (const pr of candidates.slice(0, MAX_MERGE_CANDIDATES_PER_DEPLOYMENT)) {
+        const includesMerge = await this.isCommitAncestor(pr.merge_commit_sha, deployment.sha);
+        if (includesMerge) {
+          leadTimesMs.push(deployedAt - new Date(pr.merged_at).getTime());
+          break;
+        }
+      }
+    }
+
+    if (leadTimesMs.length === 0) return null;
+
+    const avgMs = leadTimesMs.reduce((sum, ms) => sum + ms, 0) / leadTimesMs.length;
+    return Math.round((avgMs / 3600000) * 10) / 10;
   }
 }

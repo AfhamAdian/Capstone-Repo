@@ -27,6 +27,6 @@ export interface GithubActionsMetricsResponse {
     deploymentsPerWeek: number;
     deploymentFailureRatePercent: number;
     mttrHours: number;
-    timeToProdHours: number;
+    timeToProdHours: number | null;
   };
 }
