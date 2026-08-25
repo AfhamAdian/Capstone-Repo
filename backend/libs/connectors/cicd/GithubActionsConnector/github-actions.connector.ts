@@ -16,6 +16,7 @@ const DEFAULT_DEPLOYMENT_WINDOW_DAYS = 30;
 const DEFAULT_MTTR_LOOKBACK_DAYS = 90;
 const MAX_MERGE_CANDIDATES_PER_DEPLOYMENT = 5;
 const DEFAULT_TEST_REPORT_ARTIFACT_PATTERN = 'junit|test-results|test-report';
+const DEFAULT_COVERAGE_ARTIFACT_PATTERN = 'coverage';
 // How many of the most recent completed runs to sample for artifact-based metrics
 // (Test Failure Rate) — downloading/unzipping every run in a repo's history would be
 // prohibitively expensive, so this trades exhaustiveness for a bounded, recent sample.
@@ -47,6 +48,8 @@ export class GithubActionsConnector implements IConnector {
       mttrLookbackDays: input.options?.mttrLookbackDays ?? DEFAULT_MTTR_LOOKBACK_DAYS,
       testReportArtifactPattern:
         input.options?.testReportArtifactPattern ?? DEFAULT_TEST_REPORT_ARTIFACT_PATTERN,
+      coverageArtifactPattern:
+        input.options?.coverageArtifactPattern ?? DEFAULT_COVERAGE_ARTIFACT_PATTERN,
     };
   }
 
@@ -194,10 +197,106 @@ export class GithubActionsConnector implements IConnector {
     return flakyCount;
   }
 
-  private async calcTestCoverageRate(runs: any[]): Promise<number> {
-    // TODO: Download actual test coverage XML artifacts from octokit.rest.actions.downloadArtifact
-    // and parse percentages using xml2js.
-    return 75; // Stub value for prototype
+  private parseLcovCoverage(content: string): { linesFound: number; linesHit: number } | null {
+    const foundLines = content.match(/^LF:(\d+)$/gm);
+    const hitLines = content.match(/^LH:(\d+)$/gm);
+    if (!foundLines || !hitLines) return null;
+
+    const linesFound = foundLines.reduce((sum, line) => sum + Number(line.split(':')[1]), 0);
+    const linesHit = hitLines.reduce((sum, line) => sum + Number(line.split(':')[1]), 0);
+
+    return linesFound > 0 ? { linesFound, linesHit } : null;
+  }
+
+  private parseCoberturaCoverage(xml: string): { linesFound: number; linesHit: number } | null {
+    try {
+      const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+      const coverage = parser.parse(xml)?.coverage;
+      if (!coverage) return null;
+
+      const linesValid = Number(coverage['lines-valid'] ?? NaN);
+      const linesCovered = Number(coverage['lines-covered'] ?? NaN);
+      if (!Number.isNaN(linesValid) && linesValid > 0) {
+        return { linesFound: linesValid, linesHit: Number.isNaN(linesCovered) ? 0 : linesCovered };
+      }
+
+      // Some Cobertura generators omit valid/covered counts and only report line-rate (0-1)
+      const lineRate = Number(coverage['line-rate'] ?? NaN);
+      return Number.isNaN(lineRate) ? null : { linesFound: 100, linesHit: Math.round(lineRate * 100) };
+    } catch {
+      return null;
+    }
+  }
+
+  private parseIstanbulCoverage(json: string): { linesFound: number; linesHit: number } | null {
+    try {
+      const lines = JSON.parse(json)?.total?.lines;
+      if (typeof lines?.total !== 'number' || typeof lines?.covered !== 'number') return null;
+
+      return lines.total > 0 ? { linesFound: lines.total, linesHit: lines.covered } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Format is inferred from filename convention, not the artifact name (an artifact matching
+  // coverageArtifactPattern can contain any of these) — tried in turn until one parses.
+  private parseCoverageFile(entryName: string, content: string): { linesFound: number; linesHit: number } | null {
+    const name = entryName.toLowerCase();
+
+    if (name.endsWith('.info') || name.includes('lcov')) return this.parseLcovCoverage(content);
+    if (name.endsWith('.xml')) return this.parseCoberturaCoverage(content);
+    if (name.endsWith('.json')) return this.parseIstanbulCoverage(content);
+    return null;
+  }
+
+  private async fetchCoverageFromRun(
+    runId: number,
+    namePattern: RegExp,
+  ): Promise<{ linesFound: number; linesHit: number } | null> {
+    const artifacts = await this.fetchWorkflowRunArtifacts(runId);
+    const matching = artifacts.filter((a: any) => !a.expired && namePattern.test(a.name));
+
+    for (const artifact of matching) {
+      const zipBuffer = await this.downloadArtifactZip(artifact.id);
+      if (!zipBuffer) continue;
+
+      try {
+        const zip = new AdmZip(zipBuffer);
+        for (const entry of zip.getEntries()) {
+          if (entry.isDirectory) continue;
+          const parsed = this.parseCoverageFile(entry.entryName, zip.readAsText(entry));
+          if (parsed) return parsed;
+        }
+      } catch {
+        // Skip a corrupt/unreadable archive and try the next matching artifact, if any
+      }
+    }
+
+    return null;
+  }
+
+  // Unlike Test Failure Rate, this doesn't aggregate across the sampled runs — coverage is a
+  // snapshot of the codebase at one commit, not something that's meaningful to average across
+  // several different runs. Returns the most recent sampled run's coverage that could be parsed.
+  private async calcTestCoverageRate(runs: any[]): Promise<number | null> {
+    const sampledRuns = runs
+      .filter(r => r.status === 'completed')
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, TEST_ARTIFACT_SAMPLE_SIZE);
+
+    if (sampledRuns.length === 0) return null;
+
+    const namePattern = new RegExp(this.options.coverageArtifactPattern, 'i');
+
+    for (const run of sampledRuns) {
+      const coverage = await this.fetchCoverageFromRun(run.id, namePattern);
+      if (coverage && coverage.linesFound > 0) {
+        return Math.round((coverage.linesHit / coverage.linesFound) * 100);
+      }
+    }
+
+    return null;
   }
 
   private async fetchWorkflowRunArtifacts(runId: number): Promise<any[]> {
