@@ -22,11 +22,16 @@ const DEFAULT_COVERAGE_ARTIFACT_PATTERN = 'coverage';
 // prohibitively expensive, so this trades exhaustiveness for a bounded, recent sample.
 const TEST_ARTIFACT_SAMPLE_SIZE = 20;
 
+type JUnitTestCase = { name: string; status: 'passed' | 'failed' | 'skipped' };
+
 export class GithubActionsConnector implements IConnector {
   private credentials: { token: string };
   private project: { owner: string; repo: string };
   private octokit: Octokit;
   private options: Required<GithubActionsConnectorOptions>;
+  // Populated lazily; the same sampled runs are examined by both Test Failure Rate and
+  // Flaky Test Count, so this avoids downloading/parsing each run's JUnit artifact twice.
+  private junitCasesCache = new Map<number, JUnitTestCase[]>();
 
   constructor(input: CreateGithubActionsConnectorInput) {
     if (!input.credentials.token) {
@@ -188,19 +193,68 @@ export class GithubActionsConnector implements IConnector {
     return Math.round((totalMs / completed.length) / 60000);
   }
 
-  // null only when there's no run history at all to assess — zero retried-then-succeeded
-  // runs among real run data is a legitimate, measured "0", not "unmeasurable".
+  private sampleRecentCompletedRuns(runs: any[]): any[] {
+    return runs
+      .filter(r => r.status === 'completed')
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .slice(0, TEST_ARTIFACT_SAMPLE_SIZE);
+  }
+
+  // Real per-test flakiness: groups the sampled runs by head_sha (identical commit) and, within
+  // any group with 2+ runs, checks whether the same test name shows both a pass and a fail —
+  // that's the literal definition (inconsistent result, no code change). Falls back to the old
+  // run-level "retried then succeeded" proxy only when no same-commit comparison was possible
+  // (e.g. no JUnit artifacts found, or every commit in the sample only ran once).
   private async calcFlakyTests(runs: any[]): Promise<number | null> {
     if (runs.length === 0) return null;
 
-    const retriedRuns = runs.filter(r => r.run_attempt > 1);
-    let flakyCount = 0;
-    for (const run of retriedRuns) {
-      if (run.conclusion === 'success') {
-        flakyCount += 1;
+    const namePattern = new RegExp(this.options.testReportArtifactPattern, 'i');
+    const sampledRuns = this.sampleRecentCompletedRuns(runs);
+
+    const bySha = new Map<string, any[]>();
+    for (const run of sampledRuns) {
+      const group = bySha.get(run.head_sha) ?? [];
+      group.push(run);
+      bySha.set(run.head_sha, group);
+    }
+
+    const flakyTestNames = new Set<string>();
+    let comparableShaGroups = 0;
+
+    for (const group of bySha.values()) {
+      if (group.length < 2) continue;
+
+      const outcomesByTest = new Map<string, Set<'passed' | 'failed'>>();
+      let sawJUnitData = false;
+
+      for (const run of group) {
+        const cases = await this.fetchJUnitTestCasesForRun(run.id, namePattern);
+        if (cases.length === 0) continue;
+        sawJUnitData = true;
+
+        for (const testCase of cases) {
+          if (testCase.status === 'skipped') continue;
+          const outcomes = outcomesByTest.get(testCase.name) ?? new Set();
+          outcomes.add(testCase.status);
+          outcomesByTest.set(testCase.name, outcomes);
+        }
+      }
+
+      if (!sawJUnitData) continue;
+      comparableShaGroups++;
+
+      for (const [testName, outcomes] of outcomesByTest) {
+        if (outcomes.has('passed') && outcomes.has('failed')) {
+          flakyTestNames.add(testName);
+        }
       }
     }
-    return flakyCount;
+
+    if (comparableShaGroups > 0) return flakyTestNames.size;
+
+    // No same-commit re-run data available anywhere in the sample — fall back to the proxy.
+    const retriedRuns = runs.filter(r => r.run_attempt > 1);
+    return retriedRuns.filter(r => r.conclusion === 'success').length;
   }
 
   private parseLcovCoverage(content: string): { linesFound: number; linesHit: number } | null {
@@ -256,41 +310,36 @@ export class GithubActionsConnector implements IConnector {
     return null;
   }
 
+  // Aggregates across every parseable coverage file found for this run (matrix builds or
+  // monorepos often produce several — one per OS/version/package — that all describe the
+  // same commit and should be combined into one figure, not just the first one found).
   private async fetchCoverageFromRun(
     runId: number,
     namePattern: RegExp,
   ): Promise<{ linesFound: number; linesHit: number } | null> {
-    const artifacts = await this.fetchWorkflowRunArtifacts(runId);
-    const matching = artifacts.filter((a: any) => !a.expired && namePattern.test(a.name));
+    const entries = await this.fetchArtifactEntries(runId, namePattern);
 
-    for (const artifact of matching) {
-      const zipBuffer = await this.downloadArtifactZip(artifact.id);
-      if (!zipBuffer) continue;
+    let linesFound = 0;
+    let linesHit = 0;
+    let matchedAny = false;
 
-      try {
-        const zip = new AdmZip(zipBuffer);
-        for (const entry of zip.getEntries()) {
-          if (entry.isDirectory) continue;
-          const parsed = this.parseCoverageFile(entry.entryName, zip.readAsText(entry));
-          if (parsed) return parsed;
-        }
-      } catch {
-        // Skip a corrupt/unreadable archive and try the next matching artifact, if any
-      }
+    for (const entry of entries) {
+      const parsed = this.parseCoverageFile(entry.entryName, entry.content);
+      if (!parsed) continue;
+
+      linesFound += parsed.linesFound;
+      linesHit += parsed.linesHit;
+      matchedAny = true;
     }
 
-    return null;
+    return matchedAny && linesFound > 0 ? { linesFound, linesHit } : null;
   }
 
   // Unlike Test Failure Rate, this doesn't aggregate across the sampled runs — coverage is a
   // snapshot of the codebase at one commit, not something that's meaningful to average across
   // several different runs. Returns the most recent sampled run's coverage that could be parsed.
   private async calcTestCoverageRate(runs: any[]): Promise<number | null> {
-    const sampledRuns = runs
-      .filter(r => r.status === 'completed')
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-      .slice(0, TEST_ARTIFACT_SAMPLE_SIZE);
-
+    const sampledRuns = this.sampleRecentCompletedRuns(runs);
     if (sampledRuns.length === 0) return null;
 
     const namePattern = new RegExp(this.options.coverageArtifactPattern, 'i');
@@ -330,18 +379,18 @@ export class GithubActionsConnector implements IConnector {
     }
   }
 
-  // Finds the first non-expired artifact on this run whose name matches namePattern,
-  // downloads and unzips it, and returns the text of the first file inside matching
-  // fileExtension. No universal artifact-naming convention exists across repos, so a
-  // repo using an unrecognized name or format simply yields null here, same as any
-  // other "can't measure it" case in this codebase.
-  private async fetchReportFileFromRun(
+  // Returns the text content of every non-directory file across every non-expired artifact
+  // on this run whose name matches namePattern — the shared foundation for both test-report
+  // and coverage parsing, aggregating across matrix builds' multiple report files rather than
+  // stopping at the first one found.
+  private async fetchArtifactEntries(
     runId: number,
     namePattern: RegExp,
-    fileExtension: string,
-  ): Promise<string | null> {
+  ): Promise<Array<{ entryName: string; content: string }>> {
     const artifacts = await this.fetchWorkflowRunArtifacts(runId);
     const matching = artifacts.filter((a: any) => !a.expired && namePattern.test(a.name));
+
+    const entries: Array<{ entryName: string; content: string }> = [];
 
     for (const artifact of matching) {
       const zipBuffer = await this.downloadArtifactZip(artifact.id);
@@ -349,76 +398,93 @@ export class GithubActionsConnector implements IConnector {
 
       try {
         const zip = new AdmZip(zipBuffer);
-        const entry = zip.getEntries().find((e) => e.entryName.toLowerCase().endsWith(fileExtension));
-        if (entry) return zip.readAsText(entry);
+        for (const entry of zip.getEntries()) {
+          if (entry.isDirectory) continue;
+          entries.push({ entryName: entry.entryName, content: zip.readAsText(entry) });
+        }
       } catch {
-        // Skip a corrupt/unreadable archive and try the next matching artifact, if any
+        // Skip a corrupt/unreadable archive and continue with the next matching artifact, if any
       }
     }
 
-    return null;
+    return entries;
   }
 
-  // Sums tests/failures/errors across every <testsuite> found (whether the file's root is a
-  // single <testsuite> or a <testsuites> wrapping several) rather than trusting any aggregate
-  // attribute on <testsuites> itself, to avoid double-counting if both are present.
-  private parseJUnitTestCounts(xml: string): { tests: number; failures: number; errors: number } | null {
+  // Per-test results (not just aggregate counts) — needed for real flaky-test detection, which
+  // has to compare individual test outcomes across runs, not just overall pass/fail totals.
+  private parseJUnitTestCases(xml: string): JUnitTestCase[] {
     try {
       const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
       const parsed = parser.parse(xml);
 
       const root = parsed.testsuites ?? parsed.testsuite;
-      if (!root) return null;
+      if (!root) return [];
 
       const suiteList = parsed.testsuites
         ? (Array.isArray(root.testsuite) ? root.testsuite : root.testsuite ? [root.testsuite] : [])
         : [root];
 
-      if (suiteList.length === 0) return null;
-
-      let tests = 0;
-      let failures = 0;
-      let errors = 0;
-
+      const cases: JUnitTestCase[] = [];
       for (const suite of suiteList) {
-        tests += Number(suite.tests ?? 0);
-        failures += Number(suite.failures ?? 0);
-        errors += Number(suite.errors ?? 0);
+        const rawCases = suite.testcase;
+        const testcases = Array.isArray(rawCases) ? rawCases : rawCases ? [rawCases] : [];
+
+        for (const testcase of testcases) {
+          const classname = testcase.classname ?? '';
+          const name = classname ? `${classname}.${testcase.name ?? 'unknown'}` : (testcase.name ?? 'unknown');
+
+          let status: JUnitTestCase['status'] = 'passed';
+          if (testcase.failure !== undefined || testcase.error !== undefined) status = 'failed';
+          else if (testcase.skipped !== undefined) status = 'skipped';
+
+          cases.push({ name, status });
+        }
       }
 
-      return tests > 0 ? { tests, failures, errors } : null;
+      return cases;
     } catch {
-      return null;
+      return [];
     }
   }
 
-  private async calcTestFailureRate(runs: any[]): Promise<number | null> {
-    const sampledRuns = runs
-      .filter(r => r.status === 'completed')
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-      .slice(0, TEST_ARTIFACT_SAMPLE_SIZE);
+  // Aggregates every matching JUnit XML file across all of this run's matching artifacts
+  // (matrix builds commonly produce one per OS/version) into one flat list of test cases.
+  // Memoized per run id since both Test Failure Rate and Flaky Test Count examine the same
+  // sampled runs and would otherwise download/parse each run's artifact twice.
+  private async fetchJUnitTestCasesForRun(runId: number, namePattern: RegExp): Promise<JUnitTestCase[]> {
+    const cached = this.junitCasesCache.get(runId);
+    if (cached) return cached;
 
+    const entries = await this.fetchArtifactEntries(runId, namePattern);
+    const cases: JUnitTestCase[] = [];
+    for (const entry of entries) {
+      if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
+      cases.push(...this.parseJUnitTestCases(entry.content));
+    }
+
+    this.junitCasesCache.set(runId, cases);
+    return cases;
+  }
+
+  private async calcTestFailureRate(runs: any[]): Promise<number | null> {
+    const sampledRuns = this.sampleRecentCompletedRuns(runs);
     if (sampledRuns.length === 0) return null;
 
     const namePattern = new RegExp(this.options.testReportArtifactPattern, 'i');
 
     let totalTests = 0;
     let totalFailingTests = 0;
-    let runsWithData = 0;
 
     for (const run of sampledRuns) {
-      const xml = await this.fetchReportFileFromRun(run.id, namePattern, '.xml');
-      if (!xml) continue;
+      const cases = await this.fetchJUnitTestCasesForRun(run.id, namePattern);
+      const executed = cases.filter(c => c.status !== 'skipped');
+      if (executed.length === 0) continue;
 
-      const counts = this.parseJUnitTestCounts(xml);
-      if (!counts) continue;
-
-      totalTests += counts.tests;
-      totalFailingTests += counts.failures + counts.errors;
-      runsWithData++;
+      totalTests += executed.length;
+      totalFailingTests += executed.filter(c => c.status === 'failed').length;
     }
 
-    if (runsWithData === 0 || totalTests === 0) return null;
+    if (totalTests === 0) return null;
 
     return Math.round((totalFailingTests / totalTests) * 100);
   }
