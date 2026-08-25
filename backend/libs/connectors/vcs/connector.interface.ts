@@ -3,10 +3,23 @@
  * Defines contract for all VCS provider implementations
  */
 
-export interface IVcsConnector {
+import type { SupportedTool } from '@libs/sync/index.js';
+
+/**
+ * Normalized VCS connector output, typed over the provider's metrics shape.
+ * Structurally compatible with the sync layer's `ConnectorOutput` (data: unknown),
+ * since TMetrics defaults to unknown and narrows for providers that specify it.
+ */
+export interface VcsConnectorOutput<TMetrics = unknown> {
+  tool: SupportedTool;
+  provider: string;
+  data: TMetrics;
+  fetchedAt: Date;
+}
+
+export interface IVcsConnector<TMetrics = unknown> {
   /**
-   * Fetch data from the VCS provider
-   * Return type is flexible and not fixed yet
+   * Fetch metrics from the VCS provider
    */
-  getData(): Promise<unknown>;
+  getData(): Promise<VcsConnectorOutput<TMetrics>>;
 }
