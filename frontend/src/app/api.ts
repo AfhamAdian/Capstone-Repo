@@ -40,6 +40,24 @@ export async function register(input: RegisterInput): Promise<AuthUser> {
   return user;
 }
 
+// Emails a 6-digit verification code for self-signup; throws if the email is already registered.
+export async function sendVerificationCode(email: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/send-verification-code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return message;
+}
+
+// Confirms the code so registration can proceed; throws on an invalid/expired code.
+export async function verifyEmailCode(email: string, code: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/verify-email-code", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+  return message;
+}
+
 export async function login(email: string, password: string): Promise<AuthUser> {
   const { user } = await apiRequest<{ user: AuthUser }>("/auth/login", {
     method: "POST",

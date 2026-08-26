@@ -16,7 +16,8 @@ import {
   type PublicUser,
 } from '../database/user.js';
 import { addProjectMember } from '../database/projectmember.js';
-import { sendPasswordResetEmail } from './email.service.js';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendVerificationCodeEmail } from './email.service.js';
+import { emailVerificationStore } from '@libs/auth/email-verification-store.js';
 import { env } from '../config/env.js';
 import { logger } from '@libs/logger.js';
 
@@ -67,9 +68,39 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
   return input.inviteToken ? registerInvitedMember(input) : registerAdmin(input);
 }
 
+// Emails a 6-digit verification code for a self-signup email. Rejects if the email is already taken.
+export async function sendEmailVerificationCode(email: string): Promise<void> {
+  const trimmed = email?.trim();
+  if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
+    throw new AuthError('A valid email is required', 400);
+  }
+  if (await findUserByEmail(trimmed)) {
+    throw new AuthError('An account with this email already exists', 409);
+  }
+  const code = await emailVerificationStore.issueCode(trimmed);
+  await sendVerificationCodeEmail(trimmed, code);
+  log.info({ email: trimmed }, 'email verification code sent');
+}
+
+// Confirms a submitted code, marking the email verified for a short window so registration can proceed.
+export async function verifyEmailCode(email: string, code: string): Promise<void> {
+  if (!email?.trim() || !code?.trim()) {
+    throw new AuthError('Email and code are required', 400);
+  }
+  const ok = await emailVerificationStore.verifyCode(email, code);
+  if (!ok) {
+    throw new AuthError('Invalid or expired verification code', 400);
+  }
+}
+
 // Creates the company then its first (admin) user; rolls the company back if the user insert fails.
 async function registerAdmin(input: RegisterInput): Promise<AuthResult> {
   assertValidRegisterInput(input);
+
+  // Self-signup requires a verified email (the code flow above sets this flag).
+  if (!(await emailVerificationStore.isVerified(input.email))) {
+    throw new AuthError('Please verify your email address first', 400);
+  }
 
   const existing = await findUserByEmail(input.email);
   if (existing) {
@@ -94,6 +125,12 @@ async function registerAdmin(input: RegisterInput): Promise<AuthResult> {
       email: user.email,
       role: user.role,
     });
+
+    await emailVerificationStore.consumeVerified(input.email); // one verified flag = one account
+
+    // Best-effort welcome email — never block or fail registration on a mail hiccup.
+    void sendWelcomeEmail(user.email, input.name).catch((err) =>
+      log.warn({ err, userId: user.id }, 'welcome email failed (non-blocking)'));
 
     log.info({ userId: user.id, companyId }, 'registered new user and company');
     return { user: toPublicUser(user), sessionId };
@@ -147,6 +184,10 @@ async function registerInvitedMember(input: RegisterInput): Promise<AuthResult> 
     email: user.email,
     role: user.role,
   });
+
+  // Best-effort welcome email — never block or fail registration on a mail hiccup.
+  void sendWelcomeEmail(user.email, input.name).catch((err) =>
+    log.warn({ err, userId: user.id }, 'welcome email failed (non-blocking)'));
 
   log.info({ userId: user.id, projectId: invite.projectId }, 'registered invited member');
   return { user: toPublicUser(user), sessionId };
