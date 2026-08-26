@@ -69,7 +69,7 @@ function StepDot({ n, label, state }: { n: number; label: string; state: "done" 
 }
 
 export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void; onCreated: () => void }) {
-  const { setActiveWorkspace } = useWorkspace();
+  const { setActiveWorkspace, refetchWorkspaces } = useWorkspace();
 
   const [stage, setStage] = useState<Stage>("form");
   const [name, setName] = useState("");
@@ -128,6 +128,8 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
         projectsCount: res.projects.length,
         membersCount: 1,
       });
+      // Refresh the real workspace list so the onboarding gate lets us through to the app.
+      await refetchWorkspaces();
       onCreated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the workspace");
