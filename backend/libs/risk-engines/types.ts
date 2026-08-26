@@ -4,10 +4,12 @@ export enum RiskType {
   ENGINEERING_PROCESS = "ENGINEERING_PROCESS",
   CICD_RELIABILITY = "CICD_RELIABILITY",
   TEAM_HEALTH = "TEAM_HEALTH",
-  SECURITY_RISK = "SECURITY_RISK",
   // Added for the survey feature's rubric (delivery/codeQuality/cicd/teamHealth/blockers),
   // which doesn't map 1:1 onto the 6 categories above - see backend/db/migrations/002_survey.sql.
   BLOCKERS = "BLOCKERS",
+  // New health-score model (backend/libs/risk-engines/scoring-rules/*.md), replacing the old
+  // risk scores one at a time. SECURITY replaces the retired SECURITY_RISK.
+  SECURITY = "SECURITY",
 }
 
 export type DeliveryMetrics = {
@@ -63,13 +65,19 @@ export type TeamHealthMetrics = {
   hasBusFactorOneCriticalModule?: boolean;
 };
 
-export type SecurityRiskMetrics = {
-  openCriticalVulnerabilities?: number;
-  openHighVulnerabilities?: number;
-  dependencyUpdateLagDays?: number;
-  prRevertRatePercent?: number;
-  incidentMttrHours?: number;
-  longLivedUnmergedBranchesCount?: number;
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/01-security-score.md).
+ * Higher is better. Replaces SecurityRiskMetrics/RiskType.SECURITY_RISK.
+ */
+export type SecurityMetrics = {
+  securityVulnerabilityCount?: number; // VCS: dependency + secrets alerts (non-SAST slice)
+  linesOfCode?: number; // SonarQube ncloc - denominator for per-KLOC density
+  dependencyUpdateLagDays?: number; // VCS - shared with Maintainability
+  securityRating?: number; // SonarQube 1(A)..5(E)
+  securityHotspots?: number; // SonarQube count
+  securityReviewRating?: number; // SonarQube 1(A)..5(E)
+  securityRemediationEffort?: number; // SonarQube minutes
+  newVulnerabilities?: number; // SonarQube - penalty input
 };
 
 export type BlockersMetrics = {
@@ -84,8 +92,8 @@ export type RiskMetricsByType = {
   [RiskType.ENGINEERING_PROCESS]: EngineeringProcessMetrics;
   [RiskType.CICD_RELIABILITY]: CicdReliabilityMetrics;
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
-  [RiskType.SECURITY_RISK]: SecurityRiskMetrics;
   [RiskType.BLOCKERS]: BlockersMetrics;
+  [RiskType.SECURITY]: SecurityMetrics;
 };
 
 export type RiskWeight = {

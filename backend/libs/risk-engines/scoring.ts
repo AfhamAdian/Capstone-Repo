@@ -69,3 +69,26 @@ export function riskLevel(score: number): "LOW" | "MEDIUM" | "HIGH" {
   if (score >= 40) return "MEDIUM";
   return "LOW";
 }
+
+/** SonarQube-style A..E rating (1..5) to a 0..100 score. A=100 .. E=0. */
+export function ratingToScore(rating: number): number {
+  return clamp(100 - (rating - 1) * 25);
+}
+
+/**
+ * Normalize a raw count by project size (per 1000 lines of code), so a large
+ * and a small project aren't compared on raw counts alone. Null if lines of
+ * code is absent/zero - density is meaningless without a denominator.
+ */
+export function densityPerKloc(count: number, linesOfCode: number): number | null {
+  if (!linesOfCode || linesOfCode <= 0) return null;
+  return count / (linesOfCode / 1000);
+}
+
+/**
+ * Generic "lower raw value is better" normalizer: `good` maps to 100,
+ * `bad` maps to 0, linearly, clamped outside that range.
+ */
+export function linearBetween(value: number, good: number, bad: number): number {
+  return clamp(100 - ((value - good) / (bad - good)) * 100);
+}

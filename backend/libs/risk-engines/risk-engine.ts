@@ -6,7 +6,7 @@ import {
   RiskMetricsByType,
   RiskResult,
   RiskType,
-  SecurityRiskMetrics,
+  SecurityMetrics,
   TeamHealthMetrics,
   BlockersMetrics,
 } from "./types.js";
@@ -15,7 +15,7 @@ import { CodeQualityStrategy } from "./risks/code-quality/code-quality.strategy.
 import { EngineeringProcessStrategy } from "./risks/engineering-process/engineering-process.strategy.js";
 import { CicdReliabilityStrategy } from "./risks/cicd-reliability/cicd-reliability.strategy.js";
 import { TeamHealthStrategy } from "./risks/team-health/team-health.strategy.js";
-import { SecurityRiskStrategy } from "./risks/security-risk/security-risk.strategy.js";
+import { SecurityStrategy } from "./risks/security/security.strategy.js";
 import { BlockersStrategy } from "./risks/blockers/blockers.strategy.js";
 import { saveRiskScore } from "../../apps/api/database/risk-score.js";
 
@@ -48,8 +48,8 @@ export class RiskEngine {
       return new TeamHealthStrategy().calculate(metrics as TeamHealthMetrics);
     }
 
-    if (type === RiskType.SECURITY_RISK) {
-      return new SecurityRiskStrategy().calculate(metrics as SecurityRiskMetrics);
+    if (type === RiskType.SECURITY) {
+      return new SecurityStrategy().calculate(metrics as SecurityMetrics);
     }
 
     if (type === RiskType.BLOCKERS) {
