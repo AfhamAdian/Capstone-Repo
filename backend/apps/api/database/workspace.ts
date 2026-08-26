@@ -85,21 +85,3 @@ export async function getWorkspaceById(id: number): Promise<WorkspaceRecord | nu
   }
   return (data as WorkspaceRecord | null) ?? null;
 }
-
-// The workspace a project belongs to (null if it wasn't imported through a workspace).
-// Used by sync to resolve a project's VCS token from its workspace's PAT.
-export async function getWorkspaceForProject(projectId: number): Promise<WorkspaceRecord | null> {
-  const client = assertSupabaseClient();
-
-  const { data, error } = await client
-    .from('project')
-    .select('workspace_id')
-    .eq('id', projectId)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(`Failed to load workspace for project ${projectId}: ${error.message}`);
-  }
-  const workspaceId = (data?.workspace_id as number | null) ?? null;
-  return workspaceId ? getWorkspaceById(workspaceId) : null;
-}

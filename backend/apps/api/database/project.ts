@@ -1,7 +1,7 @@
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { listIntegrations } from './project-tool-integration.js';
-import { getWorkspaceForProject } from './workspace.js';
+import { getWorkspaceById } from './workspace.js';
 
 type ToolIntegration = {
   credentials?: Record<string, string | undefined>;
@@ -176,7 +176,7 @@ export async function getProjectIntegrationsForTools(
 
   const { data, error } = await client
     .from('project')
-    .select('id')
+    .select('id, workspace_id')
     .eq('id', numericProjectId)
     .single();
 
@@ -197,8 +197,8 @@ export async function getProjectIntegrationsForTools(
 
   // VCS token falls back to the project's workspace PAT (stored once on the workspace), so imported
   // projects don't duplicate the token in their config.
-  const workspace = await getWorkspaceForProject(numericProjectId);
-  const workspaceToken = workspace?.access_token;
+  const workspaceId = (data.workspace_id as number | null) ?? null;
+  const workspaceToken = workspaceId ? (await getWorkspaceById(workspaceId))?.access_token : undefined;
 
   const integrations: Record<string, ToolIntegration> = {};
 

@@ -21,7 +21,7 @@ function handleWorkspaceError(error: unknown, response: Response): void {
 export async function previewReposHandler(request: Request, response: Response): Promise<void> {
   try {
     const { vcs, organization, token } = request.body ?? {};
-    const repos = await previewRepos({ vcs, organization, token });
+    const repos = await previewRepos(request.auth!, { vcs, organization, token });
     response.status(200).json({ repos });
   } catch (error) {
     handleWorkspaceError(error, response);

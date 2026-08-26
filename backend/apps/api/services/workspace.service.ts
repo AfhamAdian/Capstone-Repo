@@ -4,6 +4,7 @@
 // works unchanged (this copy is removed once project.workspace_id + workspace-token resolution land).
 
 import type { SessionData } from '@libs/auth/session-store.js';
+import type { SupportedTool } from '@libs/sync/types.js';
 import { listAccessibleRepos, VcsError, type RepoSummary } from '@libs/connectors/vcs/repo-lister.js';
 import {
   createWorkspace as dbCreateWorkspace,
@@ -49,11 +50,14 @@ function toView(w: WorkspaceRecord): WorkspaceView {
 }
 
 // Step 2 of the wizard: validate the PAT and return the repos it can access under the org. Saves nothing.
-export async function previewRepos(input: {
-  vcs: string;
-  organization: string;
-  token: string;
-}): Promise<RepoSummary[]> {
+// Admin-only, since only admins create workspaces.
+export async function previewRepos(
+  auth: Auth,
+  input: { vcs: string; organization: string; token: string },
+): Promise<RepoSummary[]> {
+  if (auth.role !== 'admin') {
+    throw new WorkspaceError('Only admins can create workspaces', 403);
+  }
   if (!SUPPORTED_VCS.has(input.vcs)) {
     throw new WorkspaceError('A valid version control provider (github, gitlab, bitbucket) is required', 400);
   }
@@ -92,7 +96,8 @@ export async function createWorkspace(
     throw error;
   }
   const byName = new Map(accessible.map((r) => [r.name, r]));
-  const selected = input.repos.filter((name) => byName.has(name));
+  // Dedupe so the same repo selected twice can't create duplicate projects.
+  const selected = [...new Set(input.repos)].filter((name) => byName.has(name));
   if (selected.length === 0) {
     throw new WorkspaceError('None of the selected repositories are accessible with this token', 400);
   }
@@ -120,7 +125,7 @@ export async function createWorkspace(
       await addIntegration({
         projectId: project.id,
         category: 'vcs',
-        toolName: input.vcs as never,
+        toolName: input.vcs as SupportedTool,
         externalProjectId: `${input.organization}/${repoName}`,
         // No token here — sync resolves it from the workspace PAT via project.workspace_id.
         config: { owner: input.organization, repo: repoName },
