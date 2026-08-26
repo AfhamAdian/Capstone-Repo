@@ -28,14 +28,41 @@ export type DeliveryMetrics = {
   consecutiveLowSprintCompletionCount?: number;
 };
 
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/06-engineering-process-score.md).
+ * Higher is better. Two 50/50 sub-groups: Review Quality (VCS + CI/CD) and Flow/Bottleneck
+ * (mostly Jira, absorbing blocked/overdue/stale concepts that used to sit in Team Health /
+ * Blockers). issueCycleTimeDays/leadTimeAvgDays: whichever source resolution (Jira primary,
+ * VC fallback) happens upstream should already be baked in by the time this reaches the
+ * strategy - it just takes one resolved value per field.
+ */
 export type EngineeringProcessMetrics = {
-  prReviewCoveragePercent?: number;
-  selfMergedPrRatePercent?: number;
-  timeToFirstReviewHours?: number;
-  unresolvedThreadsMergedCount?: number;
-  commitMessageQualityPercent?: number;
-  longLivedBranchesCount?: number;
-  stalePrCount?: number;
+  // Sub-group A: Review Quality
+  mrMergeTimeHours?: number; // VCS
+  timeToFirstReviewHours?: number; // VCS
+  reviewCommentsPerMrAvg?: number; // VCS - banded together with reviewCommentsPer100LinesAvg
+  reviewCommentsPer100LinesAvg?: number; // VCS - banded together with reviewCommentsPerMrAvg
+  unresolvedThreadsAtMergeCount?: number; // VCS
+  reviewIterationCount?: number; // VCS
+  prReviewCoveragePercent?: number; // VCS
+  selfMergedPrRatePercent?: number; // VCS
+  commitMessageQualityPercent?: number; // VCS
+  longLivedBranchesCount?: number; // VCS
+  avgPipelineRunsPerPr?: number; // CI/CD
+
+  // Sub-group B: Flow/Bottleneck
+  issueCycleTimeDays?: number; // Jira primary / VC fallback, resolved upstream
+  leadTimeAvgDays?: number; // Jira - preferred over issueCycleTimeDays when both are present
+  leadTimeMedianDays?: number; // Jira - contextual only, not separately weighted
+  leadTimeP95Days?: number; // Jira - contextual only, not separately weighted
+  blockedItemsCount?: number; // Jira
+  blockedTicketPercent?: number; // Jira
+  blockedItemsAvgAgeDays?: number; // Jira
+  blockedReentryCount?: number; // Jira
+  overdueItemsCount?: number; // Jira
+  staleIssuesCount?: number; // VCS - averaged together with staleMrsCount/staleTicketRatio
+  staleMrsCount?: number; // VCS - averaged together with staleIssuesCount/staleTicketRatio
+  staleTicketRatio?: number; // Jira - averaged together with staleIssuesCount/staleMrsCount
 };
 
 /**

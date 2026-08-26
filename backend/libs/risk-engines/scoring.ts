@@ -100,3 +100,11 @@ export function linearBetween(value: number, good: number, bad: number): number 
 export function higherIsBetterCapped(value: number, target: number): number {
   return clamp(Math.min(100, (value / target) * 100));
 }
+
+/**
+ * Generic "closer to an ideal midpoint is better" (banded) normalizer - both
+ * over- and under-shooting `ideal` are penalized, scaled by `tolerance`.
+ */
+export function bandedAround(value: number, ideal: number, tolerance: number): number {
+  return clamp(100 - (Math.abs(value - ideal) / tolerance) * 100);
+}
