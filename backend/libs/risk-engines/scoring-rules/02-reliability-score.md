@@ -6,6 +6,10 @@ a "QA Effectiveness" category). Weights below have been rebuilt without
 it. If a prod/QA bug-source field is defined later and this metric is
 reintroduced, re-open this file to rebalance.
 
+**Implemented** in
+`backend/libs/risk-engines/risks/reliability/reliability.strategy.ts` —
+one further deviation from this doc, noted at the end of this file.
+
 ## Metrics used
 
 | Metric | Source | Role |
@@ -19,7 +23,7 @@ reintroduced, re-open this file to rebalance.
 | Coverage on New Code | SonarQube | Scored |
 | Reliability Rating | SonarQube | Scored |
 | Quality Gate Pass Rate | SonarQube | Scored |
-| Reliability Remediation Effort (normalized per bug) | SonarQube | Scored |
+| Reliability Remediation Effort | SonarQube | Scored — see implementation note at end of file |
 | Bugs in New Code | SonarQube | Penalty (subtracted) |
 
 ## Caveat: CI/CD Test Coverage (%) vs. SonarQube Coverage (Overall)
@@ -49,7 +53,7 @@ sub_score = 100 - (rating_numeric - 1) * 25
 Rate):** use directly, no inversion.
 
 **Lower-is-better (Reopen Rate, Revert Rate, Test Failure Rate, Flaky
-Test Count, Remediation Effort per bug):**
+Test Count, Remediation Effort):**
 ```
 sub_score = max(0, 100 - ((value - good) / (bad - good)) * 100)
 ```
@@ -66,7 +70,7 @@ sub_score = max(0, 100 - ((value - good) / (bad - good)) * 100)
 | Issue Reopen Rate | 8% |
 | MR Revert Rate | 8% |
 | Quality Gate Pass Rate | 4% |
-| Reliability Remediation Effort (per bug) | 2% |
+| Reliability Remediation Effort | 2% |
 
 *(CI/CD Test Coverage (%) intentionally excluded from default weights —
 add at ~8–10% only if confirmed as a genuinely separate signal from
@@ -96,3 +100,13 @@ base_score =
 
 final_score = clamp(base_score - new_code_bugs_penalty, 0, 100)
 ```
+
+## Implementation note (deviation from this doc)
+
+**Reliability Remediation Effort is scored as an absolute value, not "per bug."**
+Same reason as Security's Remediation Effort: the SonarQube connector no
+longer returns a total bug count (only `newBugs`, the new-code penalty
+input), so there's no divisor to normalize per bug. `ReliabilityStrategy`
+scores `reliabilityRemediationEffort` directly via the lower-is-better
+formula above instead. If a total-bug-count field is reintroduced later,
+revisit this.

@@ -5,6 +5,10 @@ only 6 belong to this dimension — the other 4 (Flaky Test Count, Test
 Failure Rate, Test Coverage) feed Reliability, and Average Pipeline Runs
 Per MR feeds Engineering Process. See those files for those metrics.
 
+**Implemented** in
+`backend/libs/risk-engines/risks/cicd-deployment-health/cicd-deployment-health.strategy.ts`,
+matching this doc exactly — no rule deviations.
+
 ## Metrics used
 
 | Metric | Source | Role |

@@ -4,6 +4,15 @@ Status: unchanged from prior design — no metrics in this dimension were
 added/removed in the latest fetch lists. Still the thinnest dimension
 (4 metrics, all git-derived).
 
+**Implemented** in
+`backend/libs/risk-engines/risks/team-health/team-health.strategy.ts`,
+matching this doc exactly — no rule deviations. (The prior implementation's
+`blockedItemsCount`/`blockedItemsAvgAgeDays`/`overdueItemsCount`/
+`hasBusFactorOneCriticalModule` fields, which predated this doc, were
+removed — the first three now live in Engineering Process's Flow/Bottleneck
+sub-group, and the kill-switch had no real data source and isn't part of
+this design.)
+
 ## Metrics used
 
 | Metric | Source | Role |

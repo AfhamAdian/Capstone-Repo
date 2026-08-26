@@ -1,7 +1,9 @@
 # Security Score
 
 Status: unchanged from prior design — no metrics in this dimension were
-added/removed in the latest fetch lists.
+added/removed in the latest fetch lists. **Implemented** in
+`backend/libs/risk-engines/risks/security/security.strategy.ts` — one
+deviation from this doc, noted below.
 
 ## Metrics used
 
@@ -12,7 +14,7 @@ added/removed in the latest fetch lists.
 | Security Rating | SonarQube | Scored |
 | Security Hotspots | SonarQube | Scored |
 | Security Review Rating | SonarQube | Scored |
-| Security Remediation Effort (normalized per vuln) | SonarQube | Scored |
+| Security Remediation Effort | SonarQube | Scored — see implementation note below |
 | Vulnerabilities in New Code | SonarQube | Penalty (subtracted) |
 
 ## Direction
@@ -33,7 +35,7 @@ density = raw_count / (lines_of_code / 1000)   // per KLOC
 sub_score = max(0, 100 - (density / threshold) * 100)
 ```
 
-**Time-based (Dependency Update Lag, Remediation Effort per vuln):**
+**Time-based (Dependency Update Lag, Remediation Effort):**
 ```
 sub_score = max(0, 100 - ((value - good) / (bad - good)) * 100)
 ```
@@ -47,7 +49,7 @@ sub_score = max(0, 100 - ((value - good) / (bad - good)) * 100)
 | Security Review Rating | 15% |
 | Security Hotspots (per KLOC) | 15% |
 | Dependency Update Lag | 15% |
-| Security Remediation Effort (per vuln) | 10% |
+| Security Remediation Effort | 10% |
 
 ## Penalty
 
@@ -81,3 +83,14 @@ final_score = clamp(base_score - new_code_vuln_penalty, 0, 100)
   the remaining available metrics proportionally when missing.
 - **Dependency Update Lag** feeds both Security and Maintainability —
   compute once, reuse the sub-score in both formulas.
+
+## Implementation note (deviation from this doc)
+
+**Security Remediation Effort is scored as an absolute value, not "per vuln."**
+The SonarQube connector no longer returns a total vulnerability count (only
+`newVulnerabilities`, the new-code penalty input) — see
+`backend/libs/connectors/quality/sonarqube-metrics-reference.md` — so there's
+no divisor left to normalize remediation-effort minutes per vulnerability.
+`SecurityStrategy` scores `securityRemediationEffort` directly via the
+time-based `linearBetween(value, good, bad)` formula above instead. If a
+total-vulnerability-count field is reintroduced later, revisit this.

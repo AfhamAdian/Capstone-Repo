@@ -5,6 +5,13 @@ Maintainability) and Stale Ticket Ratio (Jira, consolidated here with
 the other staleness metrics) are confirmed present in the current lists.
 Structure otherwise unchanged — two sub-scores combined 50/50.
 
+**Implemented** in
+`backend/libs/risk-engines/risks/engineering-process/engineering-process.strategy.ts`
+— three implementation decisions/gap-fixes noted at the end of this file
+(Review Comments Per 100 Lines' missing weight, the Issue Cycle Time/Lead
+Time single-signal resolution, and how the Stale Combined slot is
+computed).
+
 ## Metrics used
 
 ### Sub-group A: Review Quality
@@ -81,7 +88,7 @@ account for that nuance.
 | Time to First Review | 15% |
 | Unresolved Discussion Threads | 12% |
 | MR Merge Time | 10% |
-| Review Comments Per MR (banded) | 8% |
+| Review Comments Per MR + Per 100 Lines (banded, averaged) | 8% |
 | Review Iteration Count | 5% |
 | Long-Lived Branch Count | 5% |
 | Commit Message Quality | 3% |
@@ -111,3 +118,24 @@ final_score = (ReviewQuality_score * 0.5) + (FlowBottleneck_score * 0.5)
 Start with an even 50/50 split; adjust with real project data if one
 sub-score proves more predictive of actual process health than the
 other.
+
+## Implementation notes (decisions this doc left ambiguous)
+
+- **Review Comments Per 100 Lines had no assigned weight.** Sub-group A's
+  "Metrics used" table lists it alongside Review Comments Per MR, but the
+  Weights table only had one row for the pair. Rather than invent a new
+  weight (which would need taking share from another metric), both are
+  banded individually and **averaged together** into the single 8%
+  "Review Comments Per MR + Per 100 Lines" slot — whichever of the two is
+  available contributes; if only one is present, it alone fills the slot.
+- **"Issue Cycle Time / Lead Time (primary source)" is one resolved value,
+  not a blend.** `leadTimeAvgDays` is preferred when present, falling back
+  to `issueCycleTimeDays` otherwise (`leadTimeAvgDays ?? issueCycleTimeDays`).
+  `leadTimeMedianDays`/`leadTimeP95Days` are accepted as fields but are
+  **not scored** — contextual only, matching the single 20% weight row this
+  doc actually defines for this concept.
+- **"Stale Issues/MRs/Tickets (combined)" averages independently-normalized
+  sub-scores.** Stale Issues Count and Stale MRs Count (VCS, raw counts) and
+  Stale Ticket Ratio (Jira, a percentage) are each normalized on their own
+  lower-is-better scale first, then averaged across whichever are present
+  to produce the single 15% "Stale Combined" signal.

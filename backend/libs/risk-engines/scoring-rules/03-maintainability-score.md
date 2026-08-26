@@ -1,7 +1,10 @@
 # Maintainability Score
 
 Status: unchanged from prior design — no metrics in this dimension were
-added/removed in the latest fetch lists.
+added/removed in the latest fetch lists. **Implemented** in
+`backend/libs/risk-engines/risks/maintainability/maintainability.strategy.ts`
+— two implementation decisions noted at the end of this file (Hotspot Files
+collapsing to a single number, and which Code Churn sub-count is used).
 
 ## Metrics used
 
@@ -99,3 +102,19 @@ final_score = clamp(base_score - new_debt_penalty, 0, 100)
   twice.
 - **Lines of Code** is required by this formula for the per-KLOC
   normalization steps — it is not itself scored.
+
+## Implementation notes (decisions not specified by this doc)
+
+- **Hotspot Files (Worst Offenders) collapses to a single number.** The
+  SonarQube connector returns this as an array (`{file, hotspotCount}[]`,
+  top N files by unresolved hotspot count — see
+  `backend/libs/connectors/quality/sonarqube-metrics-reference.md`), not a
+  scalar. `MaintainabilityStrategy` sums `hotspotCount` across the listed
+  files before applying the per-KLOC density formula above.
+- **Code Churn - High Frequency Files uses only the "≥10 commits" count.**
+  The VCS connector actually reports two sub-counts for this metric — files
+  touched ≥10 times, and files touched by ≥3 different authors (see
+  `backend/libs/connectors/vcs/GithubConnector/github-vcs-metrics-reference.md`
+  §5, Code Churn). This doc treats it as one metric; the strategy uses the
+  ≥10-commits count (matches "high frequency" most directly) and doesn't
+  score the author-count variant at all.

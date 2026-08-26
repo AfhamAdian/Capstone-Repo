@@ -53,11 +53,11 @@ as a known limitation, same as Team Health's thinness.
   quality. Don't drive this toward 0 — some bug-fixing capacity is
   healthy. Band around a defined target ratio, same formula shape as
   Story Point Spillover.
-- **Carryover Age of Tickets** — confirm this is actually measured in
-  sprints-survived, not calendar days, before applying thresholds. If
-  the underlying implementation returns calendar days, recalibrate
-  `good`/`bad` to that unit instead of silently mismatching name and
-  scale.
+- **Carryover Age of Tickets — confirmed as sprints-survived.** The Jira
+  connector was fixed to actually count consecutive sprints survived
+  (`carryoverAvgSprintsSurvived`), not calendar days — see
+  `backend/libs/connectors/pm/JiraConnector/jira-metrics-reference.md`.
+  Thresholds below are in sprint-count units, matching the name.
 
 ## Normalization
 
@@ -110,3 +110,20 @@ previous 60/40) both because it has far more granular signal (10 metrics
 vs. 2) and because Sub-group B lost half its metrics in this revision —
 revisit this split if Sprint Velocity Consistency or an equivalent
 throughput-stability metric is reintroduced later.
+
+## Implementation notes
+
+**Implemented** in
+`backend/libs/risk-engines/risks/planning-execution/planning-execution.strategy.ts`.
+
+- **Story Point Spillover (Say/Do Ratio) is banded on a 0–100 scale, not
+  1.0.** The Jira connector's `storyPointSayDoRatio` is a
+  completed/committed **percentage** (100 = committed fully delivered),
+  not a raw 1.0-centered ratio — see
+  `backend/libs/connectors/pm/JiraConnector/jira-metrics-reference.md`.
+  Banded around `ideal = 100` with a tolerance band, same shape as the
+  doc's 1.0-centered formula, just rescaled to match the actual field.
+- **Bug vs Feature Ratio's target ratio isn't specified by this doc** —
+  implemented with a placeholder `ideal = 0.3`, `tolerance = 0.3`
+  (roughly 1 bug-fix for every 3 features). Calibrate against real
+  project data.
