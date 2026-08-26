@@ -164,21 +164,21 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-8 py-10">
-        {error && (
-          <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
-            <AlertCircle size={14} className="shrink-0" />
-            {error}
-          </div>
-        )}
-
+      <main>
         {/* ── Step 1: Workspace ── */}
         {stage === "form" && (
-          <>
-            <h1 className="text-3xl font-bold uppercase tracking-tight mb-1" style={labelStyle}>Create Workspace</h1>
-            <p className="text-base text-muted-foreground mb-8">Connect your version control to load projects automatically.</p>
+          <div className="flex items-center justify-center px-6 py-12" style={{ minHeight: "calc(100vh - 56px)" }}>
+            <div className="w-full max-w-md">
+              {error && (
+                <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+                  <AlertCircle size={14} className="shrink-0" />
+                  {error}
+                </div>
+              )}
+              <h1 className="text-3xl font-bold uppercase tracking-tight mb-1" style={labelStyle}>Create Workspace</h1>
+              <p className="text-base text-muted-foreground mb-8">Connect your version control to load projects automatically.</p>
 
-            <form onSubmit={loadProjects} className="max-w-lg space-y-5">
+              <form onSubmit={loadProjects} className="space-y-5">
               <div>
                 <label className={labelClass} style={labelStyle}>Workspace Name</label>
                 <input className={inputClass} placeholder="e.g. Acme Engineering" value={name} onChange={(e) => setName(e.target.value)} />
@@ -213,13 +213,14 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
               <button type="submit" className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity" style={labelStyle}>
                 Load Projects <ArrowRight size={16} />
               </button>
-            </form>
-          </>
+              </form>
+            </div>
+          </div>
         )}
 
         {/* ── Step 2: Connecting ── */}
         {stage === "connecting" && (
-          <div className="flex flex-col items-center justify-center py-32 text-center">
+          <div className="flex flex-col items-center justify-center text-center px-6" style={{ minHeight: "calc(100vh - 56px)" }}>
             <Loader2 size={32} className="animate-spin text-primary mb-4" />
             <h2 className="text-xl font-bold mb-1" style={labelStyle}>Connecting to {providerName}…</h2>
             <p className="text-sm text-muted-foreground">Validating your token and discovering repositories.</p>
@@ -228,7 +229,13 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
 
         {/* ── Step 3: Projects ── */}
         {stage === "projects" && (
-          <>
+          <div className="max-w-5xl mx-auto px-8 py-10">
+            {error && (
+              <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+                <AlertCircle size={14} className="shrink-0" />
+                {error}
+              </div>
+            )}
             <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
               <div>
                 <h1 className="text-3xl font-bold uppercase tracking-tight" style={labelStyle}>
@@ -294,7 +301,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                 ))}
               </div>
             )}
-          </>
+          </div>
         )}
       </main>
     </div>
