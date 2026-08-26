@@ -16,8 +16,14 @@ export interface PmProject {
   boardId?: string; // Jira: board ID for sprint data
 }
 
+export interface PmConnectorOptions {
+  storyPointsFieldKey?: string; // Jira: custom field id for story points (instance-specific)
+  epicLinkFieldKey?: string; // Jira: custom field id for Epic Link on company-managed projects (instance-specific; team-managed projects use the built-in `parent` field instead)
+}
+
 export interface CreatePmConnectorInput {
   provider: PmProvider;
   credentials: PmCredentials;
   project: PmProject;
+  options?: PmConnectorOptions;
 }
