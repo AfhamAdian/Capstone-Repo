@@ -1,9 +1,9 @@
 export enum RiskType {
-  DELIVERY = "DELIVERY",
   ENGINEERING_PROCESS = "ENGINEERING_PROCESS",
   TEAM_HEALTH = "TEAM_HEALTH",
-  // Added for the survey feature's rubric (delivery/codeQuality/cicd/teamHealth/blockers),
-  // which doesn't map 1:1 onto the 6 categories above - see backend/db/migrations/002_survey.sql.
+  // Legacy 8th type, added for the survey feature's rubric (delivery/codeQuality/cicd/
+  // teamHealth/blockers) - see backend/db/migrations/002_survey.sql. Left untouched by the
+  // health-score rewrite below; the survey feature is a separate concern.
   BLOCKERS = "BLOCKERS",
   // New health-score model (backend/libs/risk-engines/scoring-rules/*.md), replacing the old
   // risk scores one at a time. SECURITY replaces the retired SECURITY_RISK.
@@ -15,18 +15,12 @@ export enum RiskType {
   // duplication/churn/hotspot signals stay here.
   MAINTAINABILITY = "MAINTAINABILITY",
   // Replaces the retired CICD_RELIABILITY. Flaky Test Count/Test Failure Rate moved to
-  // RELIABILITY; Avg Pipeline Runs Per PR will move to ENGINEERING_PROCESS.
+  // RELIABILITY; Avg Pipeline Runs Per PR moved to ENGINEERING_PROCESS.
   CICD_DEPLOYMENT_HEALTH = "CICD_DEPLOYMENT_HEALTH",
+  // Replaces the retired DELIVERY. Jira-rich - see the doc for why Sub-group B (Delivery
+  // Throughput & Focus) is thin (2 metrics) compared to Sub-group A (10 metrics).
+  PLANNING_EXECUTION = "PLANNING_EXECUTION",
 }
-
-export type DeliveryMetrics = {
-  sprintCompletionRate?: number;
-  issueCycleTimeDays?: number;
-  throughputPerWeek?: number;
-  carryoverRate?: number;
-  scopeCreepRate?: number;
-  consecutiveLowSprintCompletionCount?: number;
-};
 
 /**
  * Health-score model (backend/libs/risk-engines/scoring-rules/06-engineering-process-score.md).
@@ -153,8 +147,30 @@ export type BlockersMetrics = {
   overdueItemsCount?: number;
 };
 
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/07-planning-execution-score.md).
+ * Higher is better. Two sub-groups combined 65/35 (not 50/50 - Sub-group B lost most of its
+ * metrics vs. the old model and carries far less granular signal than Sub-group A).
+ */
+export type PlanningExecutionMetrics = {
+  // Sub-group A: Sprint Planning Accuracy (Jira)
+  sprintCompletionRate?: number;
+  scopeCreepRate?: number;
+  storyPointSayDoRatio?: number; // banded around 100 (committed == delivered)
+  carryoverRate?: number;
+  spilloverRatio?: number;
+  midSprintAdditions?: number;
+  consecutiveSpilloverCount?: number;
+  carryoverAvgSprintsSurvived?: number;
+  priorityChangeCount?: number;
+  epicCompletionRatePercent?: number;
+
+  // Sub-group B: Delivery Throughput & Focus
+  throughputPerWeek?: number; // Jira primary / VC fallback, resolved upstream
+  bugVsFeatureRatio?: number; // VCS - banded around a target ratio, not driven to 0
+};
+
 export type RiskMetricsByType = {
-  [RiskType.DELIVERY]: DeliveryMetrics;
   [RiskType.ENGINEERING_PROCESS]: EngineeringProcessMetrics;
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
   [RiskType.BLOCKERS]: BlockersMetrics;
@@ -162,6 +178,7 @@ export type RiskMetricsByType = {
   [RiskType.RELIABILITY]: ReliabilityMetrics;
   [RiskType.MAINTAINABILITY]: MaintainabilityMetrics;
   [RiskType.CICD_DEPLOYMENT_HEALTH]: CicdDeploymentHealthMetrics;
+  [RiskType.PLANNING_EXECUTION]: PlanningExecutionMetrics;
 };
 
 export type RiskWeight = {

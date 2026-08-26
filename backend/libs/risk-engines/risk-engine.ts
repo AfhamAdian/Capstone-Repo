@@ -1,7 +1,7 @@
 import {
   CicdDeploymentHealthMetrics,
   MaintainabilityMetrics,
-  DeliveryMetrics,
+  PlanningExecutionMetrics,
   EngineeringProcessMetrics,
   RiskMetricsByType,
   RiskResult,
@@ -11,7 +11,7 @@ import {
   TeamHealthMetrics,
   BlockersMetrics,
 } from "./types.js";
-import { DeliveryStrategy } from "./risks/delivery/delivery.strategy.js";
+import { PlanningExecutionStrategy } from "./risks/planning-execution/planning-execution.strategy.js";
 import { MaintainabilityStrategy } from "./risks/maintainability/maintainability.strategy.js";
 import { EngineeringProcessStrategy } from "./risks/engineering-process/engineering-process.strategy.js";
 import { CicdDeploymentHealthStrategy } from "./risks/cicd-deployment-health/cicd-deployment-health.strategy.js";
@@ -26,8 +26,8 @@ export class RiskEngine {
     type: TType,
     metrics: RiskMetricsByType[TType]
   ): RiskResult {
-    if (type === RiskType.DELIVERY) {
-      return new DeliveryStrategy().calculate(metrics as DeliveryMetrics);
+    if (type === RiskType.PLANNING_EXECUTION) {
+      return new PlanningExecutionStrategy().calculate(metrics as PlanningExecutionMetrics);
     }
 
     if (type === RiskType.MAINTAINABILITY) {
