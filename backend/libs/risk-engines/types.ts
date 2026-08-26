@@ -53,15 +53,17 @@ export type CicdDeploymentHealthMetrics = {
   avgPipelineDurationMinutes?: number;
 };
 
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/05-team-health-score.md).
+ * Higher is better. Blocked/overdue items moved to ENGINEERING_PROCESS's Flow/Bottleneck
+ * sub-group; the old hasBusFactorOneCriticalModule kill-switch is dropped (not in the new
+ * spec, never backed by real data).
+ */
 export type TeamHealthMetrics = {
   busFactor?: number;
   codeOwnershipConcentrationPercent?: number;
   reviewNetworkDensityPercent?: number;
   activeContributionsPerWeek?: number;
-  blockedItemsCount?: number;
-  blockedItemsAvgAgeDays?: number;
-  overdueItemsCount?: number;
-  hasBusFactorOneCriticalModule?: boolean;
 };
 
 /**

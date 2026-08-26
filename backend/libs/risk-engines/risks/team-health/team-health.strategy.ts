@@ -1,5 +1,20 @@
 import { RiskResult, RiskType, TeamHealthMetrics } from "../../types.js";
 import { TeamHealthRiskCalculator } from "./team-health-risk-calculator.interface.js";
+import {
+  clamp,
+  higherIsBetterCapped,
+  linearBetween,
+  renormalizedWeightedScore,
+  riskLevel,
+  type WeightedSignal,
+} from "../../scoring.js";
+
+// Calibration placeholders - tune against real team-size data.
+// See backend/libs/risk-engines/scoring-rules/05-team-health-score.md
+const BUS_FACTOR_TARGET = 5;
+const OWNERSHIP_CONCENTRATION_GOOD_PERCENT = 20;
+const OWNERSHIP_CONCENTRATION_BAD_PERCENT = 80;
+const ACTIVE_CONTRIBUTORS_TARGET = 5; // expected team size
 
 export class TeamHealthStrategy implements TeamHealthRiskCalculator {
   getType(): RiskType {
@@ -7,68 +22,53 @@ export class TeamHealthStrategy implements TeamHealthRiskCalculator {
   }
 
   calculate(metrics: TeamHealthMetrics): RiskResult {
-    const busFactor = metrics.busFactor ?? 0;
-    const codeOwnershipConcentrationPercent =
-      metrics.codeOwnershipConcentrationPercent ?? 0;
-    const reviewNetworkDensityPercent = metrics.reviewNetworkDensityPercent ?? 0;
-    const activeContributionsPerWeek = metrics.activeContributionsPerWeek ?? 0;
-    const blockedItemsCount = metrics.blockedItemsCount ?? 0;
-    const blockedItemsAvgAgeDays = metrics.blockedItemsAvgAgeDays ?? 0;
-    const overdueItemsCount = metrics.overdueItemsCount ?? 0;
-    const hasBusFactorOneCriticalModule =
-      metrics.hasBusFactorOneCriticalModule ?? false;
-
-    const busFactorScore = Math.min((busFactor / 5) * 100, 100);
-    const ownershipDistributionScore = Math.max(
-      100 - codeOwnershipConcentrationPercent,
-      0
-    );
-    const reviewNetworkScore = Math.min(reviewNetworkDensityPercent, 100);
-    const contributionScore = Math.min((activeContributionsPerWeek / 20) * 100, 100);
-    const blockedItemsScore = Math.max(
-      100 - (blockedItemsCount * 2 + blockedItemsAvgAgeDays * 1.5),
-      0
-    );
-    const overdueItemsScore = Math.max(100 - overdueItemsCount * 3, 0);
-
-    const metricScores: Record<string, number> = {
-      busFactorScore,
-      ownershipDistributionScore,
-      contributionScore,
-      reviewNetworkScore,
-      blockedItemsScore,
-      overdueItemsScore,
-    };
-
-    const weights = [
-      { key: "busFactorScore", w: 0.25 },
-      { key: "ownershipDistributionScore", w: 0.2 },
-      { key: "contributionScore", w: 0.2 },
-      { key: "reviewNetworkScore", w: 0.15 },
-      { key: "blockedItemsScore", w: 0.1 },
-      { key: "overdueItemsScore", w: 0.1 },
+    const signals: WeightedSignal[] = [
+      {
+        key: "busFactor",
+        weight: 0.35,
+        score:
+          typeof metrics.busFactor === "number"
+            ? higherIsBetterCapped(metrics.busFactor, BUS_FACTOR_TARGET)
+            : null,
+      },
+      {
+        key: "ownershipConcentration",
+        weight: 0.3,
+        score:
+          typeof metrics.codeOwnershipConcentrationPercent === "number"
+            ? linearBetween(
+                metrics.codeOwnershipConcentrationPercent,
+                OWNERSHIP_CONCENTRATION_GOOD_PERCENT,
+                OWNERSHIP_CONCENTRATION_BAD_PERCENT,
+              )
+            : null,
+      },
+      {
+        key: "reviewNetworkDensity",
+        weight: 0.25,
+        score:
+          typeof metrics.reviewNetworkDensityPercent === "number"
+            ? clamp(metrics.reviewNetworkDensityPercent)
+            : null,
+      },
+      {
+        key: "activeContributors",
+        weight: 0.1,
+        score:
+          typeof metrics.activeContributionsPerWeek === "number"
+            ? higherIsBetterCapped(metrics.activeContributionsPerWeek, ACTIVE_CONTRIBUTORS_TARGET)
+            : null,
+      },
     ];
 
-    let score = Math.min(
-      weights.reduce((sum, item) => sum + (metricScores[item.key] ?? 0) * item.w, 0),
-      100
-    );
-
-    if (hasBusFactorOneCriticalModule) {
-      score = Math.min(score, 20);
-    }
+    const result = renormalizedWeightedScore(signals);
+    const score = result?.score ?? 0;
 
     return {
       type: RiskType.TEAM_HEALTH,
       score,
-      level: this.getLevel(score),
-      weights,
+      level: riskLevel(score),
+      weights: result?.weights ?? [],
     };
-  }
-
-  private getLevel(score: number): "LOW" | "MEDIUM" | "HIGH" {
-    if (score >= 70) return "HIGH";
-    if (score >= 40) return "MEDIUM";
-    return "LOW";
   }
 }
