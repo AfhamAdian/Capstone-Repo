@@ -1,6 +1,6 @@
 import {
   CicdReliabilityMetrics,
-  CodeQualityMetrics,
+  MaintainabilityMetrics,
   DeliveryMetrics,
   EngineeringProcessMetrics,
   RiskMetricsByType,
@@ -12,7 +12,7 @@ import {
   BlockersMetrics,
 } from "./types.js";
 import { DeliveryStrategy } from "./risks/delivery/delivery.strategy.js";
-import { CodeQualityStrategy } from "./risks/code-quality/code-quality.strategy.js";
+import { MaintainabilityStrategy } from "./risks/maintainability/maintainability.strategy.js";
 import { EngineeringProcessStrategy } from "./risks/engineering-process/engineering-process.strategy.js";
 import { CicdReliabilityStrategy } from "./risks/cicd-reliability/cicd-reliability.strategy.js";
 import { TeamHealthStrategy } from "./risks/team-health/team-health.strategy.js";
@@ -30,8 +30,8 @@ export class RiskEngine {
       return new DeliveryStrategy().calculate(metrics as DeliveryMetrics);
     }
 
-    if (type === RiskType.CODE_QUALITY) {
-      return new CodeQualityStrategy().calculate(metrics as CodeQualityMetrics);
+    if (type === RiskType.MAINTAINABILITY) {
+      return new MaintainabilityStrategy().calculate(metrics as MaintainabilityMetrics);
     }
 
     if (type === RiskType.ENGINEERING_PROCESS) {

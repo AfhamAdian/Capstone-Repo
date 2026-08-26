@@ -1,6 +1,5 @@
 export enum RiskType {
   DELIVERY = "DELIVERY",
-  CODE_QUALITY = "CODE_QUALITY",
   ENGINEERING_PROCESS = "ENGINEERING_PROCESS",
   CICD_RELIABILITY = "CICD_RELIABILITY",
   TEAM_HEALTH = "TEAM_HEALTH",
@@ -13,6 +12,9 @@ export enum RiskType {
   // New score, no old equivalent - pulls together SonarQube/CI-CD/VCS reliability signals
   // previously scattered across CODE_QUALITY, CICD_RELIABILITY and SECURITY_RISK.
   RELIABILITY = "RELIABILITY",
+  // Replaces the retired CODE_QUALITY. Coverage moved out to RELIABILITY; complexity/
+  // duplication/churn/hotspot signals stay here.
+  MAINTAINABILITY = "MAINTAINABILITY",
 }
 
 export type DeliveryMetrics = {
@@ -22,16 +24,6 @@ export type DeliveryMetrics = {
   carryoverRate?: number;
   scopeCreepRate?: number;
   consecutiveLowSprintCompletionCount?: number;
-};
-
-export type CodeQualityMetrics = {
-  codeCoveragePercent?: number;
-  codeCoverageTrendDelta30d?: number;
-  cyclomaticComplexityTrendDelta30d?: number;
-  codeDuplicationPercent?: number;
-  technicalDebtRatioPercent?: number;
-  todoFixmeHackTrendDelta30d?: number;
-  codeChurnRiskPercent?: number;
 };
 
 export type EngineeringProcessMetrics = {
@@ -102,6 +94,26 @@ export type ReliabilityMetrics = {
   newBugs?: number; // SonarQube - penalty input
 };
 
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/03-maintainability-score.md).
+ * Higher is better. Every scored metric here is "lower raw value is better" - there's no
+ * natural ceiling reference in this dimension (unlike Reliability's coverage metrics).
+ */
+export type MaintainabilityMetrics = {
+  maintainabilityRating?: number; // SonarQube 1(A)..5(E)
+  linesOfCode?: number; // SonarQube ncloc - denominator for per-KLOC density; not itself scored
+  codeSmells?: number; // SonarQube count
+  cyclomaticComplexity?: number; // SonarQube raw value (not size-normalized, per the doc)
+  cognitiveComplexity?: number; // SonarQube raw value (not size-normalized, per the doc)
+  duplicatedLinesDensity?: number; // SonarQube %
+  newDuplicatedLinesDensity?: number; // SonarQube %
+  hotspotFilesWorstOffenders?: Array<{ file: string; hotspotCount: number }>; // SonarQube - summed, then density
+  codeChurnHighFrequencyFilesCount?: number; // VCS: files touched >=10 times
+  dependencyUpdateLagDays?: number; // VCS - shared with Security
+  newTechnicalDebt?: number; // SonarQube minutes - penalty input
+  newCodeSmells?: number; // SonarQube - penalty input
+};
+
 export type BlockersMetrics = {
   blockedItemsCount?: number;
   blockedItemsAvgAgeDays?: number;
@@ -110,13 +122,13 @@ export type BlockersMetrics = {
 
 export type RiskMetricsByType = {
   [RiskType.DELIVERY]: DeliveryMetrics;
-  [RiskType.CODE_QUALITY]: CodeQualityMetrics;
   [RiskType.ENGINEERING_PROCESS]: EngineeringProcessMetrics;
   [RiskType.CICD_RELIABILITY]: CicdReliabilityMetrics;
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
   [RiskType.BLOCKERS]: BlockersMetrics;
   [RiskType.SECURITY]: SecurityMetrics;
   [RiskType.RELIABILITY]: ReliabilityMetrics;
+  [RiskType.MAINTAINABILITY]: MaintainabilityMetrics;
 };
 
 export type RiskWeight = {
