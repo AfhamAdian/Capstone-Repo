@@ -1,6 +1,7 @@
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { listIntegrations } from './project-tool-integration.js';
+import { getWorkspaceForProject } from './workspace.js';
 
 type ToolIntegration = {
   credentials?: Record<string, string | undefined>;
@@ -63,6 +64,7 @@ export async function createProject(input: {
   companyId: number;
   name: string;
   description?: string | null;
+  workspaceId?: number | null;
 }): Promise<ProjectRecord> {
   const client = assertSupabaseClient();
 
@@ -74,6 +76,7 @@ export async function createProject(input: {
         name: input.name.trim(),
         description: input.description?.trim() || null,
         created_at: new Date().toISOString(),
+        ...(input.workspaceId ? { workspace_id: input.workspaceId } : {}),
       },
     ])
     .select(PROJECT_COLUMNS)
@@ -192,10 +195,15 @@ export async function getProjectIntegrationsForTools(
     return typeof value === 'string' && value.length > 0 ? value : undefined;
   };
 
+  // VCS token falls back to the project's workspace PAT (stored once on the workspace), so imported
+  // projects don't duplicate the token in their config.
+  const workspace = await getWorkspaceForProject(numericProjectId);
+  const workspaceToken = workspace?.access_token;
+
   const integrations: Record<string, ToolIntegration> = {};
 
   if (tools.includes('github')) {
-    const token = cfg('github', 'token');
+    const token = cfg('github', 'token') ?? workspaceToken;
     const owner = cfg('github', 'owner');
     const repo = cfg('github', 'repo');
     if (!token || !owner || !repo) {
@@ -205,7 +213,7 @@ export async function getProjectIntegrationsForTools(
   }
 
   if (tools.includes('gitlab')) {
-    const token = cfg('gitlab', 'token');
+    const token = cfg('gitlab', 'token') ?? workspaceToken;
     const owner = cfg('gitlab', 'owner');
     const repo = cfg('gitlab', 'repo');
     if (!token || !owner || !repo) {
@@ -245,7 +253,7 @@ export async function getProjectIntegrationsForTools(
 
   if (tools.includes('github-actions')) {
     // CI runs on the GitHub repo, so it can borrow the github config when not set explicitly.
-    const token = cfg('github-actions', 'token') ?? cfg('github', 'token');
+    const token = cfg('github-actions', 'token') ?? cfg('github', 'token') ?? workspaceToken;
     const owner = cfg('github-actions', 'owner') ?? cfg('github', 'owner');
     const repo = cfg('github-actions', 'repo') ?? cfg('github', 'repo');
     if (!token || !owner || !repo) {

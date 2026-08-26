@@ -62,6 +62,15 @@ export async function listWorkspacesByCompany(companyId: number): Promise<Worksp
   return (data as WorkspaceRecord[]) ?? [];
 }
 
+// Used to compensate a failed import (delete the workspace after its projects are cleaned up).
+export async function deleteWorkspace(id: number): Promise<void> {
+  const client = assertSupabaseClient();
+  const { error } = await client.from('workspace').delete().eq('id', id);
+  if (error) {
+    throw new Error(`Failed to delete workspace ${id}: ${error.message}`);
+  }
+}
+
 export async function getWorkspaceById(id: number): Promise<WorkspaceRecord | null> {
   const client = assertSupabaseClient();
 
@@ -75,4 +84,22 @@ export async function getWorkspaceById(id: number): Promise<WorkspaceRecord | nu
     throw new Error(`Failed to load workspace ${id}: ${error.message}`);
   }
   return (data as WorkspaceRecord | null) ?? null;
+}
+
+// The workspace a project belongs to (null if it wasn't imported through a workspace).
+// Used by sync to resolve a project's VCS token from its workspace's PAT.
+export async function getWorkspaceForProject(projectId: number): Promise<WorkspaceRecord | null> {
+  const client = assertSupabaseClient();
+
+  const { data, error } = await client
+    .from('project')
+    .select('workspace_id')
+    .eq('id', projectId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load workspace for project ${projectId}: ${error.message}`);
+  }
+  const workspaceId = (data?.workspace_id as number | null) ?? null;
+  return workspaceId ? getWorkspaceById(workspaceId) : null;
 }
