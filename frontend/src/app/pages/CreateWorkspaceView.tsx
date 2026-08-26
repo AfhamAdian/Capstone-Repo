@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, AlertCircle, ArrowLeft, ArrowRight, Check, Clock, GitBranch, Globe, Loader2, Lock, Star } from "lucide-react";
+import { Activity, AlertCircle, ArrowLeft, ArrowRight, Check, Clock, GitBranch, Globe, Loader2, Lock, Search, Star } from "lucide-react";
 import { useWorkspace, type VcsProvider } from "../context/WorkspaceContext";
 import { previewWorkspaceRepos, createWorkspace, type WorkspaceRepo } from "../api";
 
@@ -78,8 +78,16 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
   const [org, setOrg] = useState("");
   const [repos, setRepos] = useState<WorkspaceRepo[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+
+  const visibleRepos = repos.filter(
+    (r) =>
+      !search.trim() ||
+      r.name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.description ?? "").toLowerCase().includes(search.toLowerCase()),
+  );
 
   const providerName = VCS_OPTIONS.find((v) => v.id === vcs)?.name ?? vcs;
 
@@ -93,7 +101,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
     try {
       const found = await previewWorkspaceRepos({ vcs, organization: org.trim(), token: token.trim() });
       setRepos(found);
-      setSelected(new Set(found.map((r) => r.name))); // default: track all
+      setSelected(new Set()); // start empty — the user picks which repos to track
       setStage("projects");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load repositories");
@@ -242,7 +250,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                   {repos.length} Repositor{repos.length === 1 ? "y" : "ies"} Found
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                  From <span className="font-semibold text-foreground">{selected.size}</span> via {providerName} · Track individual projects after setup
+                  <span className="font-semibold text-foreground">{selected.size}</span> selected via {providerName} · Check the repositories you want to track
                 </p>
               </div>
               <button
@@ -252,10 +260,22 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                 style={labelStyle}
               >
                 {creating ? <Loader2 size={16} className="animate-spin" /> : null}
-                {creating ? "Creating…" : "Continue to App"}
+                {creating ? "Creating…" : `Continue with ${selected.size}`}
                 {!creating && <ArrowRight size={16} />}
               </button>
             </div>
+
+            {repos.length > 0 && (
+              <div className="relative mb-4">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search repositories…"
+                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                />
+              </div>
+            )}
 
             {repos.length === 0 ? (
               <div className="border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
@@ -270,7 +290,10 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                   <span className="text-sm font-semibold" style={labelStyle}>Stars</span>
                   <span className="text-sm font-semibold" style={labelStyle}>Updated</span>
                 </div>
-                {repos.map((r) => (
+                {visibleRepos.length === 0 && (
+                  <div className="px-5 py-8 text-center text-sm text-muted-foreground">No repositories match “{search}”.</div>
+                )}
+                {visibleRepos.map((r) => (
                   <label
                     key={r.name}
                     className="grid items-center px-5 py-3.5 border-b border-border last:border-b-0 hover:bg-muted/40 cursor-pointer transition-colors"

@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Outlet, useNavigate, useParams, useSearchParams, useLocation } from "react-router";
+import { Routes, Route, Navigate, Outlet, useNavigate, useParams, useSearchParams } from "react-router";
 import { paths, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace } from "./context/WorkspaceContext";
 import { PublicSurveyPage } from "./pages/PublicSurveyPage";
@@ -37,19 +37,6 @@ function RequireAuth() {
   return <Outlet/>;
 }
 
-// Onboarding: a company with no workspaces is sent straight to the create-workspace wizard.
-function WorkspaceGate() {
-  const {backendWorkspaces,workspacesLoading}=useWorkspace();
-  const location=useLocation();
-  if(workspacesLoading){
-    return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
-  }
-  if(backendWorkspaces.length===0 && location.pathname!==paths.createWorkspace){
-    return <Navigate to={paths.createWorkspace} replace/>;
-  }
-  return <Outlet/>;
-}
-
 // ─── Thin route components — just adapt router hooks to each view's existing props ──
 
 function PublicSurveyRoute() {
@@ -82,7 +69,7 @@ function ResetPasswordRoute() {
 function WorkspacesRoute() {
   const navigate=useNavigate();
   const {user}=useWorkspace();
-  return <VcsWorkspaceView onSelect={vcs=>navigate(paths.workspacePortfolio(vcs))} onAddProject={()=>navigate(paths.createWorkspace)} isAdmin={user?.role==="admin"}/>;
+  return <VcsWorkspaceView onSelectWorkspace={ws=>navigate(paths.workspacePortfolio(ws.vcsProvider))} onCreate={()=>navigate(paths.createWorkspace)} isAdmin={user?.role==="admin"}/>;
 }
 
 function CreateWorkspaceRoute() {
@@ -117,29 +104,27 @@ export default function App() {
         </Route>
 
         <Route element={<RequireAuth/>}>
-          <Route element={<WorkspaceGate/>}>
-            <Route path={paths.workspaces} element={<WorkspacesRoute/>}/>
-            <Route path={paths.createWorkspace} element={<CreateWorkspaceRoute/>}/>
-            <Route path={paths.projectsAdmin} element={<ProjectsRoute/>}/>
-            <Route path={paths.addProject} element={<AddProjectRoute/>}/>
+          <Route path={paths.workspaces} element={<WorkspacesRoute/>}/>
+          <Route path={paths.createWorkspace} element={<CreateWorkspaceRoute/>}/>
+          <Route path={paths.projectsAdmin} element={<ProjectsRoute/>}/>
+          <Route path={paths.addProject} element={<AddProjectRoute/>}/>
 
-            <Route element={<AppLayout/>}>
-              <Route path="/" element={<PortfolioEntry/>}/>
-              <Route path="/workspaces/:vcs" element={<PortfolioEntry/>}/>
-              <Route path={paths.globalActions} element={<GlobalActionsRoute/>}/>
-              <Route path={paths.globalSurveys} element={<GlobalSurveysRoute/>}/>
+          <Route element={<AppLayout/>}>
+            <Route path="/" element={<PortfolioEntry/>}/>
+            <Route path="/workspaces/:vcs" element={<PortfolioEntry/>}/>
+            <Route path={paths.globalActions} element={<GlobalActionsRoute/>}/>
+            <Route path={paths.globalSurveys} element={<GlobalSurveysRoute/>}/>
 
-              <Route path="/projects/:projectId" element={<ProjectShell/>}>
-                <Route index element={<DashboardRoute/>}/>
-                <Route path="actions" element={<ActionsTimelineRoute/>}/>
-                <Route path="actions/library" element={<ActionsLibraryRoute/>}/>
-                <Route path="surveys" element={<SurveysRoute/>}/>
-                <Route path="settings" element={<SettingsRoute/>}/>
-              </Route>
+            <Route path="/projects/:projectId" element={<ProjectShell/>}>
+              <Route index element={<DashboardRoute/>}/>
+              <Route path="actions" element={<ActionsTimelineRoute/>}/>
+              <Route path="actions/library" element={<ActionsLibraryRoute/>}/>
+              <Route path="surveys" element={<SurveysRoute/>}/>
+              <Route path="settings" element={<SettingsRoute/>}/>
             </Route>
-
-            <Route path="*" element={<Navigate to={paths.portfolio} replace/>}/>
           </Route>
+
+          <Route path="*" element={<Navigate to={paths.portfolio} replace/>}/>
         </Route>
       </Route>
     </Routes>
