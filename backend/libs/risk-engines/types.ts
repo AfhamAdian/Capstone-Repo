@@ -10,6 +10,9 @@ export enum RiskType {
   // New health-score model (backend/libs/risk-engines/scoring-rules/*.md), replacing the old
   // risk scores one at a time. SECURITY replaces the retired SECURITY_RISK.
   SECURITY = "SECURITY",
+  // New score, no old equivalent - pulls together SonarQube/CI-CD/VCS reliability signals
+  // previously scattered across CODE_QUALITY, CICD_RELIABILITY and SECURITY_RISK.
+  RELIABILITY = "RELIABILITY",
 }
 
 export type DeliveryMetrics = {
@@ -80,6 +83,25 @@ export type SecurityMetrics = {
   newVulnerabilities?: number; // SonarQube - penalty input
 };
 
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/02-reliability-score.md).
+ * Higher is better. CI/CD's testCoveragePercent is intentionally excluded here per the
+ * doc's own default (likely the same source as SonarQube's `coverage`) - add it back only
+ * if a project confirms it's a genuinely separate signal.
+ */
+export type ReliabilityMetrics = {
+  issueReopenRatePercent?: number; // VCS
+  mrRevertRatePercent?: number; // VCS
+  flakyTestCount?: number; // CI/CD
+  testFailureRatePercent?: number; // CI/CD
+  reliabilityRating?: number; // SonarQube 1(A)..5(E)
+  coverage?: number; // SonarQube overall coverage %
+  newCoverage?: number; // SonarQube coverage on new code %
+  qualityGatePassRatePercent?: number; // SonarQube
+  reliabilityRemediationEffort?: number; // SonarQube minutes
+  newBugs?: number; // SonarQube - penalty input
+};
+
 export type BlockersMetrics = {
   blockedItemsCount?: number;
   blockedItemsAvgAgeDays?: number;
@@ -94,6 +116,7 @@ export type RiskMetricsByType = {
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
   [RiskType.BLOCKERS]: BlockersMetrics;
   [RiskType.SECURITY]: SecurityMetrics;
+  [RiskType.RELIABILITY]: ReliabilityMetrics;
 };
 
 export type RiskWeight = {
