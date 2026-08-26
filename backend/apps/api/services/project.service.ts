@@ -111,6 +111,7 @@ export interface ProjectListItem {
   description: string | null;
   createdAt: string | null;
   vcs: SupportedTool | null;
+  workspaceId: number | null;
   score: ProjectRiskScore | null;
 }
 
@@ -153,6 +154,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     description: project.description,
     createdAt: project.created_at,
     vcs,
+    workspaceId: project.workspace_id,
     score,
     integrations: integrations.map((i) => ({
       category: i.tool_category,
@@ -193,6 +195,7 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
       description: p.description,
       createdAt: p.created_at,
       vcs: vcsByProject.get(p.id) ?? null,
+      workspaceId: p.workspace_id,
       score: scores.get(p.id) ?? null,
     }))
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);

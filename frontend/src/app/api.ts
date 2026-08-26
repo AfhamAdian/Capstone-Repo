@@ -113,6 +113,7 @@ export interface ProjectListItem {
   description: string | null;
   createdAt: string | null;
   vcs: string | null;
+  workspaceId: number | null;
   score: ProjectRiskScore | null;
 }
 

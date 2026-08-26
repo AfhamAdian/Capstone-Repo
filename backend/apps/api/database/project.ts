@@ -56,9 +56,10 @@ export interface ProjectRecord {
   name: string;
   description: string | null;
   created_at: string | null;
+  workspace_id: number | null;
 }
 
-const PROJECT_COLUMNS = 'id, company_id, name, description, created_at';
+const PROJECT_COLUMNS = 'id, company_id, name, description, created_at, workspace_id';
 
 export async function createProject(input: {
   companyId: number;

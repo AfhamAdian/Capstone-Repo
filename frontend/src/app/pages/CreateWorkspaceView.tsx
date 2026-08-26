@@ -128,9 +128,9 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
         token: token.trim(),
         repos: [...selected],
       });
-      // Land on this workspace's portfolio (filtered by its vcs).
+      // Land on this workspace's own portfolio (filtered by its workspace id).
       setActiveWorkspace({
-        id: `ws-${vcs}`,
+        id: String(res.workspace.id),
         name: res.workspace.name,
         vcs: vcs as VcsProvider,
         projectsCount: res.projects.length,
