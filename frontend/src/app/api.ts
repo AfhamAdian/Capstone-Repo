@@ -173,6 +173,55 @@ export async function getProject(id: number): Promise<ProjectDetail> {
   return project;
 }
 
+// ---- Workspaces ----
+
+export interface WorkspaceRepo {
+  name: string;
+  fullName: string;
+  description: string | null;
+  language: string | null;
+  stars: number;
+  updatedAt: string | null;
+  private: boolean;
+}
+
+export interface WorkspaceView {
+  id: number;
+  name: string;
+  vcsProvider: string;
+  organization: string;
+  createdAt: string | null;
+}
+
+// Step 2 of the wizard: validate the PAT and list the repos it can access (nothing is saved).
+export async function previewWorkspaceRepos(input: {
+  vcs: string;
+  organization: string;
+  token: string;
+}): Promise<WorkspaceRepo[]> {
+  const { repos } = await apiRequest<{ repos: WorkspaceRepo[] }>("/workspaces/preview-repos", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return repos;
+}
+
+// Step 3: create the workspace and import the selected repos as projects (admin only).
+export async function createWorkspace(input: {
+  name: string;
+  vcs: string;
+  organization: string;
+  token: string;
+  repos: string[];
+}): Promise<{ workspace: WorkspaceView; projects: Array<{ id: number; name: string }> }> {
+  return apiRequest("/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function listWorkspaces(): Promise<WorkspaceView[]> {
+  const { workspaces } = await apiRequest<{ workspaces: WorkspaceView[] }>("/workspaces");
+  return workspaces;
+}
+
 export interface InvitePreview {
   email: string;
   projectId: number;

@@ -139,10 +139,10 @@ export function VcsWorkspaceView({
                       </div>
                     </div>
                     <h3 className="text-[15px] font-bold text-muted-foreground group-hover:text-foreground mb-1 transition-colors" style={{ fontFamily: "var(--font-display)" }}>
-                      Add Project
+                      Create Workspace
                     </h3>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Connect a repository and track a new project in a workspace.
+                      Connect a version control provider and import repositories as projects.
                     </p>
                     <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-transparent group-hover:text-primary transition-colors">
                       Get started

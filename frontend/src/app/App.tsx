@@ -69,7 +69,7 @@ function ResetPasswordRoute() {
 function WorkspacesRoute() {
   const navigate=useNavigate();
   const {user}=useWorkspace();
-  return <VcsWorkspaceView onSelect={vcs=>navigate(paths.workspacePortfolio(vcs))} onAddProject={()=>navigate(paths.addProject)} isAdmin={user?.role==="admin"}/>;
+  return <VcsWorkspaceView onSelect={vcs=>navigate(paths.workspacePortfolio(vcs))} onAddProject={()=>navigate(paths.createWorkspace)} isAdmin={user?.role==="admin"}/>;
 }
 
 function CreateWorkspaceRoute() {
