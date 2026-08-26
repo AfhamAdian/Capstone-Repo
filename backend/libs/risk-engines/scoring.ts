@@ -92,3 +92,11 @@ export function densityPerKloc(count: number, linesOfCode: number): number | nul
 export function linearBetween(value: number, good: number, bad: number): number {
   return clamp(100 - ((value - good) / (bad - good)) * 100);
 }
+
+/**
+ * Generic "higher raw value is better" normalizer, capped at 100 once `value`
+ * reaches `target`.
+ */
+export function higherIsBetterCapped(value: number, target: number): number {
+  return clamp(Math.min(100, (value / target) * 100));
+}

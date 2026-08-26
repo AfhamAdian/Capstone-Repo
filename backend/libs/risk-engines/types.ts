@@ -1,7 +1,6 @@
 export enum RiskType {
   DELIVERY = "DELIVERY",
   ENGINEERING_PROCESS = "ENGINEERING_PROCESS",
-  CICD_RELIABILITY = "CICD_RELIABILITY",
   TEAM_HEALTH = "TEAM_HEALTH",
   // Added for the survey feature's rubric (delivery/codeQuality/cicd/teamHealth/blockers),
   // which doesn't map 1:1 onto the 6 categories above - see backend/db/migrations/002_survey.sql.
@@ -15,6 +14,9 @@ export enum RiskType {
   // Replaces the retired CODE_QUALITY. Coverage moved out to RELIABILITY; complexity/
   // duplication/churn/hotspot signals stay here.
   MAINTAINABILITY = "MAINTAINABILITY",
+  // Replaces the retired CICD_RELIABILITY. Flaky Test Count/Test Failure Rate moved to
+  // RELIABILITY; Avg Pipeline Runs Per PR will move to ENGINEERING_PROCESS.
+  CICD_DEPLOYMENT_HEALTH = "CICD_DEPLOYMENT_HEALTH",
 }
 
 export type DeliveryMetrics = {
@@ -36,17 +38,19 @@ export type EngineeringProcessMetrics = {
   stalePrCount?: number;
 };
 
-export type CicdReliabilityMetrics = {
-  pipelineSuccessRatePercent?: number;
-  avgPipelineDurationMinutes?: number;
-  flakyTestCount?: number;
-  testCoveragePercent?: number;
-  testFailureRatePercent?: number;
-  avgPipelineRunsPerPr?: number;
+/**
+ * Health-score model (backend/libs/risk-engines/scoring-rules/04-cicd-deployment-health-score.md).
+ * Higher is better. The other 4 metrics of the original 10-metric CI/CD fetch feed
+ * RELIABILITY (Flaky Test Count, Test Failure Rate, Test Coverage) and ENGINEERING_PROCESS
+ * (Avg Pipeline Runs Per PR) instead - see those score files.
+ */
+export type CicdDeploymentHealthMetrics = {
   deploymentsPerWeek?: number;
   deploymentFailureRatePercent?: number;
   mttrHours?: number;
-  timeToProdHours?: number;
+  timeToProdHours?: number; // Change Lead Time
+  pipelineSuccessRatePercent?: number;
+  avgPipelineDurationMinutes?: number;
 };
 
 export type TeamHealthMetrics = {
@@ -123,12 +127,12 @@ export type BlockersMetrics = {
 export type RiskMetricsByType = {
   [RiskType.DELIVERY]: DeliveryMetrics;
   [RiskType.ENGINEERING_PROCESS]: EngineeringProcessMetrics;
-  [RiskType.CICD_RELIABILITY]: CicdReliabilityMetrics;
   [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
   [RiskType.BLOCKERS]: BlockersMetrics;
   [RiskType.SECURITY]: SecurityMetrics;
   [RiskType.RELIABILITY]: ReliabilityMetrics;
   [RiskType.MAINTAINABILITY]: MaintainabilityMetrics;
+  [RiskType.CICD_DEPLOYMENT_HEALTH]: CicdDeploymentHealthMetrics;
 };
 
 export type RiskWeight = {

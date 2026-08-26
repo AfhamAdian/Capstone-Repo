@@ -1,5 +1,5 @@
 import {
-  CicdReliabilityMetrics,
+  CicdDeploymentHealthMetrics,
   MaintainabilityMetrics,
   DeliveryMetrics,
   EngineeringProcessMetrics,
@@ -14,7 +14,7 @@ import {
 import { DeliveryStrategy } from "./risks/delivery/delivery.strategy.js";
 import { MaintainabilityStrategy } from "./risks/maintainability/maintainability.strategy.js";
 import { EngineeringProcessStrategy } from "./risks/engineering-process/engineering-process.strategy.js";
-import { CicdReliabilityStrategy } from "./risks/cicd-reliability/cicd-reliability.strategy.js";
+import { CicdDeploymentHealthStrategy } from "./risks/cicd-deployment-health/cicd-deployment-health.strategy.js";
 import { TeamHealthStrategy } from "./risks/team-health/team-health.strategy.js";
 import { SecurityStrategy } from "./risks/security/security.strategy.js";
 import { ReliabilityStrategy } from "./risks/reliability/reliability.strategy.js";
@@ -40,9 +40,9 @@ export class RiskEngine {
       );
     }
 
-    if (type === RiskType.CICD_RELIABILITY) {
-      return new CicdReliabilityStrategy().calculate(
-        metrics as CicdReliabilityMetrics
+    if (type === RiskType.CICD_DEPLOYMENT_HEALTH) {
+      return new CicdDeploymentHealthStrategy().calculate(
+        metrics as CicdDeploymentHealthMetrics
       );
     }
 
