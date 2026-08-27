@@ -241,10 +241,10 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
                     <div className="flex items-center gap-3">
                       {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
                       {status==="err"&&<span className="text-sm text-red-500 font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
-                      <button onClick={test} disabled={testing||saving}
-                        className="flex items-center gap-2 border border-border px-4 py-2 text-sm font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      <button type="button" disabled title="Coming soon"
+                        className="flex items-center gap-2 border border-border px-4 py-2 text-sm font-semibold text-foreground opacity-40 cursor-not-allowed"
                         style={{fontFamily:"var(--font-display)"}}>
-                        {testing?<><RefreshCw size={13} className="animate-spin"/>Testing…</>:<><Link2 size={13}/>Test Connection</>}
+                        <Link2 size={13}/>Test Connection
                       </button>
                       <button onClick={save} disabled={saving||testing}
                         className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
