@@ -103,14 +103,13 @@ function assertConfigForTool(toolName: SupportedTool, config: Record<string, unk
 interface IntegrationInput {
   category: ToolCategory;
   toolName: SupportedTool;
-  externalProjectId: string;
   config: Record<string, unknown>;
 }
 
 export interface CreateProjectInput {
   name: string;
   description?: string;
-  vcs: { toolName: string; externalProjectId: string; config?: Record<string, unknown> };
+  vcs: { toolName: string; config?: Record<string, unknown> };
   integrations?: IntegrationInput[];
   invites?: string[];
 }
@@ -129,9 +128,7 @@ export interface ProjectDetail extends ProjectListItem {
   integrations: Array<{
     category: ToolCategory;
     toolName: SupportedTool;
-    externalProjectId: string;
     config: Record<string, unknown>;
-    isActive: boolean | null;
   }>;
   members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
   pendingInvites?: string[];
@@ -175,9 +172,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
       return {
         category: i.tool_category,
         toolName: i.tool_name,
-        externalProjectId: i.external_project_id,
         config,
-        isActive: i.is_active,
       };
     }),
     members: members.map((m) => {
@@ -229,9 +224,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
   if (!input.vcs?.toolName || !VCS_PROVIDERS.has(input.vcs.toolName)) {
     throw new ProjectError('A valid version control tool (github, gitlab, bitbucket) is required', 400);
   }
-  if (!input.vcs.externalProjectId?.trim()) {
-    throw new ProjectError('Version control project identifier is required', 400);
-  }
   assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
 
   // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
@@ -239,8 +231,8 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
     if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
       throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
     }
-    if (!integration.toolName || !integration.externalProjectId?.trim()) {
-      throw new ProjectError('Each integration needs a toolName and externalProjectId', 400);
+    if (!integration.toolName) {
+      throw new ProjectError('Each integration needs a toolName', 400);
     }
     assertToolInCategory(integration.category, integration.toolName);
     assertConfigForTool(integration.toolName, integration.config ?? {});
@@ -260,7 +252,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
       projectId: project.id,
       category: 'vcs',
       toolName: input.vcs.toolName as SupportedTool,
-      externalProjectId: input.vcs.externalProjectId,
       config: input.vcs.config ?? {},
     });
 
@@ -270,7 +261,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
         projectId: project.id,
         category: integration.category,
         toolName: integration.toolName,
-        externalProjectId: integration.externalProjectId,
         config: integration.config ?? {},
       });
     }
@@ -366,8 +356,7 @@ export async function updateProjectIntegration(
     const category = TOOL_CATEGORY[toolName];
     if (!category) throw new ProjectError(`Unknown tool: ${toolName}`, 400);
     assertConfigForTool(toolName as SupportedTool, patch); // require the fields sync will need
-    const externalProjectId = patch.projectKey ?? (patch.owner && patch.repo ? `${patch.owner}/${patch.repo}` : toolName);
-    await addIntegration({ projectId, category, toolName: toolName as SupportedTool, externalProjectId, config: patch });
+    await addIntegration({ projectId, category, toolName: toolName as SupportedTool, config: patch });
   }
   return getProject(auth, projectId);
 }

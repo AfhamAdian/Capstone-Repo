@@ -126,7 +126,6 @@ export async function createWorkspace(
         projectId: project.id,
         category: 'vcs',
         toolName: input.vcs as SupportedTool,
-        externalProjectId: `${input.organization}/${repoName}`,
         // No token here — sync resolves it from the workspace PAT via project.workspace_id.
         config: { owner: input.organization, repo: repoName },
       });

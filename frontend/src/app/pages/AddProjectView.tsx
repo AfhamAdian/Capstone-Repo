@@ -136,7 +136,6 @@ export function AddProjectView({
       description: description.trim() || undefined,
       vcs: {
         toolName: vcsTool,
-        externalProjectId: `${owner.trim()}/${repo.trim()}`,
         config: { token: vcsToken.trim(), owner: owner.trim(), repo: repo.trim() },
       },
       integrations: [],
@@ -147,7 +146,6 @@ export function AddProjectView({
       input.integrations!.push({
         category: "projectManagement",
         toolName: "jira",
-        externalProjectId: jiraProjectKey.trim(),
         config: {
           token: jiraToken.trim(),
           email: jiraEmail.trim(),
@@ -161,7 +159,6 @@ export function AddProjectView({
       input.integrations!.push({
         category: "codeQuality",
         toolName: "sonarqube",
-        externalProjectId: sonarProjectKey.trim(),
         config: {
           token: sonarToken.trim(),
           projectKey: sonarProjectKey.trim(),
@@ -176,7 +173,6 @@ export function AddProjectView({
         input.integrations!.push({
           category: "cicd",
           toolName: "github-actions",
-          externalProjectId: `${owner.trim()}/${repo.trim()}`,
           config: {
             token: (reuseVcsToken ? vcsToken : actionsToken).trim(),
             owner: owner.trim(),
@@ -187,7 +183,6 @@ export function AddProjectView({
         input.integrations!.push({
           category: "cicd",
           toolName: "jenkins",
-          externalProjectId: jenkinsJob.trim(),
           config: {
             baseUrl: jenkinsBaseUrl.trim(),
             username: jenkinsUser.trim(),

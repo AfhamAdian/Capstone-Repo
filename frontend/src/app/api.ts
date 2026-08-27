@@ -120,9 +120,7 @@ export interface ProjectListItem {
 export interface ToolIntegrationView {
   category: ToolCategory;
   toolName: string;
-  externalProjectId: string;
   config: Record<string, unknown>;
-  isActive: boolean | null;
 }
 
 export interface ProjectMemberView {
@@ -141,14 +139,13 @@ export interface ProjectDetail extends ProjectListItem {
 export interface IntegrationInput {
   category: ToolCategory;
   toolName: string;
-  externalProjectId: string;
   config: Record<string, string>;
 }
 
 export interface CreateProjectInput {
   name: string;
   description?: string;
-  vcs: { toolName: string; externalProjectId: string; config: Record<string, string> };
+  vcs: { toolName: string; config: Record<string, string> };
   integrations?: IntegrationInput[];
   invites?: string[];
 }

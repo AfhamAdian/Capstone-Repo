@@ -8,22 +8,17 @@ export interface ToolIntegrationRecord {
   project_id: number;
   tool_category: ToolCategory;
   tool_name: SupportedTool;
-  external_project_id: string;
   config: Record<string, unknown>;
-  is_active: boolean | null;
   last_synced_at: string | null;
 }
 
-const INTEGRATION_COLUMNS =
-  'id, project_id, tool_category, tool_name, external_project_id, config, is_active, last_synced_at';
+const INTEGRATION_COLUMNS = 'id, project_id, tool_category, tool_name, config, last_synced_at';
 
 export async function addIntegration(input: {
   projectId: number;
   category: ToolCategory;
   toolName: SupportedTool;
-  externalProjectId: string;
   config: Record<string, unknown>;
-  isActive?: boolean;
 }): Promise<ToolIntegrationRecord> {
   const client = assertSupabaseClient();
 
@@ -34,9 +29,7 @@ export async function addIntegration(input: {
         project_id: input.projectId,
         tool_category: input.category,
         tool_name: input.toolName,
-        external_project_id: input.externalProjectId,
         config: input.config,
-        is_active: input.isActive ?? true,
       },
     ])
     .select(INTEGRATION_COLUMNS)
