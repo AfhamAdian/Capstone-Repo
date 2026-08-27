@@ -27,7 +27,7 @@ function AuthLoadingGate() {
 
 function GuestOnly() {
   const {isAuthenticated,activeWorkspace}=useWorkspace();
-  if(isAuthenticated) return <Navigate to={resolvePortfolioPath(activeWorkspace?.vcs)} replace/>;
+  if(isAuthenticated) return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   return <Outlet/>;
 }
 
@@ -69,7 +69,7 @@ function ResetPasswordRoute() {
 function WorkspacesRoute() {
   const navigate=useNavigate();
   const {user}=useWorkspace();
-  return <VcsWorkspaceView onSelect={vcs=>navigate(paths.workspacePortfolio(vcs))} onAddProject={()=>navigate(paths.addProject)} isAdmin={user?.role==="admin"}/>;
+  return <VcsWorkspaceView onSelectWorkspace={ws=>navigate(paths.workspacePortfolio(ws.id))} onCreate={()=>navigate(paths.createWorkspace)} isAdmin={user?.role==="admin"}/>;
 }
 
 function CreateWorkspaceRoute() {
@@ -111,7 +111,7 @@ export default function App() {
 
           <Route element={<AppLayout/>}>
             <Route path="/" element={<PortfolioEntry/>}/>
-            <Route path="/workspaces/:vcs" element={<PortfolioEntry/>}/>
+            <Route path="/workspaces/:workspaceId" element={<PortfolioEntry/>}/>
             <Route path={paths.globalActions} element={<GlobalActionsRoute/>}/>
             <Route path={paths.globalSurveys} element={<GlobalSurveysRoute/>}/>
 

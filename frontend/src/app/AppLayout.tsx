@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Outlet, Navigate, useNavigate, useParams, useLocation, useOutletContext } from "react-router";
 import { AlertTriangle, MessageSquare, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { paths, isValidVcs, resolvePortfolioPath, VCS_LABELS } from "./app-paths";
-import { useWorkspace } from "./context/WorkspaceContext";
+import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
+import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
 import { createAction, listActions, listProjects, rateAction, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
@@ -38,7 +38,7 @@ interface AppContext {
   surveysLoading: boolean;
   refetchHealth: (opts?: { silent?: boolean }) => Promise<void> | void;
   portfolioPath: string;
-  vcsById: Map<number, string>;
+  workspaceById: Map<number, number>;
   isAdmin: boolean;
 }
 
@@ -49,28 +49,35 @@ function useAppContext() {
 // ─── The authenticated shell: TopBar + shared data-fetching + modals, wrapping every screen below it ──
 
 export function AppLayout() {
-  const {user,activeWorkspace,setActiveWorkspace}=useWorkspace();
+  const {user,activeWorkspace,setActiveWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {vcs:urlVcs,projectId}=useParams();
+  const {workspaceId:urlWorkspaceId,projectId}=useParams();
   const [dark,setDark]=useState(false);
   const [logOpen,setLogOpen]=useState(false);
   const [actions,setActions]=useState<Action[]>([]);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
-  // Real vcs per project (company-scoped) from our own API — used to group workspaces and filter the portfolio.
-  const [vcsById,setVcsById]=useState<Map<number,string>>(new Map());
+  // workspace_id per project (company-scoped) from our own API — used to filter the portfolio by workspace.
+  const [workspaceById,setWorkspaceById]=useState<Map<number,number>>(new Map());
   useEffect(()=>{
     listProjects()
-      .then(rows=>setVcsById(new Map(rows.filter(r=>r.vcs).map(r=>[r.id,r.vcs as string]))))
+      .then(rows=>setWorkspaceById(new Map(rows.filter(r=>r.workspaceId!=null).map(r=>[r.id,r.workspaceId as number]))))
       .catch(()=>{});
   },[]);
-  const activeVcs=urlVcs ?? activeWorkspace?.vcs ?? null;
-  const portfolioPath=resolvePortfolioPath(activeVcs);
-  // Keep the context/localStorage preference in sync with whatever workspace the URL currently points at.
+  const activeWorkspaceId=urlWorkspaceId ?? activeWorkspace?.id ?? null;
+  const portfolioPath=resolvePortfolioPath(activeWorkspaceId);
+  // Keep the remembered workspace in sync with the URL; look up its name/vcs from the backend list.
   useEffect(()=>{
-    if(!isValidVcs(urlVcs)||activeWorkspace?.vcs===urlVcs) return;
-    setActiveWorkspace({id:`ws-${urlVcs}`,name:urlVcs,vcs:urlVcs,projectsCount:0,membersCount:0});
-  },[urlVcs,activeWorkspace,setActiveWorkspace]);
+    if(!isValidWorkspaceId(urlWorkspaceId)||activeWorkspace?.id===urlWorkspaceId) return;
+    const ws=backendWorkspaces.find(w=>String(w.id)===urlWorkspaceId);
+    setActiveWorkspace({
+      id:urlWorkspaceId!,
+      name:ws?.name??`Workspace ${urlWorkspaceId}`,
+      vcs:(ws?.vcsProvider as VcsProvider)??"github",
+      projectsCount:0,
+      membersCount:0,
+    });
+  },[urlWorkspaceId,activeWorkspace,setActiveWorkspace,backendWorkspaces]);
   const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
   useEffect(()=>{
     if(projects.length===0) return;
@@ -145,7 +152,7 @@ export function AppLayout() {
       onRateAction: handleRateAction,
       onSyncComplete: updateProjectRisk,
       refetchSurveys, surveysError, surveysLoading, refetchHealth,
-      portfolioPath, vcsById,
+      portfolioPath, workspaceById,
       isAdmin: user?.role==="admin",
     };
     content = <Outlet context={context}/>;
@@ -213,16 +220,18 @@ export function AppLayout() {
 
 // ─── Top-level (non-project) screens ──
 
-/** Handles both bare "/" and "/workspaces/:vcs" — invalid or missing vcs redirects to the remembered workspace (or the chooser). */
+/** Handles both bare "/" and "/workspaces/:workspaceId" — invalid/missing id redirects to the remembered workspace (or the chooser). */
 export function PortfolioEntry() {
-  const {vcs:urlVcs}=useParams();
-  const {activeWorkspace}=useWorkspace();
+  const {workspaceId:urlWorkspaceId}=useParams();
+  const {activeWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {projects,actions,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,vcsById,isAdmin}=useAppContext();
-  if(!isValidVcs(urlVcs)){
-    return <Navigate to={resolvePortfolioPath(activeWorkspace?.vcs)} replace/>;
+  const {projects,actions,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
+  if(!isValidWorkspaceId(urlWorkspaceId)){
+    return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   }
-  const visibleProjects=projects.filter(p=>p.backendProjectId && vcsById.get(Number(p.backendProjectId))===urlVcs);
+  const wsId=Number(urlWorkspaceId);
+  const visibleProjects=projects.filter(p=>p.backendProjectId && workspaceById.get(Number(p.backendProjectId))===wsId);
+  const workspaceName=backendWorkspaces.find(w=>w.id===wsId)?.name ?? `Workspace ${urlWorkspaceId}`;
   return (
     <PortfolioView
       projects={visibleProjects} actions={actions} surveys={surveys}
@@ -232,7 +241,7 @@ export function PortfolioEntry() {
       onRatingOpen={onRatingOpen}
       trackedIds={trackedIds} onToggleTracked={toggleTracked}
       onAddProject={()=>navigate(paths.addProject)} isAdmin={isAdmin}
-      workspaceName={VCS_LABELS[urlVcs]??urlVcs} onBackToWorkspaces={()=>navigate(paths.workspaces)}
+      workspaceName={workspaceName} onBackToWorkspaces={()=>navigate(paths.workspaces)}
       onSyncComplete={onSyncComplete}
     />
   );

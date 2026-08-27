@@ -19,7 +19,7 @@ import {
   addIntegration,
   listIntegrations,
   listIntegrationsForProjects,
-  type ToolIntegrationRecord,
+  updateIntegrationConfig,
 } from '../database/project-tool-integration.js';
 import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
@@ -30,6 +30,7 @@ import {
 } from '../database/score.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
+import { getWorkspaceById } from '../database/workspace.js';
 import { listProjectHealthScoreHistory, type ProjectHealthScoreRow } from '../database/project-health-score.js';
 import { listProjectOpsMetricsHistory, type SnapshotOpsMetricsRow } from '../database/project-ops-metrics.js';
 
@@ -54,6 +55,15 @@ const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
 };
 const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
 const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
+
+// Reverse lookup: tool name -> its category.
+const TOOL_CATEGORY: Record<string, ToolCategory> = {};
+for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
+  for (const tool of tools) TOOL_CATEGORY[tool] = category as ToolCategory;
+}
+
+// Tools whose token is stored in projecttoolintegration.config. GitHub/GitLab/CI use the workspace PAT instead.
+const CONFIG_TOKEN_TOOLS = new Set(['jira', 'sonarqube']);
 
 function assertToolInCategory(category: ToolCategory, toolName: string): void {
   if (!CATEGORY_TOOLS[category]?.has(toolName)) {
@@ -93,14 +103,13 @@ function assertConfigForTool(toolName: SupportedTool, config: Record<string, unk
 interface IntegrationInput {
   category: ToolCategory;
   toolName: SupportedTool;
-  externalProjectId: string;
   config: Record<string, unknown>;
 }
 
 export interface CreateProjectInput {
   name: string;
   description?: string;
-  vcs: { toolName: string; externalProjectId: string; config?: Record<string, unknown> };
+  vcs: { toolName: string; config?: Record<string, unknown> };
   integrations?: IntegrationInput[];
   invites?: string[];
 }
@@ -111,6 +120,7 @@ export interface ProjectListItem {
   description: string | null;
   createdAt: string | null;
   vcs: SupportedTool | null;
+  workspaceId: number | null;
   score: ProjectRiskScore | null;
 }
 
@@ -118,9 +128,7 @@ export interface ProjectDetail extends ProjectListItem {
   integrations: Array<{
     category: ToolCategory;
     toolName: SupportedTool;
-    externalProjectId: string;
     config: Record<string, unknown>;
-    isActive: boolean | null;
   }>;
   members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
   pendingInvites?: string[];
@@ -153,14 +161,20 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     description: project.description,
     createdAt: project.created_at,
     vcs,
+    workspaceId: project.workspace_id,
     score,
-    integrations: integrations.map((i) => ({
-      category: i.tool_category,
-      toolName: i.tool_name,
-      externalProjectId: i.external_project_id,
-      config: redactConfig(i.config),
-      isActive: i.is_active,
-    })),
+    integrations: integrations.map((i) => {
+      const config = redactConfig(i.config);
+      // A vcs integration with no own token still has one via its workspace PAT — show it as configured.
+      if (i.tool_category === 'vcs' && !config.token && project.workspace_id != null) {
+        config.token = '***';
+      }
+      return {
+        category: i.tool_category,
+        toolName: i.tool_name,
+        config,
+      };
+    }),
     members: members.map((m) => {
       const user = userById.get(m.user_id);
       return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
@@ -193,6 +207,7 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
       description: p.description,
       createdAt: p.created_at,
       vcs: vcsByProject.get(p.id) ?? null,
+      workspaceId: p.workspace_id,
       score: scores.get(p.id) ?? null,
     }))
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
@@ -209,9 +224,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
   if (!input.vcs?.toolName || !VCS_PROVIDERS.has(input.vcs.toolName)) {
     throw new ProjectError('A valid version control tool (github, gitlab, bitbucket) is required', 400);
   }
-  if (!input.vcs.externalProjectId?.trim()) {
-    throw new ProjectError('Version control project identifier is required', 400);
-  }
   assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
 
   // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
@@ -219,8 +231,8 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
     if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
       throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
     }
-    if (!integration.toolName || !integration.externalProjectId?.trim()) {
-      throw new ProjectError('Each integration needs a toolName and externalProjectId', 400);
+    if (!integration.toolName) {
+      throw new ProjectError('Each integration needs a toolName', 400);
     }
     assertToolInCategory(integration.category, integration.toolName);
     assertConfigForTool(integration.toolName, integration.config ?? {});
@@ -240,7 +252,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
       projectId: project.id,
       category: 'vcs',
       toolName: input.vcs.toolName as SupportedTool,
-      externalProjectId: input.vcs.externalProjectId,
       config: input.vcs.config ?? {},
     });
 
@@ -250,7 +261,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
         projectId: project.id,
         category: integration.category,
         toolName: integration.toolName,
-        externalProjectId: integration.externalProjectId,
         config: integration.config ?? {},
       });
     }
@@ -306,6 +316,75 @@ export async function getProject(auth: Auth, projectId: number): Promise<Project
     throw new ProjectError('You are not assigned to this project', 403);
   }
   return toDetail(project);
+}
+
+// Admin-only: update an existing tool integration's config (e.g. the connector settings' Save).
+// Only non-empty, non-masked values are persisted, so a blank field keeps the current value.
+export async function updateProjectIntegration(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+  config: Record<string, unknown>,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can update integrations', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const patch: Record<string, string> = {};
+  for (const [key, value] of Object.entries(config ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '' && value !== '***') {
+      patch[key] = value.trim();
+    }
+  }
+  // GitHub/GitLab/CI tokens live on the workspace, never in config.
+  if (!CONFIG_TOKEN_TOOLS.has(toolName)) {
+    delete patch.token;
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ProjectError('Nothing to update', 400);
+  }
+
+  // Upsert: merge into an existing integration, or create it (e.g. adding SonarQube to a project).
+  const existing = (await listIntegrations(projectId)).find((r) => r.tool_name === toolName);
+  if (existing) {
+    await updateIntegrationConfig(projectId, toolName, patch);
+  } else {
+    const category = TOOL_CATEGORY[toolName];
+    if (!category) throw new ProjectError(`Unknown tool: ${toolName}`, 400);
+    assertConfigForTool(toolName as SupportedTool, patch); // require the fields sync will need
+    await addIntegration({ projectId, category, toolName: toolName as SupportedTool, config: patch });
+  }
+  return getProject(auth, projectId);
+}
+
+// Admin-only: reveal the effective token for a tool — the project's own config token, else its workspace PAT.
+export async function getIntegrationToken(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+): Promise<string | null> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can view credentials', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  const rows = await listIntegrations(projectId);
+  const configToken = (rows.find((r) => r.tool_name === toolName)?.config as Record<string, unknown>)?.token;
+  if (typeof configToken === 'string' && configToken.trim() !== '') {
+    return configToken;
+  }
+  // vcs tools fall back to the workspace PAT
+  if (project.workspace_id != null) {
+    const ws = await getWorkspaceById(project.workspace_id);
+    return ws?.access_token ?? null;
+  }
+  return null;
 }
 
 // ---- Read-only project + health-score dashboard feed ----

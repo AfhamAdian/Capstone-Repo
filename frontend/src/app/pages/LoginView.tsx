@@ -58,7 +58,7 @@ export function LoginView({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="block text-sm font-semibold text-foreground mb-1.5" style={{ fontFamily: "var(--font-display)" }}>
-              Email Address
+              Work Email
             </label>
             <input
               id="email"

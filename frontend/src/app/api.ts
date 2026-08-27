@@ -40,6 +40,24 @@ export async function register(input: RegisterInput): Promise<AuthUser> {
   return user;
 }
 
+// Emails a 6-digit verification code for self-signup; throws if the email is already registered.
+export async function sendVerificationCode(email: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/send-verification-code", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return message;
+}
+
+// Confirms the code so registration can proceed; throws on an invalid/expired code.
+export async function verifyEmailCode(email: string, code: string): Promise<string> {
+  const { message } = await apiRequest<{ message: string }>("/auth/verify-email-code", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+  return message;
+}
+
 export async function login(email: string, password: string): Promise<AuthUser> {
   const { user } = await apiRequest<{ user: AuthUser }>("/auth/login", {
     method: "POST",
@@ -95,15 +113,14 @@ export interface ProjectListItem {
   description: string | null;
   createdAt: string | null;
   vcs: string | null;
+  workspaceId: number | null;
   score: ProjectRiskScore | null;
 }
 
 export interface ToolIntegrationView {
   category: ToolCategory;
   toolName: string;
-  externalProjectId: string;
   config: Record<string, unknown>;
-  isActive: boolean | null;
 }
 
 export interface ProjectMemberView {
@@ -122,14 +139,13 @@ export interface ProjectDetail extends ProjectListItem {
 export interface IntegrationInput {
   category: ToolCategory;
   toolName: string;
-  externalProjectId: string;
   config: Record<string, string>;
 }
 
 export interface CreateProjectInput {
   name: string;
   description?: string;
-  vcs: { toolName: string; externalProjectId: string; config: Record<string, string> };
+  vcs: { toolName: string; config: Record<string, string> };
   integrations?: IntegrationInput[];
   invites?: string[];
 }
@@ -153,6 +169,74 @@ export async function createProject(input: CreateProjectInput): Promise<ProjectD
 export async function getProject(id: number): Promise<ProjectDetail> {
   const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${id}`);
   return project;
+}
+
+// Admin-only: reveal the effective token for a connector (config token, else the workspace PAT).
+export async function getIntegrationToken(projectId: number, toolName: string): Promise<string | null> {
+  const { token } = await apiRequest<{ token: string | null }>(`/projects/${projectId}/integrations/${toolName}/token`);
+  return token;
+}
+
+// Admin-only: update a connector's config (blank fields keep the current value). Returns the refreshed project.
+export async function updateProjectIntegration(
+  projectId: number,
+  toolName: string,
+  config: Record<string, string>,
+): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/integrations`, {
+    method: "PATCH",
+    body: JSON.stringify({ toolName, config }),
+  });
+  return project;
+}
+
+// ---- Workspaces ----
+
+export interface WorkspaceRepo {
+  name: string;
+  fullName: string;
+  description: string | null;
+  language: string | null;
+  stars: number;
+  updatedAt: string | null;
+  private: boolean;
+}
+
+export interface WorkspaceView {
+  id: number;
+  name: string;
+  vcsProvider: string;
+  organization: string;
+  createdAt: string | null;
+}
+
+// Step 2 of the wizard: validate the PAT and list the repos it can access (nothing is saved).
+export async function previewWorkspaceRepos(input: {
+  vcs: string;
+  organization: string;
+  token: string;
+}): Promise<WorkspaceRepo[]> {
+  const { repos } = await apiRequest<{ repos: WorkspaceRepo[] }>("/workspaces/preview-repos", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return repos;
+}
+
+// Step 3: create the workspace and import the selected repos as projects (admin only).
+export async function createWorkspace(input: {
+  name: string;
+  vcs: string;
+  organization: string;
+  token: string;
+  repos: string[];
+}): Promise<{ workspace: WorkspaceView; projects: Array<{ id: number; name: string }> }> {
+  return apiRequest("/workspaces", { method: "POST", body: JSON.stringify(input) });
+}
+
+export async function listWorkspaces(): Promise<WorkspaceView[]> {
+  const { workspaces } = await apiRequest<{ workspaces: WorkspaceView[] }>("/workspaces");
+  return workspaces;
 }
 
 export interface InvitePreview {

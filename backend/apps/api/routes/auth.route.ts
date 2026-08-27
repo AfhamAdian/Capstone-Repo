@@ -7,12 +7,16 @@ import {
   meHandler,
   registerHandler,
   resetPasswordHandler,
+  sendVerificationCodeHandler,
+  verifyEmailCodeHandler,
 } from '../controllers/auth.controller.js';
 import { requireAuth } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../utils/async-handler.js';
 
 export const authRouter = Router();
 
+authRouter.post('/send-verification-code', asyncHandler(sendVerificationCodeHandler));
+authRouter.post('/verify-email-code', asyncHandler(verifyEmailCodeHandler));
 authRouter.post('/register', asyncHandler(registerHandler));
 authRouter.post('/login', asyncHandler(loginHandler));
 authRouter.post('/logout', asyncHandler(logoutHandler));

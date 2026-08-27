@@ -1,11 +1,13 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   getMe,
+  listWorkspaces,
   login as apiLogin,
   logout as apiLogout,
   register as apiRegister,
   type AuthUser,
   type RegisterInput,
+  type WorkspaceView,
 } from "../api";
 
 export type { AuthUser };
@@ -40,6 +42,10 @@ interface WorkspaceContextType {
   activeWorkspace: Workspace | null;
   setActiveWorkspace: (ws: Workspace) => void;
   addWorkspace: (ws: Workspace) => void;
+  // Real workspaces from the backend — drive onboarding (no workspaces → wizard).
+  backendWorkspaces: WorkspaceView[];
+  workspacesLoading: boolean;
+  refetchWorkspaces: () => Promise<void>;
 }
 
 const WORKSPACES_STORAGE_KEY = "pulse.workspaces.v1";
@@ -76,6 +82,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Auth is server-owned: user comes from the session, not localStorage.
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [backendWorkspaces, setBackendWorkspaces] = useState<WorkspaceView[]>([]);
+  const [workspacesLoading, setWorkspacesLoading] = useState(true);
 
   const [workspaces, setWorkspaces] = useState<Workspace[]>(loadWorkspaces);
   const [activeWorkspace, setActiveWorkspaceState] = useState<Workspace | null>(() => {
@@ -103,6 +111,27 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Load the company's real workspaces whenever auth changes; drives the onboarding redirect.
+  const refetchWorkspaces = useCallback(async () => {
+    setWorkspacesLoading(true);
+    try {
+      setBackendWorkspaces(await listWorkspaces());
+    } catch {
+      setBackendWorkspaces([]);
+    } finally {
+      setWorkspacesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      void refetchWorkspaces();
+    } else {
+      setBackendWorkspaces([]);
+      setWorkspacesLoading(false);
+    }
+  }, [user, refetchWorkspaces]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -158,6 +187,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         activeWorkspace,
         setActiveWorkspace,
         addWorkspace,
+        backendWorkspaces,
+        workspacesLoading,
+        refetchWorkspaces,
       }}
     >
       {children}
