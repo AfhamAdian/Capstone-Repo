@@ -29,11 +29,15 @@ export async function saveRiskScore(result: RiskResult, projectSnapshotId: numbe
 }
 
 /**
- * Save all risk scores at once (upsert) linked with a project snapshot
+ * Save all risk scores at once (upsert) linked with a project snapshot.
+ * `overallScore` is the single combined health score (see
+ * apps/api/services/risk-calculation.service.ts for how it's derived) -
+ * pass null when nothing could be computed (e.g. no tool had data yet).
  */
 export async function saveAllRiskScores(
   projectSnapshotId: number,
-  scores: Record<RiskType, number | null>
+  scores: Record<RiskType, number | null>,
+  overallScore: number | null
 ): Promise<void> {
   const client = assertSupabaseClient();
 
@@ -49,6 +53,7 @@ export async function saveAllRiskScores(
         team_health_score: scores[RiskTypeEnum.TEAM_HEALTH] ?? null,
         engineering_process_score: scores[RiskTypeEnum.ENGINEERING_PROCESS] ?? null,
         planning_execution_score: scores[RiskTypeEnum.PLANNING_EXECUTION] ?? null,
+        overall_score: overallScore,
       },
     ]);
 
@@ -66,6 +71,7 @@ export interface LatestRiskScoreRow {
   team_health_score: number | null;
   engineering_process_score: number | null;
   planning_execution_score: number | null;
+  overall_score: number | null;
   created_at: string;
 }
 

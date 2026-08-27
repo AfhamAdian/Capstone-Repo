@@ -34,8 +34,15 @@ function toScore(snapshotId: number, snapshotTime: string | null, row: Record<st
     engineeringProcess: num(row.engineering_process_score),
     planningExecution: num(row.planning_execution_score),
   };
-  const present = Object.values(subscores).filter((v): v is number => v !== null);
-  const overall = present.length ? Math.round(present.reduce((a, b) => a + b, 0) / present.length) : null;
+  // overall_score is computed and persisted at save time (equal-weight average
+  // of the 7 subscores - see risk-calculation.service.ts). Fall back to
+  // recomputing it here only for rows saved before that column existed.
+  const persistedOverall = num(row.overall_score);
+  let overall = persistedOverall;
+  if (overall === null) {
+    const present = Object.values(subscores).filter((v): v is number => v !== null);
+    overall = present.length ? Math.round(present.reduce((a, b) => a + b, 0) / present.length) : null;
+  }
   return { snapshotId, snapshotTime, overall, subscores };
 }
 

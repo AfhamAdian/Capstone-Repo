@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
@@ -36,6 +36,12 @@ interface RealConnectorSpec {
   tokenEditable: boolean; // github: false (workspace PAT); sonarqube: true (stored in config)
   fixedConfig?: Record<string, string>; // always sent on save, e.g. sonarqube baseUrl
   docsUrl: string;
+  /**
+   * Transforms the raw field values into what actually gets saved - e.g. parsing one pasted
+   * URL into several config keys. Defaults to a 1:1 copy of `fields` when omitted. Throwing
+   * surfaces as a normal save error (caught in RealConnectorCard.save()).
+   */
+  parse?: (values: Record<string, string>) => Record<string, string>;
 }
 
 // Real connector card — loads the project's current config, reveals the token, and persists updates.
@@ -86,7 +92,11 @@ function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backend
     setSaving(true); setStatus("idle"); setMsg("");
     try{
       const config:Record<string,string>={...spec.fixedConfig};
-      for(const f of spec.fields) config[f.key]=values[f.key].trim();
+      if(spec.parse){
+        Object.assign(config, spec.parse(values));
+      }else{
+        for(const f of spec.fields) config[f.key]=values[f.key].trim();
+      }
       if(spec.tokenEditable && token.trim()) config.token=token.trim();
       await updateProjectIntegration(Number(backendProjectId),spec.toolName,config);
       setStatus("ok"); setMsg("Saved"); setToken(""); setTokenSet(true); setRevealed(false); setCurrentToken(null);
@@ -181,6 +191,100 @@ function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backend
   );
 }
 
+// CI/CD is a category, not a single tool — pick a provider first. GitHub Actions is the only one
+// that actually syncs today; it needs no credentials of its own (backend reuses the project's
+// GitHub integration - see getProjectIntegrationsForTools in apps/api/database/project.ts).
+const CICD_PROVIDERS: { value: string; label: string }[] = [
+  { value: "github-actions", label: "GitHub Actions" },
+];
+
+// CI/CD connector card — a provider picker instead of RealConnectorCard's fixed fields/token,
+// since the only provider available right now needs no configuration at all.
+function CicdConnectorCard({backendProjectId}:{backendProjectId:string;}) {
+  const [open,setOpen]=useState(false);
+  const [provider,setProvider]=useState(CICD_PROVIDERS[0]!.value);
+  const [configured,setConfigured]=useState(false);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
+  const [msg,setMsg]=useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    getProject(Number(backendProjectId))
+      .then(p=>{
+        if(cancelled) return;
+        const integ=p.integrations.find(i=>i.category==="cicd");
+        if(integ){ setProvider(integ.toolName); setConfigured(true); }
+      })
+      .catch(()=>{})
+      .finally(()=>{ if(!cancelled) setLoading(false); });
+    return ()=>{cancelled=true;};
+  },[backendProjectId]);
+
+  const save=async()=>{
+    setSaving(true); setStatus("idle"); setMsg("");
+    try{
+      await updateProjectIntegration(Number(backendProjectId),provider,{});
+      setStatus("ok"); setMsg("Saved"); setConfigured(true);
+    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Save failed"); }
+    finally{ setSaving(false); }
+  };
+
+  return (
+    <div className="border border-border bg-card">
+      <button onClick={()=>setOpen(!open)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left">
+        <div className="flex items-center gap-4">
+          <span className="shrink-0 text-orange-500"><Workflow size={20}/></span>
+          <div>
+            <div className="text-[15px] font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>CI/CD</div>
+            <div className="text-sm text-muted-foreground mt-0.5">Pull pipeline success rate, deployment frequency, and test results from your CI/CD provider.</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 ml-4">
+          {configured
+            ? <span className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5"><Check size={13}/>Connected</span>
+            : <span className="text-sm text-muted-foreground">Not configured</span>}
+          <ChevronDown size={15} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
+        </div>
+      </button>
+      <AnimatePresence>
+        {open&&(
+          <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.15}} className="overflow-hidden">
+            <div className="border-t border-border px-5 py-5 space-y-4">
+              {loading?(
+                <p className="text-sm text-muted-foreground">Loading current settings…</p>
+              ):(
+                <>
+                  <div>
+                    <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Provider</label>
+                    <select value={provider} onChange={e=>setProvider(e.target.value)}
+                      className="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground outline-none focus:border-primary transition-colors">
+                      {CICD_PROVIDERS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
+                    </select>
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Runs on your GitHub connector's repository — no separate credentials needed.
+                  </p>
+                  <div className="flex items-center justify-end pt-2 border-t border-border gap-3">
+                    {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
+                    {status==="err"&&<span className="text-sm text-red-500 font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
+                    <button onClick={save} disabled={saving}
+                      className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{fontFamily:"var(--font-display)"}}>
+                      {saving?<><RefreshCw size={13} className="animate-spin"/>Saving…</>:"Save"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 const GITHUB_SPEC: RealConnectorSpec = {
   toolName: "github",
   fields: [{ key: "owner", label: "Organization / Owner", placeholder: "your-org", hint: "Your GitHub organization name or username" }],
@@ -202,15 +306,31 @@ const SONARQUBE_SPEC: RealConnectorSpec = {
   docsUrl: "https://docs.sonarsource.com/sonarcloud/",
 };
 
-// Jira Cloud uses Basic auth (email:token), so email + the tenant URL are both required and can't be
-// derived. boardId is intentionally omitted — the connector degrades to null sprint metrics without it.
+// Same board-URL parsing as backend/scripts/test-jira.ts's parseBoardUrl() - one pasted URL
+// yields baseUrl/projectKey/boardId, so sprint-based metrics (Planning & Execution, etc.) stop
+// silently going null for lack of a board ID. Backend already reads all 3 as separate config
+// keys (getProjectIntegrationsForTools), so nothing there needs to change.
+const JIRA_BOARD_URL_PATTERN = /^(https:\/\/[^/]+)\/jira\/software\/projects\/([^/]+)\/boards\/(\d+)/;
+
 const JIRA_SPEC: RealConnectorSpec = {
   toolName: "jira",
   fields: [
-    { key: "baseUrl", label: "Jira URL", placeholder: "https://yourorg.atlassian.net", hint: "Your Atlassian domain URL" },
+    { key: "boardUrl", label: "Board URL", placeholder: "https://yourorg.atlassian.net/jira/software/projects/PROJ/boards/1", hint: "Paste the board URL from your browser — project key and board ID are extracted automatically." },
     { key: "email", label: "API Email", placeholder: "you@company.com", hint: "The email associated with your Atlassian account" },
-    { key: "projectKey", label: "Project Key", placeholder: "PROJ", hint: "The short key in your Jira board URL (e.g. PROJ for PROJ-123)" },
   ],
+  parse: (values) => {
+    const match = values.boardUrl?.match(JIRA_BOARD_URL_PATTERN);
+    if (!match) {
+      throw new Error("Board URL doesn't look like a Jira board URL — expected https://yourorg.atlassian.net/jira/software/projects/PROJ/boards/1");
+    }
+    return {
+      boardUrl: values.boardUrl.trim(), // kept so the field can show its current value again on reload
+      baseUrl: match[1]!,
+      projectKey: match[2]!,
+      boardId: match[3]!,
+      email: values.email.trim(),
+    };
+  },
   tokenLabel: "API Token",
   tokenHint: "Generate at id.atlassian.com → Security → API tokens",
   tokenPlaceholder: "ATATT3xFf…",
@@ -326,10 +446,13 @@ export function SettingsView({project}:{project:Project;}) {
             </div>
             <div className="space-y-3">
               {project.backendProjectId
-                ? CONNECTORS.map(def=>{
-                    const spec=REAL_SPECS[def.id];
-                    return spec ? <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId!} spec={spec}/> : null;
-                  })
+                ? <>
+                    {CONNECTORS.map(def=>{
+                      const spec=REAL_SPECS[def.id];
+                      return spec ? <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId!} spec={spec}/> : null;
+                    })}
+                    <CicdConnectorCard backendProjectId={project.backendProjectId}/>
+                  </>
                 : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so connectors can't be configured.</p>}
             </div>
           </div>

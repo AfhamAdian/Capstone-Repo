@@ -14,6 +14,7 @@ import {
   type EngineeringProcessMetrics,
   type PlanningExecutionMetrics,
 } from '@libs/risk-engines/types.js';
+import { renormalizedWeightedScore } from '@libs/risk-engines/scoring.js';
 import { saveAllRiskScores } from '../database/risk-score.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { logger } from '@libs/logger.js';
@@ -189,9 +190,20 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       'calculated planning & execution score'
     );
 
-    await saveAllRiskScores(projectSnapshotId, scores as Record<RiskType, number | null>);
+    // Overall = equal-weight renormalized average of the 7 subscores (same
+    // null-aware mechanism every individual score already uses internally -
+    // see risk-engines/scoring.ts). A snapshot missing some tools' data still
+    // gets a fair average over whichever subscores it does have; null only
+    // when none of the 7 could be computed at all.
+    const overallInput = Object.values(RiskType)
+      .filter((type): type is RiskType => type !== RiskType.BLOCKERS)
+      .map((type) => ({ key: type, score: scores[type], weight: 1 }));
+    const overall = renormalizedWeightedScore(overallInput);
+    const overallScore = overall ? Math.round(overall.score) : null;
 
-    log.info({ elapsedMs: Date.now() - startedAt }, 'risk scores calculated and saved successfully');
+    await saveAllRiskScores(projectSnapshotId, scores as Record<RiskType, number | null>, overallScore);
+
+    log.info({ elapsedMs: Date.now() - startedAt, overallScore }, 'risk scores calculated and saved successfully');
     return scores;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

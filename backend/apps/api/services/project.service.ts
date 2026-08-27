@@ -84,7 +84,10 @@ const REQUIRED_CONFIG_KEYS: Partial<Record<SupportedTool, string[]>> = {
   gitlab: ['token', 'owner', 'repo'],
   jira: ['token', 'email', 'baseUrl', 'projectKey'],
   sonarqube: ['token', 'projectKey'],
-  'github-actions': ['token', 'owner', 'repo'],
+  // No required keys: getProjectIntegrationsForTools() already falls back to the project's
+  // github integration (token/owner/repo) when github-actions' own config doesn't supply them -
+  // see apps/api/database/project.ts. AddProjectView.tsx may still send them explicitly; that's
+  // fine, just no longer required.
 };
 
 // Reject at create time any tool whose config is missing the keys sync will later need.
@@ -344,13 +347,17 @@ export async function updateProjectIntegration(
   if (!CONFIG_TOKEN_TOOLS.has(toolName)) {
     delete patch.token;
   }
-  if (Object.keys(patch).length === 0) {
-    throw new ProjectError('Nothing to update', 400);
-  }
 
   // Upsert: merge into an existing integration, or create it (e.g. adding SonarQube to a project).
   const existing = (await listIntegrations(projectId)).find((r) => r.tool_name === toolName);
   if (existing) {
+    // Editing an already-configured tool with nothing new to save is a no-op mistake worth
+    // rejecting. Creating a brand-new integration with an empty patch is legitimate for a
+    // zero-config tool like github-actions (see REQUIRED_CONFIG_KEYS) - assertConfigForTool
+    // below still catches a genuinely-missing-required-field case on create.
+    if (Object.keys(patch).length === 0) {
+      throw new ProjectError('Nothing to update', 400);
+    }
     await updateIntegrationConfig(projectId, toolName, patch);
   } else {
     const category = TOOL_CATEGORY[toolName];

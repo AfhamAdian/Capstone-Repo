@@ -12,6 +12,7 @@ CREATE TABLE public.riskscore (
   team_health_score double precision,
   engineering_process_score double precision,
   planning_execution_score double precision,
+  overall_score double precision,
   CONSTRAINT riskscore_pkey PRIMARY KEY (id),
   CONSTRAINT riskscore_project_snapshot_id_fkey FOREIGN KEY (project_snapshot_id) REFERENCES public.projectsnapshot(id)
 );

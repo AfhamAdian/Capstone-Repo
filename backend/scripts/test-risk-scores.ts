@@ -32,6 +32,7 @@ import { JiraConnector } from '@libs/connectors/pm/index.js';
 import type { JiraMetricsResponse } from '@libs/connectors/pm/index.js';
 import { RiskEngine } from '@libs/risk-engines/risk-engine.js';
 import { RiskType } from '@libs/risk-engines/types.js';
+import { renormalizedWeightedScore } from '@libs/risk-engines/scoring.js';
 import type {
   SecurityMetrics,
   ReliabilityMetrics,
@@ -246,6 +247,13 @@ async function main() {
     console.dir(result.weights, { depth: null });
     console.log('');
   }
+
+  // Same equal-weight renormalized average used to compute and persist
+  // riskscore.overall_score in risk-calculation.service.ts.
+  const overall = renormalizedWeightedScore(
+    results.map((result) => ({ key: result.type, score: result.score, weight: 1 })),
+  );
+  console.log(`OVERALL: ${overall ? Math.round(overall.score) : 'null'}`);
 }
 
 main().catch((error) => {
