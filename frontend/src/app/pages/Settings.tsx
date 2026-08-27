@@ -310,7 +310,10 @@ const SONARQUBE_SPEC: RealConnectorSpec = {
 // yields baseUrl/projectKey/boardId, so sprint-based metrics (Planning & Execution, etc.) stop
 // silently going null for lack of a board ID. Backend already reads all 3 as separate config
 // keys (getProjectIntegrationsForTools), so nothing there needs to change.
-const JIRA_BOARD_URL_PATTERN = /^(https:\/\/[^/]+)\/jira\/software\/projects\/([^/]+)\/boards\/(\d+)/;
+// The `c/` segment is optional: team-managed boards are .../software/projects/{KEY}/boards/{id},
+// company-managed ("classic") boards are .../software/c/projects/{KEY}/boards/{id} - both carry
+// the same projectKey/boardId, just with that one extra path segment (see future-work.md #2).
+const JIRA_BOARD_URL_PATTERN = /^(https:\/\/[^/]+)\/jira\/software\/(?:c\/)?projects\/([^/]+)\/boards\/(\d+)/;
 
 const JIRA_SPEC: RealConnectorSpec = {
   toolName: "jira",

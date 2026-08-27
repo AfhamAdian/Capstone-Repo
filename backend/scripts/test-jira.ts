@@ -19,7 +19,9 @@ const token = process.env.JIRA_TOKEN;
 const email = process.env.JIRA_EMAIL;
 const boardUrl = process.env.JIRA_BOARD_URL;
 
-const BOARD_URL_PATTERN = /^(https:\/\/[^/]+)\/jira\/software\/projects\/([^/]+)\/boards\/(\d+)/;
+// `c/` is optional: team-managed boards are .../software/projects/{KEY}/boards/{id},
+// company-managed ("classic") boards are .../software/c/projects/{KEY}/boards/{id}.
+const BOARD_URL_PATTERN = /^(https:\/\/[^/]+)\/jira\/software\/(?:c\/)?projects\/([^/]+)\/boards\/(\d+)/;
 
 function parseBoardUrl(url: string): { baseUrl: string; projectKey: string; boardId: string } {
   const match = url.match(BOARD_URL_PATTERN);
