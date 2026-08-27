@@ -3,116 +3,28 @@ import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw, 
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
-import { getProject, updateProjectIntegration, previewWorkspaceRepos, getIntegrationToken } from "../api";
+import { getProject, updateProjectIntegration, getIntegrationToken } from "../api";
 
-interface ConnectorField { label:string; key:string; placeholder:string; type?:"text"|"password"; hint?:string; }
-interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; fields:ConnectorField[]; docsUrl:string; }
+// Presentational metadata only — the editable fields/token/docs live in each connector's RealConnectorSpec.
+interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; }
 
 const CONNECTORS:ConnectorDef[]=[
   {
-    id:"jira", name:"Jira", color:"text-blue-600", docsUrl:"https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/",
+    id:"jira", name:"Jira", color:"text-blue-600",
     icon:<svg viewBox="0 0 32 32" width={20} height={20} fill="currentColor"><path d="M15.88 0C9.8 0 4.86 4.94 4.86 11.03c0 3.33 1.5 6.32 3.88 8.3L15.88 32l7.14-12.67c2.38-1.98 3.88-4.97 3.88-8.3C26.9 4.94 21.96 0 15.88 0zm0 15.57a4.54 4.54 0 1 1 0-9.08 4.54 4.54 0 0 1 0 9.08z"/></svg>,
     description:"Pull sprint velocity, ticket closure rate, and open blockers directly from your Jira board.",
-    fields:[
-      {label:"Jira URL",key:"url",placeholder:"https://yourorg.atlassian.net",hint:"Your Atlassian domain URL"},
-      {label:"API Email",key:"email",placeholder:"you@company.com",hint:"The email associated with your Atlassian account"},
-      {label:"API Token",key:"token",placeholder:"ATATT3xFf…",type:"password",hint:"Generate at id.atlassian.com → Security → API tokens"},
-      {label:"Project Key",key:"projectKey",placeholder:"PROJ",hint:"The short key shown in your Jira board URL (e.g. PROJ for PROJ-123)"},
-    ],
   },
   {
-    id:"sonarqube", name:"SonarQube", color:"text-violet-600", docsUrl:"https://docs.sonarqube.org/latest/user-guide/user-account/generating-and-using-tokens/",
+    id:"sonarqube", name:"SonarQube", color:"text-violet-600",
     icon:<ShieldCheck size={20}/>,
     description:"Track code quality score, code smells, coverage, and technical debt from SonarQube or SonarCloud.",
-    fields:[
-      {label:"Server URL",key:"url",placeholder:"https://sonarcloud.io  or  http://localhost:9000",hint:"SonarCloud or self-hosted SonarQube URL"},
-      {label:"Auth Token",key:"token",placeholder:"squ_abc123…",type:"password",hint:"Generate in SonarQube → My Account → Security"},
-      {label:"Project Key",key:"projectKey",placeholder:"my-org_my-project",hint:"Found in SonarQube → Project → Project Information"},
-    ],
   },
   {
-    id:"github", name:"GitHub", color:"text-foreground", docsUrl:"https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
+    id:"github", name:"GitHub", color:"text-foreground",
     icon:<GitBranch size={20}/>,
     description:"Pull commit frequency, PR cycle time, and deployment frequency from your GitHub repository.",
-    fields:[
-      {label:"Personal Access Token",key:"token",placeholder:"ghp_abc123…",type:"password",hint:"Create at github.com → Settings → Developer settings → Personal access tokens. Scopes needed: repo"},
-      {label:"Organization / Owner",key:"org",placeholder:"your-org",hint:"Your GitHub organization name or username"},
-    ],
   },
 ];
-
-function ConnectorCard({def}:{def:ConnectorDef}) {
-  const [open,setOpen]=useState(false);
-  const [vals,setVals]=useState<Record<string,string>>(Object.fromEntries(def.fields.map(f=>[f.key,""])));
-  const [testing,setTesting]=useState(false);
-  const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
-  const connected=Object.values(vals).every(v=>v.trim().length>0);
-  const test=()=>{setTesting(true);setTimeout(()=>{setTesting(false);setStatus(connected?"ok":"err");},1400);};
-  return (
-    <div className="border border-border bg-card">
-      <button onClick={()=>setOpen(!open)}
-        className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left">
-        <div className="flex items-center gap-4">
-          <span className={`shrink-0 ${def.color}`}>{def.icon}</span>
-          <div>
-            <div className="text-[15px] font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>{def.name}</div>
-            <div className="text-sm text-muted-foreground mt-0.5">{def.description}</div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 shrink-0 ml-4">
-          {status==="ok"&&<span className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5"><Check size={13}/>Connected</span>}
-          {status==="err"&&<span className="text-sm font-semibold text-red-500">Connection failed</span>}
-          {status==="idle"&&!connected&&<span className="text-sm text-muted-foreground">Not configured</span>}
-          {status==="idle"&&connected&&<span className="text-sm font-medium text-amber-500">Configured — test it</span>}
-          <ChevronDown size={15} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
-        </div>
-      </button>
-      <AnimatePresence>
-        {open&&(
-          <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.15}} className="overflow-hidden">
-            <div className="border-t border-border px-5 py-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {def.fields.map(f=>(
-                  <div key={f.key}>
-                    <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>{f.label}</label>
-                    <input
-                      type={f.type||"text"}
-                      value={vals[f.key]}
-                      onChange={e=>setVals(prev=>({...prev,[f.key]:e.target.value}))}
-                      placeholder={f.placeholder}
-                      className="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors font-mono"
-                    />
-                    {f.hint&&<div className="text-xs text-muted-foreground mt-1 leading-relaxed">{f.hint}</div>}
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between pt-2 border-t border-border">
-                <a href={def.docsUrl} target="_blank" rel="noreferrer"
-                  className="text-sm text-primary flex items-center gap-1 hover:opacity-75 transition-opacity">
-                  <Link2 size={12}/> View API docs
-                </a>
-                <div className="flex items-center gap-3">
-                  {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>Connection verified</span>}
-                  {status==="err"&&<span className="text-sm text-red-500 font-medium">Check your credentials and try again</span>}
-                  <button onClick={test} disabled={!Object.values(vals).some(v=>v.trim())||testing}
-                    className="flex items-center gap-2 border border-border px-4 py-2 text-sm font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{fontFamily:"var(--font-display)"}}>
-                    {testing?<><RefreshCw size={13} className="animate-spin"/>Testing…</>:<><Link2 size={13}/>Test Connection</>}
-                  </button>
-                  <button onClick={()=>{setStatus("idle");}}
-                    className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity"
-                    style={{fontFamily:"var(--font-display)"}}>
-                    Save
-                  </button>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
 
 // Describes a real connector: which non-token fields to show and how its token is handled.
 interface RealConnectorSpec {
@@ -306,6 +218,13 @@ const JIRA_SPEC: RealConnectorSpec = {
   docsUrl: "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/",
 };
 
+// Maps each connector id to its real spec; the connectors tab renders these against the backend project.
+const REAL_SPECS: Record<string, RealConnectorSpec> = {
+  github: GITHUB_SPEC,
+  sonarqube: SONARQUBE_SPEC,
+  jira: JIRA_SPEC,
+};
+
 export function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
   const {settings,update}=useProjectSurveySettings(project.id);
@@ -406,12 +325,12 @@ export function SettingsView({project}:{project:Project;}) {
               </p>
             </div>
             <div className="space-y-3">
-              {CONNECTORS.map(def=>{
-                if(project.backendProjectId && def.id==="github") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={GITHUB_SPEC}/>;
-                if(project.backendProjectId && def.id==="sonarqube") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={SONARQUBE_SPEC}/>;
-                if(project.backendProjectId && def.id==="jira") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={JIRA_SPEC}/>;
-                return <ConnectorCard key={def.id} def={def}/>;
-              })}
+              {project.backendProjectId
+                ? CONNECTORS.map(def=>{
+                    const spec=REAL_SPECS[def.id];
+                    return spec ? <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId!} spec={spec}/> : null;
+                  })
+                : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so connectors can't be configured.</p>}
             </div>
           </div>
         )}
