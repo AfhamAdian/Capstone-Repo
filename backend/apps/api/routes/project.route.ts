@@ -7,6 +7,7 @@ import {
   getProjectHealthDetail,
   getProjectHealthProvenanceHandler,
   updateIntegrationHandler,
+  getIntegrationTokenHandler,
 } from '../controllers/project.controller.js';
 import { requireAuth } from '../middlewares/auth.middleware.js';
 import { asyncHandler } from '../utils/async-handler.js';
@@ -22,4 +23,5 @@ projectRouter.get('/health', requireAuth, asyncHandler(listProjectsHealthHandler
 projectRouter.get('/:projectId/health/provenance', requireAuth, asyncHandler(getProjectHealthProvenanceHandler));
 projectRouter.get('/:id', requireAuth, asyncHandler(getProjectHandler));
 projectRouter.patch('/:projectId/integrations', requireAuth, asyncHandler(updateIntegrationHandler));
+projectRouter.get('/:projectId/integrations/:toolName/token', requireAuth, asyncHandler(getIntegrationTokenHandler));
 projectRouter.get('/:projectId/health', requireAuth, asyncHandler(getProjectHealthDetail));

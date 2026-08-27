@@ -30,6 +30,7 @@ import {
 } from '../database/score.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
+import { getWorkspaceById } from '../database/workspace.js';
 import { listProjectHealthScoreHistory, type ProjectHealthScoreRow } from '../database/project-health-score.js';
 import { listProjectOpsMetricsHistory, type SnapshotOpsMetricsRow } from '../database/project-ops-metrics.js';
 
@@ -346,6 +347,32 @@ export async function updateProjectIntegration(
 
   await updateIntegrationConfig(projectId, toolName, patch);
   return getProject(auth, projectId);
+}
+
+// Admin-only: reveal the effective token for a tool — the project's own config token, else its workspace PAT.
+export async function getIntegrationToken(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+): Promise<string | null> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can view credentials', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  const rows = await listIntegrations(projectId);
+  const configToken = (rows.find((r) => r.tool_name === toolName)?.config as Record<string, unknown>)?.token;
+  if (typeof configToken === 'string' && configToken.trim() !== '') {
+    return configToken;
+  }
+  // vcs tools fall back to the workspace PAT
+  if (project.workspace_id != null) {
+    const ws = await getWorkspaceById(project.workspace_id);
+    return ws?.access_token ?? null;
+  }
+  return null;
 }
 
 // ---- Read-only project + health-score dashboard feed ----

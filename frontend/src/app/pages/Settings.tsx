@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle } from "lucide-react";
+import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
-import { getProject, updateProjectIntegration, previewWorkspaceRepos } from "../api";
+import { getProject, updateProjectIntegration, previewWorkspaceRepos, getIntegrationToken } from "../api";
 
 interface ConnectorField { label:string; key:string; placeholder:string; type?:"text"|"password"; hint?:string; }
 interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; fields:ConnectorField[]; docsUrl:string; }
@@ -125,6 +125,21 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
   const [testing,setTesting]=useState(false);
   const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
   const [msg,setMsg]=useState("");
+  // Reveal the current effective token (separate from the "enter a new token" field).
+  const [revealed,setRevealed]=useState(false);
+  const [currentToken,setCurrentToken]=useState<string|null>(null);
+  const [revealing,setRevealing]=useState(false);
+
+  const toggleReveal=async()=>{
+    if(revealed){ setRevealed(false); return; }
+    if(currentToken===null){
+      setRevealing(true);
+      try{ setCurrentToken(await getIntegrationToken(Number(backendProjectId),"github")); }
+      catch{ setCurrentToken(""); }
+      finally{ setRevealing(false); }
+    }
+    setRevealed(true);
+  };
 
   useEffect(()=>{
     let cancelled=false;
@@ -194,9 +209,24 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Personal Access Token</label>
-                      <input type="password" value={token} onChange={e=>setToken(e.target.value)}
-                        placeholder={tokenSet?"•••••••• — leave blank to keep":"ghp_abc123…"} className={inputClass}/>
-                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">Create at github.com → Settings → Developer settings → Personal access tokens. Scopes: repo</div>
+                      <div className="relative">
+                        {revealed ? (
+                          <input readOnly value={currentToken ?? ""} type="text" className={`${inputClass} pr-10`}/>
+                        ) : (
+                          <input type="password" value={token} onChange={e=>setToken(e.target.value)}
+                            placeholder={tokenSet?"•••••••• — leave blank to keep":"ghp_abc123…"} className={`${inputClass} pr-10`}/>
+                        )}
+                        {tokenSet&&(
+                          <button type="button" onClick={toggleReveal} disabled={revealing}
+                            title={revealed?"Hide token":"Show current token"}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">
+                            {revealing?<RefreshCw size={15} className="animate-spin"/>:revealed?<EyeOff size={15}/>:<Eye size={15}/>}
+                          </button>
+                        )}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                        {revealed?"Current token (via workspace unless overridden here). Toggle off to enter a new one.":"Create at github.com → Settings → Developer settings → Personal access tokens. Scopes: repo"}
+                      </div>
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Organization / Owner</label>

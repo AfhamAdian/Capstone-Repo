@@ -174,6 +174,12 @@ export async function getProject(id: number): Promise<ProjectDetail> {
   return project;
 }
 
+// Admin-only: reveal the effective token for a connector (config token, else the workspace PAT).
+export async function getIntegrationToken(projectId: number, toolName: string): Promise<string | null> {
+  const { token } = await apiRequest<{ token: string | null }>(`/projects/${projectId}/integrations/${toolName}/token`);
+  return token;
+}
+
 // Admin-only: update a connector's config (blank fields keep the current value). Returns the refreshed project.
 export async function updateProjectIntegration(
   projectId: number,

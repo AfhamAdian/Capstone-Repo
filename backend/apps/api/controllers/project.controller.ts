@@ -10,6 +10,7 @@ import {
   listProjectsWithHealth,
   getProjectHealth,
   updateProjectIntegration,
+  getIntegrationToken,
 } from '../services/project.service.js';
 import { getProjectHealthProvenance } from '../services/health-provenance.service.js';
 
@@ -38,6 +39,21 @@ export async function createProjectHandler(request: Request, response: Response)
   try {
     const project = await createProject(request.auth!, request.body ?? {});
     response.status(201).json({ project });
+  } catch (error) {
+    handleProjectError(error, response);
+  }
+}
+
+// GET /api/v1/projects/:projectId/integrations/:toolName/token — reveal the effective token (admin only).
+export async function getIntegrationTokenHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const projectId = Number(request.params.projectId);
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      response.status(400).json({ message: 'Invalid project id' });
+      return;
+    }
+    const token = await getIntegrationToken(request.auth!, projectId, request.params.toolName ?? '');
+    response.status(200).json({ token });
   } catch (error) {
     handleProjectError(error, response);
   }
