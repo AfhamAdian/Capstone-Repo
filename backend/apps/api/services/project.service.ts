@@ -19,7 +19,7 @@ import {
   addIntegration,
   listIntegrations,
   listIntegrationsForProjects,
-  type ToolIntegrationRecord,
+  updateIntegrationConfig,
 } from '../database/project-tool-integration.js';
 import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
@@ -309,6 +309,36 @@ export async function getProject(auth: Auth, projectId: number): Promise<Project
     throw new ProjectError('You are not assigned to this project', 403);
   }
   return toDetail(project);
+}
+
+// Admin-only: update an existing tool integration's config (e.g. the connector settings' Save).
+// Only non-empty, non-masked values are persisted, so a blank field keeps the current value.
+export async function updateProjectIntegration(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+  config: Record<string, unknown>,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can update integrations', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const patch: Record<string, string> = {};
+  for (const [key, value] of Object.entries(config ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '' && value !== '***') {
+      patch[key] = value.trim();
+    }
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ProjectError('Nothing to update', 400);
+  }
+
+  await updateIntegrationConfig(projectId, toolName, patch);
+  return getProject(auth, projectId);
 }
 
 // ---- Read-only project + health-score dashboard feed ----

@@ -69,6 +69,37 @@ export async function listIntegrationsForProjects(
 }
 
 // All integrations for a project (used for the project detail view and sync).
+// Merge a partial config into an existing integration (used by the connector settings' Save).
+export async function updateIntegrationConfig(
+  projectId: number,
+  toolName: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const client = assertSupabaseClient();
+
+  const { data: existing, error: fetchErr } = await client
+    .from('projecttoolintegration')
+    .select('id, config')
+    .eq('project_id', projectId)
+    .eq('tool_name', toolName)
+    .maybeSingle();
+  if (fetchErr) {
+    throw new Error(`Failed to load ${toolName} integration: ${fetchErr.message}`);
+  }
+  if (!existing) {
+    throw new Error(`No ${toolName} integration exists for this project`);
+  }
+
+  const merged = { ...((existing.config as Record<string, unknown>) ?? {}), ...patch };
+  const { error } = await client
+    .from('projecttoolintegration')
+    .update({ config: merged })
+    .eq('id', existing.id);
+  if (error) {
+    throw new Error(`Failed to update ${toolName} integration: ${error.message}`);
+  }
+}
+
 export async function listIntegrations(projectId: number): Promise<ToolIntegrationRecord[]> {
   const client = assertSupabaseClient();
 

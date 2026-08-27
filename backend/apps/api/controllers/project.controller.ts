@@ -9,6 +9,7 @@ import {
   listProjects,
   listProjectsWithHealth,
   getProjectHealth,
+  updateProjectIntegration,
 } from '../services/project.service.js';
 import { getProjectHealthProvenance } from '../services/health-provenance.service.js';
 
@@ -37,6 +38,26 @@ export async function createProjectHandler(request: Request, response: Response)
   try {
     const project = await createProject(request.auth!, request.body ?? {});
     response.status(201).json({ project });
+  } catch (error) {
+    handleProjectError(error, response);
+  }
+}
+
+// PATCH /api/v1/projects/:projectId/integrations — update a connector's config (admin only).
+export async function updateIntegrationHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const projectId = Number(request.params.projectId);
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      response.status(400).json({ message: 'Invalid project id' });
+      return;
+    }
+    const { toolName, config } = request.body ?? {};
+    if (!toolName || typeof toolName !== 'string') {
+      response.status(400).json({ message: 'toolName is required' });
+      return;
+    }
+    const project = await updateProjectIntegration(request.auth!, projectId, toolName, config ?? {});
+    response.status(200).json({ project });
   } catch (error) {
     handleProjectError(error, response);
   }

@@ -174,6 +174,19 @@ export async function getProject(id: number): Promise<ProjectDetail> {
   return project;
 }
 
+// Admin-only: update a connector's config (blank fields keep the current value). Returns the refreshed project.
+export async function updateProjectIntegration(
+  projectId: number,
+  toolName: string,
+  config: Record<string, string>,
+): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/integrations`, {
+    method: "PATCH",
+    body: JSON.stringify({ toolName, config }),
+  });
+  return project;
+}
+
 // ---- Workspaces ----
 
 export interface WorkspaceRepo {

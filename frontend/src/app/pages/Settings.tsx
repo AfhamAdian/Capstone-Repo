@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ShieldCheck, GitBranch, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
+import { getProject, updateProjectIntegration, previewWorkspaceRepos } from "../api";
 
 interface ConnectorField { label:string; key:string; placeholder:string; type?:"text"|"password"; hint?:string; }
 interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; fields:ConnectorField[]; docsUrl:string; }
@@ -36,7 +37,6 @@ const CONNECTORS:ConnectorDef[]=[
     fields:[
       {label:"Personal Access Token",key:"token",placeholder:"ghp_abc123…",type:"password",hint:"Create at github.com → Settings → Developer settings → Personal access tokens. Scopes needed: repo"},
       {label:"Organization / Owner",key:"org",placeholder:"your-org",hint:"Your GitHub organization name or username"},
-      {label:"Repository",key:"repo",placeholder:"my-repo",hint:"Repository name (without the org prefix)"},
     ],
   },
 ];
@@ -106,6 +106,125 @@ function ConnectorCard({def}:{def:ConnectorDef}) {
                   </button>
                 </div>
               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Real GitHub connector — loads the project's current owner/token state and persists updates.
+function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendProjectId:string;}) {
+  const [open,setOpen]=useState(false);
+  const [token,setToken]=useState("");
+  const [org,setOrg]=useState("");
+  const [tokenSet,setTokenSet]=useState(false);
+  const [loading,setLoading]=useState(true);
+  const [saving,setSaving]=useState(false);
+  const [testing,setTesting]=useState(false);
+  const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
+  const [msg,setMsg]=useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    getProject(Number(backendProjectId))
+      .then(p=>{
+        if(cancelled) return;
+        const gh=p.integrations.find(i=>i.category==="vcs" && i.toolName==="github");
+        setOrg((gh?.config?.owner as string) ?? "");
+        setTokenSet(Boolean(gh?.config?.token)); // config is redacted ('***') when a token is set
+      })
+      .catch(()=>{})
+      .finally(()=>{ if(!cancelled) setLoading(false); });
+    return ()=>{cancelled=true;};
+  },[backendProjectId]);
+
+  const configured=tokenSet && org.trim().length>0;
+
+  const save=async()=>{
+    if(!org.trim()){ setStatus("err"); setMsg("Organization / owner is required"); return; }
+    setSaving(true); setStatus("idle"); setMsg("");
+    try{
+      const config:Record<string,string>={owner:org.trim()};
+      if(token.trim()) config.token=token.trim();
+      await updateProjectIntegration(Number(backendProjectId),"github",config);
+      setStatus("ok"); setMsg("Saved"); setToken(""); setTokenSet(true);
+    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Save failed"); }
+    finally{ setSaving(false); }
+  };
+
+  const test=async()=>{
+    if(!token.trim()){ setStatus("err"); setMsg("Enter a token to test the connection"); return; }
+    setTesting(true); setStatus("idle"); setMsg("");
+    try{
+      await previewWorkspaceRepos({vcs:"github",organization:org.trim(),token:token.trim()});
+      setStatus("ok"); setMsg("Connection verified");
+    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Connection failed"); }
+    finally{ setTesting(false); }
+  };
+
+  const inputClass="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors font-mono";
+
+  return (
+    <div className="border border-border bg-card">
+      <button onClick={()=>setOpen(!open)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left">
+        <div className="flex items-center gap-4">
+          <span className={`shrink-0 ${def.color}`}>{def.icon}</span>
+          <div>
+            <div className="text-[15px] font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>{def.name}</div>
+            <div className="text-sm text-muted-foreground mt-0.5">{def.description}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0 ml-4">
+          {configured
+            ? <span className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5"><Check size={13}/>Connected</span>
+            : <span className="text-sm text-muted-foreground">Not configured</span>}
+          <ChevronDown size={15} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
+        </div>
+      </button>
+      <AnimatePresence>
+        {open&&(
+          <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.15}} className="overflow-hidden">
+            <div className="border-t border-border px-5 py-5 space-y-4">
+              {loading?(
+                <p className="text-sm text-muted-foreground">Loading current settings…</p>
+              ):(
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Personal Access Token</label>
+                      <input type="password" value={token} onChange={e=>setToken(e.target.value)}
+                        placeholder={tokenSet?"•••••••• — leave blank to keep":"ghp_abc123…"} className={inputClass}/>
+                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">Create at github.com → Settings → Developer settings → Personal access tokens. Scopes: repo</div>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Organization / Owner</label>
+                      <input value={org} onChange={e=>setOrg(e.target.value)} placeholder="your-org" className={inputClass}/>
+                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">Your GitHub organization name or username</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between pt-2 border-t border-border gap-3 flex-wrap">
+                    <a href={def.docsUrl} target="_blank" rel="noreferrer" className="text-sm text-primary flex items-center gap-1 hover:opacity-75 transition-opacity">
+                      <Link2 size={12}/> View API docs
+                    </a>
+                    <div className="flex items-center gap-3">
+                      {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
+                      {status==="err"&&<span className="text-sm text-red-500 font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
+                      <button onClick={test} disabled={testing||saving}
+                        className="flex items-center gap-2 border border-border px-4 py-2 text-sm font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{fontFamily:"var(--font-display)"}}>
+                        {testing?<><RefreshCw size={13} className="animate-spin"/>Testing…</>:<><Link2 size={13}/>Test Connection</>}
+                      </button>
+                      <button onClick={save} disabled={saving||testing}
+                        className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{fontFamily:"var(--font-display)"}}>
+                        {saving?<><RefreshCw size={13} className="animate-spin"/>Saving…</>:"Save"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </motion.div>
         )}
@@ -214,7 +333,11 @@ export function SettingsView({project}:{project:Project;}) {
               </p>
             </div>
             <div className="space-y-3">
-              {CONNECTORS.map(def=><ConnectorCard key={def.id} def={def}/>)}
+              {CONNECTORS.map(def=>(
+                def.id==="github" && project.backendProjectId
+                  ? <GithubConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId}/>
+                  : <ConnectorCard key={def.id} def={def}/>
+              ))}
             </div>
           </div>
         )}
