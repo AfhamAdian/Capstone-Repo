@@ -10,6 +10,7 @@ CREATE TABLE public.projecthealthscore (
   code_quality_score numeric,
   cicd_score numeric,
   team_health_score numeric,
+  blockers_score numeric,
   overall_score numeric,
   computed_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT projecthealthscore_pkey PRIMARY KEY (id),

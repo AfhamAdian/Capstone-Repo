@@ -1,4 +1,5 @@
 import {
+  getProject,
   startSync,
   subscribeToProgress,
   type SyncCompletionEvent,
@@ -251,7 +252,18 @@ export async function startProjectSync(project: { id: string; backendProjectId?:
   });
 
   try {
-    await startSync(project.backendProjectId, ["github", "jira"], sessionId);
+    // Sync whichever tools are actually configured for this project, not a fixed list -
+    // same pattern as ProjectsView.tsx's handleSync.
+    const detail = await getProject(Number(project.backendProjectId));
+    const tools = detail.integrations.map((i) => i.toolName as SyncTool);
+    if (tools.length === 0) {
+      patchSession(project.id, {
+        status: "failed",
+        statusDetail: "No tools are configured for this project yet.",
+      });
+      return;
+    }
+    await startSync(project.backendProjectId, tools, sessionId);
   } catch (error) {
     patchSession(project.id, {
       status: "failed",

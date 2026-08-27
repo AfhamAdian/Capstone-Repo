@@ -26,12 +26,12 @@ import { findUserByEmail, findUsersByIds } from '../database/user.js';
 import {
   getLatestScoreForProject,
   getLatestScoresForProjects,
+  listScoreHistoryForProject,
   type ProjectRiskScore,
 } from '../database/score.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 import { getWorkspaceById } from '../database/workspace.js';
-import { listProjectHealthScoreHistory, type ProjectHealthScoreRow } from '../database/project-health-score.js';
 import { listProjectOpsMetricsHistory, type SnapshotOpsMetricsRow } from '../database/project-ops-metrics.js';
 
 const log = logger.child({ component: 'project-service' });
@@ -388,15 +388,25 @@ export async function getIntegrationToken(
 }
 
 // ---- Read-only project + health-score dashboard feed ----
-// Maps project + projecthealthscore + snapshot metric tables to the dashboard shape:
-// health scores and the six ops-metric cards. Unscoped (no auth) — see authorization.service.ts.
+// Maps project + riskscore (7 new health scores) + snapshot metric tables to the dashboard
+// shape: health scores and the six ops-metric cards. Unscoped (no auth) — see
+// authorization.service.ts.
+//
+// Deliberately reads riskscore directly (via score.ts), not the survey-blended
+// projecthealthscore table — that blend is currently broken for its metrics-side input
+// (see future-work.md #7) and is left as-is; this dashboard feed doesn't depend on it.
+// `codeQuality` here is the raw security/reliability/maintainability triplet — merging
+// them into a single displayed "Code Quality" score (with the three shown on hover) is a
+// frontend-only presentation choice, not computed here.
 
 export interface HealthSubscores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface HealthSeriesPoint {
@@ -535,7 +545,7 @@ function buildOpsMetrics(rows: SnapshotOpsMetricsRow[]): { metrics: OpsMetrics |
 
 function buildProjectHealth(
   project: ProjectRow,
-  history: ProjectHealthScoreRow[],
+  history: ProjectRiskScore[],
   opsHistory: SnapshotOpsMetricsRow[],
 ): ProjectHealth {
   const latest = history[history.length - 1] ?? null;
@@ -544,35 +554,41 @@ function buildProjectHealth(
   const team = project.owner && project.repo ? `${project.owner}/${project.repo}` : (project.owner ?? '');
 
   const round = (value: number | null | undefined): number => Math.round(value ?? 0);
+  const label = (h: ProjectRiskScore): string => formatLabel(h.snapshotTime ?? '');
+  const date = (h: ProjectRiskScore): string => isoDate(h.snapshotTime ?? '');
 
   const subscores: HealthSubscores | null = latest
     ? {
-        delivery: round(latest.delivery_score),
-        codeQuality: round(latest.code_quality_score),
-        cicd: round(latest.cicd_score),
-        teamHealth: round(latest.team_health_score),
-        blockers: round(latest.blockers_score),
+        security: round(latest.subscores.security),
+        reliability: round(latest.subscores.reliability),
+        maintainability: round(latest.subscores.maintainability),
+        cicdDeploymentHealth: round(latest.subscores.cicdDeploymentHealth),
+        teamHealth: round(latest.subscores.teamHealth),
+        engineeringProcess: round(latest.subscores.engineeringProcess),
+        planningExecution: round(latest.subscores.planningExecution),
       }
     : null;
 
-  const score = latest?.overall_score ?? null;
-  const scoreTrend = latest && previous && latest.overall_score !== null && previous.overall_score !== null
-    ? Math.round((latest.overall_score - previous.overall_score) * 10) / 10
+  const score = latest?.overall ?? null;
+  const scoreTrend = latest && previous && latest.overall !== null && previous.overall !== null
+    ? Math.round((latest.overall - previous.overall) * 10) / 10
     : 0;
 
-  const sparkline = history.map((h) => ({ v: Math.round(h.overall_score ?? 0) }));
+  const sparkline = history.map((h) => ({ v: round(h.overall) }));
   const timeSeries = history.map((h) => ({
-    date: isoDate(h.computed_at),
-    label: formatLabel(h.computed_at),
-    score: Math.round(h.overall_score ?? 0),
+    date: date(h),
+    label: label(h),
+    score: round(h.overall),
   }));
 
   const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]> = {
-    delivery: history.map((h) => ({ v: Math.round(h.delivery_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    codeQuality: history.map((h) => ({ v: Math.round(h.code_quality_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    cicd: history.map((h) => ({ v: Math.round(h.cicd_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    teamHealth: history.map((h) => ({ v: Math.round(h.team_health_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    blockers: history.map((h) => ({ v: Math.round(h.blockers_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    security: history.map((h) => ({ v: round(h.subscores.security), label: label(h), date: date(h) })),
+    reliability: history.map((h) => ({ v: round(h.subscores.reliability), label: label(h), date: date(h) })),
+    maintainability: history.map((h) => ({ v: round(h.subscores.maintainability), label: label(h), date: date(h) })),
+    cicdDeploymentHealth: history.map((h) => ({ v: round(h.subscores.cicdDeploymentHealth), label: label(h), date: date(h) })),
+    teamHealth: history.map((h) => ({ v: round(h.subscores.teamHealth), label: label(h), date: date(h) })),
+    engineeringProcess: history.map((h) => ({ v: round(h.subscores.engineeringProcess), label: label(h), date: date(h) })),
+    planningExecution: history.map((h) => ({ v: round(h.subscores.planningExecution), label: label(h), date: date(h) })),
   };
 
   const ops = buildOpsMetrics(opsHistory);
@@ -594,7 +610,7 @@ function buildProjectHealth(
     metricSeries: ops.metricSeries,
     pendingSurvey: project.pendingSurvey,
     pendingSurveyTrigger: project.pendingSurveyTrigger,
-    lastUpdated: latest?.computed_at ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
+    lastUpdated: latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
     hasData: latest !== null,
     hasMetrics: ops.hasMetrics,
   };
@@ -611,7 +627,7 @@ export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[
   return Promise.all(
     projects.map(async (project) => {
       const [history, opsHistory] = await Promise.all([
-        listProjectHealthScoreHistory(project.id),
+        listScoreHistoryForProject(project.id),
         listProjectOpsMetricsHistory(project.id),
       ]);
       return buildProjectHealth(project, history, opsHistory);
@@ -624,7 +640,7 @@ export async function getProjectHealth(auth: Auth, projectId: number): Promise<P
   // Don't leak other companies' projects — treat cross-company as not found.
   if (!project || project.companyId !== auth.companyId) return null;
   const [history, opsHistory] = await Promise.all([
-    listProjectHealthScoreHistory(projectId),
+    listScoreHistoryForProject(projectId),
     listProjectOpsMetricsHistory(projectId),
   ]);
   return buildProjectHealth(project, history, opsHistory);

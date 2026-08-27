@@ -95,15 +95,15 @@ export type ToolCategory = "vcs" | "projectManagement" | "cicd" | "codeQuality";
 export interface ProjectRiskScore {
   snapshotId: number;
   snapshotTime: string | null;
-  overallRisk: number | null;
+  overall: number | null;
   subscores: {
-    delivery: number | null;
-    codeQuality: number | null;
-    cicd: number | null;
-    engineeringProcess: number | null;
-    teamHealth: number | null;
     security: number | null;
-    blockers: number | null;
+    reliability: number | null;
+    maintainability: number | null;
+    cicdDeploymentHealth: number | null;
+    teamHealth: number | null;
+    engineeringProcess: number | null;
+    planningExecution: number | null;
   };
 }
 
@@ -262,7 +262,7 @@ export async function getMe(): Promise<AuthUser | null> {
   return user;
 }
 
-export type SyncTool = "github" | "jira";
+export type SyncTool = "github" | "jira" | "sonarqube" | "github-actions";
 
 export interface StartSyncResponse {
   message: string;
@@ -290,12 +290,13 @@ export async function startSync(
 }
 
 export type SyncRiskKey =
-  | "DELIVERY"
-  | "CODE_QUALITY"
-  | "ENGINEERING_PROCESS"
-  | "CICD_RELIABILITY"
+  | "SECURITY"
+  | "RELIABILITY"
+  | "MAINTAINABILITY"
+  | "CICD_DEPLOYMENT_HEALTH"
   | "TEAM_HEALTH"
-  | "SECURITY_RISK";
+  | "ENGINEERING_PROCESS"
+  | "PLANNING_EXECUTION";
 
 export interface SyncProgressEvent {
   jobId: string;

@@ -94,10 +94,13 @@ export function AppLayout() {
       if(p.id!==projectId) return p;
       const subscores={...p.subscores};
       if(riskScores){
-        if(typeof riskScores.DELIVERY==="number") subscores.delivery=Math.round(riskScores.DELIVERY);
-        if(typeof riskScores.CODE_QUALITY==="number") subscores.codeQuality=Math.round(riskScores.CODE_QUALITY);
-        if(typeof riskScores.CICD_RELIABILITY==="number") subscores.cicd=Math.round(riskScores.CICD_RELIABILITY);
+        if(typeof riskScores.SECURITY==="number") subscores.security=Math.round(riskScores.SECURITY);
+        if(typeof riskScores.RELIABILITY==="number") subscores.reliability=Math.round(riskScores.RELIABILITY);
+        if(typeof riskScores.MAINTAINABILITY==="number") subscores.maintainability=Math.round(riskScores.MAINTAINABILITY);
+        if(typeof riskScores.CICD_DEPLOYMENT_HEALTH==="number") subscores.cicdDeploymentHealth=Math.round(riskScores.CICD_DEPLOYMENT_HEALTH);
         if(typeof riskScores.TEAM_HEALTH==="number") subscores.teamHealth=Math.round(riskScores.TEAM_HEALTH);
+        if(typeof riskScores.ENGINEERING_PROCESS==="number") subscores.engineeringProcess=Math.round(riskScores.ENGINEERING_PROCESS);
+        if(typeof riskScores.PLANNING_EXECUTION==="number") subscores.planningExecution=Math.round(riskScores.PLANNING_EXECUTION);
       }
       if(typeof riskScore!=="number") return {...p,subscores};
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};

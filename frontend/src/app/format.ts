@@ -3,8 +3,76 @@ import type { SurveyStatus } from "./api-survey";
 import type { Survey } from "./types";
 
 export const SUBSCORE_LABELS: Record<string, string> = {
-  delivery: "Delivery", codeQuality: "Code Quality", cicd: "CI/CD", teamHealth: "Team Health", blockers: "Blockers",
+  codeQuality: "Code Quality",
+  cicdDeploymentHealth: "CI/CD",
+  teamHealth: "Team Health",
+  engineeringProcess: "Engineering Process",
+  planningExecution: "Planning & Execution",
 };
+
+/**
+ * "Code Quality" isn't a score the backend computes - it's a frontend-only display merge of
+ * the 3 code-quality-adjacent scores from the 7-score health engine (Security, Reliability,
+ * Maintainability), so the dashboard can show 5 categories instead of 7. Equal weights for now
+ * (no stated preference among the three); the 3 raw scores stay available for a hover/detail
+ * breakdown - see CodeQualityBreakdown usage in Dashboard.tsx/ProjectsOverview.tsx.
+ */
+export function computeCodeQualityScore(subscores: { security: number; reliability: number; maintainability: number }): number {
+  return Math.round((subscores.security + subscores.reliability + subscores.maintainability) / 3);
+}
+
+export interface DisplaySubscores {
+  codeQuality: number;
+  cicdDeploymentHealth: number;
+  teamHealth: number;
+  engineeringProcess: number;
+  planningExecution: number;
+}
+
+/** The 7 raw scores, collapsed to the 5 categories actually shown on the dashboard. */
+export function toDisplaySubscores(subscores: {
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
+  teamHealth: number;
+  engineeringProcess: number;
+  planningExecution: number;
+}): DisplaySubscores {
+  return {
+    codeQuality: computeCodeQualityScore(subscores),
+    cicdDeploymentHealth: subscores.cicdDeploymentHealth,
+    teamHealth: subscores.teamHealth,
+    engineeringProcess: subscores.engineeringProcess,
+    planningExecution: subscores.planningExecution,
+  };
+}
+
+type SeriesPoint = { v: number; label: string; date?: string };
+
+/**
+ * Merges the security/reliability/maintainability trend series into one "Code Quality"
+ * trend, point-by-point average - all subscore series share the same snapshot-history
+ * index alignment, so this just zips and averages them.
+ */
+export function computeCodeQualitySeries(subscoreSeries: Record<string, SeriesPoint[]>): SeriesPoint[] {
+  const sec = subscoreSeries.security ?? [];
+  const rel = subscoreSeries.reliability ?? [];
+  const main = subscoreSeries.maintainability ?? [];
+  const len = Math.max(sec.length, rel.length, main.length);
+  const out: SeriesPoint[] = [];
+  for (let i = 0; i < len; i++) {
+    const s = sec[i], r = rel[i], m = main[i];
+    const vals = [s?.v, r?.v, m?.v].filter((v): v is number => typeof v === "number");
+    if (vals.length === 0) continue;
+    out.push({
+      v: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+      label: s?.label ?? r?.label ?? m?.label ?? "",
+      date: s?.date ?? r?.date ?? m?.date,
+    });
+  }
+  return out;
+}
 
 export function scoreInt(n: number): number {
   return Math.round(Number.isFinite(n) ? n : 0);

@@ -11,7 +11,7 @@ import { motion, AnimatePresence } from "motion/react";
 import type { SyncRiskKey } from "../api";
 import type { HealthCategoryKey } from "../api-project";
 import type { Project, Action, Survey } from "../types";
-import { scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate } from "../format";
+import { scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, type DisplaySubscores } from "../format";
 import { Ring, Spark, TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
@@ -25,7 +25,18 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
     if(!project.backendProjectId) return;
     setProvenanceFocus(focus);
   };
-  const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(project.subscores[k])}));
+  // "Why this score" provenance is still keyed to the old 5-category survey-blend model
+  // (untouched, see future-work.md #7) - only codeQuality/teamHealth still line up with it.
+  const OPENABLE_CATEGORIES=new Set<keyof DisplaySubscores>(["codeQuality","teamHealth"]);
+  const display=toDisplaySubscores(project.subscores);
+  const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
+    codeQuality: computeCodeQualitySeries(project.subscoreSeries),
+    cicdDeploymentHealth: project.subscoreSeries.cicdDeploymentHealth??[],
+    teamHealth: project.subscoreSeries.teamHealth??[],
+    engineeringProcess: project.subscoreSeries.engineeringProcess??[],
+    planningExecution: project.subscoreSeries.planningExecution??[],
+  };
+  const radarData=(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(display[k])}));
   const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
   const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
@@ -72,15 +83,38 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
             <Spark data={project.sparkline} color={hColor(project.score)} w={210} h={48}/>
             {/* Always-visible breakdown */}
             <div className="mt-5 pt-5 border-t border-border space-y-3">
-              {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>(
-                <button type="button" key={k} onClick={()=>openProvenance(k)} className="flex items-center justify-between w-full text-left hover:bg-muted/40 -mx-1 px-1 py-0.5">
-                  <span className="text-[15px] text-foreground/80">{SUBSCORE_LABELS[k]}</span>
-                  <div className="flex items-center gap-3">
-                    <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${Math.min(100, Math.max(0, scoreInt(project.subscores[k])))}%`,backgroundColor:hColor(project.subscores[k])}}/></div>
-                    <span className={`text-[15px] font-bold tabular-nums w-8 text-right ${hClass(project.subscores[k])}`} style={{fontFamily:"var(--font-mono)"}}>{scoreInt(project.subscores[k])}</span>
+              {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
+                const row=(
+                  <div className="flex items-center justify-between w-full text-left -mx-1 px-1 py-0.5">
+                    <span className="text-[15px] text-foreground/80">{SUBSCORE_LABELS[k]}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${Math.min(100, Math.max(0, scoreInt(display[k])))}%`,backgroundColor:hColor(display[k])}}/></div>
+                      <span className={`text-[15px] font-bold tabular-nums w-8 text-right ${hClass(display[k])}`} style={{fontFamily:"var(--font-mono)"}}>{scoreInt(display[k])}</span>
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+                if(k==="codeQuality"){
+                  return (
+                    <div key={k} className="group relative hover:bg-muted/40">
+                      {row}
+                      <div className="pointer-events-none absolute right-0 top-full z-10 mt-1 hidden w-52 border border-border bg-popover p-3 text-xs shadow-lg group-hover:block">
+                        <div className="mb-1.5 font-semibold text-foreground/80">Code Quality breakdown</div>
+                        {(["security","reliability","maintainability"] as const).map(sub=>(
+                          <div key={sub} className="flex items-center justify-between py-0.5">
+                            <span className="capitalize text-muted-foreground">{sub}</span>
+                            <span className="font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(project.subscores[sub])}}>{scoreInt(project.subscores[sub])}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <button type="button" key={k} disabled={!OPENABLE_CATEGORIES.has(k)} onClick={()=>OPENABLE_CATEGORIES.has(k)&&openProvenance(k as HealthCategoryKey)} className="block w-full hover:bg-muted/40 disabled:cursor-default">
+                    {row}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="bg-card border border-border p-6">
@@ -101,9 +135,9 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
         <div>
           <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
           <div className="grid grid-cols-5 gap-3">
-            {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>{
-              const val = scoreInt(project.subscores[k]);
-              const series = project.subscoreSeries[k] ?? [];
+            {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
+              const val = scoreInt(display[k]);
+              const series = displaySeries[k];
               const strokeColor = hColor(val);
               const gradId = `ss-${project.id}-${k}`;
               const last = scoreInt(series[series.length-1]?.v ?? val);
@@ -112,20 +146,33 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
               const trendGood = delta >= 0; // higher = better for all subscores
               const minV = scoreInt(series.length?Math.min(...series.map(d=>d.v)):val);
               const maxV = scoreInt(series.length?Math.max(...series.map(d=>d.v)):val);
-              const SUBSCORE_ICONS: Record<string, React.ReactNode> = {
-                delivery: <Rocket size={13}/>,
+              const SUBSCORE_ICONS: Record<keyof DisplaySubscores, React.ReactNode> = {
                 codeQuality: <ShieldCheck size={13}/>,
-                cicd: <GitBranch size={13}/>,
+                cicdDeploymentHealth: <GitBranch size={13}/>,
                 teamHealth: <Users size={13}/>,
-                blockers: <AlertTriangle size={13}/>,
+                engineeringProcess: <Rocket size={13}/>,
+                planningExecution: <AlertTriangle size={13}/>,
               };
+              const openable=OPENABLE_CATEGORIES.has(k);
               return (
-                <button type="button" key={k} onClick={()=>openProvenance(k)} className="bg-card border border-border p-4 flex flex-col text-left hover:border-primary/50 transition-colors">
+                <button type="button" key={k} disabled={!openable} onClick={()=>openable&&openProvenance(k as HealthCategoryKey)}
+                  className={`group relative bg-card border border-border p-4 flex flex-col text-left transition-colors disabled:cursor-default ${openable?"hover:border-primary/50":""}`}>
                   {/* label + icon */}
                   <div className="flex items-center gap-1.5 mb-3">
                     <span style={{color:strokeColor}}>{SUBSCORE_ICONS[k]}</span>
                     <span className="text-xs font-semibold text-foreground leading-tight" style={{fontFamily:"var(--font-display)"}}>{SUBSCORE_LABELS[k]}</span>
                   </div>
+                  {k==="codeQuality"&&(
+                    <div className="pointer-events-none absolute left-2 top-full z-10 mt-1 hidden w-52 border border-border bg-popover p-3 text-xs shadow-lg group-hover:block">
+                      <div className="mb-1.5 font-semibold text-foreground/80">Code Quality breakdown</div>
+                      {(["security","reliability","maintainability"] as const).map(sub=>(
+                        <div key={sub} className="flex items-center justify-between py-0.5">
+                          <span className="capitalize text-muted-foreground">{sub}</span>
+                          <span className="font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(project.subscores[sub])}}>{scoreInt(project.subscores[sub])}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {/* big score */}
                   <div className="flex items-baseline gap-1.5 mb-1">
                     <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:strokeColor}}>{val}</span>

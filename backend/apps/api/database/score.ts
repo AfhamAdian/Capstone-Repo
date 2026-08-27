@@ -1,40 +1,42 @@
-// Reads a project's latest risk score (project -> newest projectsnapshot with a riskscore -> riskscore).
+// Reads a project's risk score(s) (project -> projectsnapshot(s) with a riskscore -> riskscore).
+// riskscore holds the 7 new health scores (higher = better) - see
+// backend/libs/risk-engines/scoring-rules/*.md and risk-engines-reference.md.
 
 import { assertSupabaseClient } from '../config/supabase.js';
+
+export interface ProjectRiskSubscores {
+  security: number | null;
+  reliability: number | null;
+  maintainability: number | null;
+  cicdDeploymentHealth: number | null;
+  teamHealth: number | null;
+  engineeringProcess: number | null;
+  planningExecution: number | null;
+}
 
 export interface ProjectRiskScore {
   snapshotId: number;
   snapshotTime: string | null;
-  // Average of the available sub-scores (risk: higher = worse). Null when nothing was computed.
-  overallRisk: number | null;
-  subscores: {
-    delivery: number | null;
-    codeQuality: number | null;
-    cicd: number | null;
-    engineeringProcess: number | null;
-    teamHealth: number | null;
-    security: number | null;
-    blockers: number | null;
-  };
+  // Average of the available sub-scores (health: higher = better). Null when nothing was computed.
+  overall: number | null;
+  subscores: ProjectRiskSubscores;
 }
 
-// riskscore row -> API shape (note the DB column `code_qaulity_score` is misspelled).
+// riskscore row -> API shape.
 function toScore(snapshotId: number, snapshotTime: string | null, row: Record<string, unknown>): ProjectRiskScore {
   const num = (v: unknown): number | null => (typeof v === 'number' ? v : null);
-  const subscores = {
-    delivery: num(row.delivery_score),
-    codeQuality: num(row.code_qaulity_score),
-    cicd: num(row.cicd_reliability_score),
-    engineeringProcess: num(row.engineering_process_score),
+  const subscores: ProjectRiskSubscores = {
+    security: num(row.security_score),
+    reliability: num(row.reliability_score),
+    maintainability: num(row.maintainability_score),
+    cicdDeploymentHealth: num(row.cicd_deployment_health_score),
     teamHealth: num(row.team_health_score),
-    security: num(row.security_risk_score),
-    blockers: num(row.blockers_score),
+    engineeringProcess: num(row.engineering_process_score),
+    planningExecution: num(row.planning_execution_score),
   };
   const present = Object.values(subscores).filter((v): v is number => v !== null);
-  const overallRisk = present.length
-    ? Math.round(present.reduce((a, b) => a + b, 0) / present.length)
-    : null;
-  return { snapshotId, snapshotTime, overallRisk, subscores };
+  const overall = present.length ? Math.round(present.reduce((a, b) => a + b, 0) / present.length) : null;
+  return { snapshotId, snapshotTime, overall, subscores };
 }
 
 // Latest score per project — keyed by projectId. Uses the newest snapshot that actually has a riskscore.
@@ -92,4 +94,46 @@ export async function getLatestScoresForProjects(
 export async function getLatestScoreForProject(projectId: number): Promise<ProjectRiskScore | null> {
   const map = await getLatestScoresForProjects([projectId]);
   return map.get(projectId) ?? null;
+}
+
+/**
+ * Chronological history (oldest first) of a project's risk scores, one entry
+ * per synced snapshot that has a riskscore row - used for the dashboard's
+ * sparkline/timeSeries/subscoreSeries. riskscore has no project_id of its own
+ * (only project_snapshot_id), so this goes through projectsnapshot first, same
+ * two-step pattern as getLatestScoresForProjects.
+ */
+export async function listScoreHistoryForProject(projectId: number, limit = 60): Promise<ProjectRiskScore[]> {
+  const client = assertSupabaseClient();
+
+  const { data: snaps, error: snapErr } = await client
+    .from('projectsnapshot')
+    .select('id, snapshot_time')
+    .eq('project_id', projectId)
+    .order('snapshot_time', { ascending: true })
+    .limit(limit);
+  if (snapErr) {
+    throw new Error(`Failed to load project snapshots for project ${projectId}: ${snapErr.message}`);
+  }
+  if (!snaps || snaps.length === 0) {
+    return [];
+  }
+
+  const snapIds = snaps.map((s) => s.id as number);
+  const { data: risks, error: riskErr } = await client
+    .from('riskscore')
+    .select('*')
+    .in('project_snapshot_id', snapIds);
+  if (riskErr) {
+    throw new Error(`Failed to load risk score history for project ${projectId}: ${riskErr.message}`);
+  }
+
+  const riskBySnapId = new Map<number, Record<string, unknown>>();
+  for (const r of risks ?? []) {
+    riskBySnapId.set(r.project_snapshot_id as number, r as Record<string, unknown>);
+  }
+
+  return snaps
+    .filter((s) => riskBySnapId.has(s.id as number))
+    .map((s) => toScore(s.id as number, s.snapshot_time as string | null, riskBySnapId.get(s.id as number)!));
 }
