@@ -156,13 +156,20 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     vcs,
     workspaceId: project.workspace_id,
     score,
-    integrations: integrations.map((i) => ({
-      category: i.tool_category,
-      toolName: i.tool_name,
-      externalProjectId: i.external_project_id,
-      config: redactConfig(i.config),
-      isActive: i.is_active,
-    })),
+    integrations: integrations.map((i) => {
+      const config = redactConfig(i.config);
+      // A vcs integration with no own token still has one via its workspace PAT — show it as configured.
+      if (i.tool_category === 'vcs' && !config.token && project.workspace_id != null) {
+        config.token = '***';
+      }
+      return {
+        category: i.tool_category,
+        toolName: i.tool_name,
+        externalProjectId: i.external_project_id,
+        config,
+        isActive: i.is_active,
+      };
+    }),
     members: members.map((m) => {
       const user = userById.get(m.user_id);
       return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
