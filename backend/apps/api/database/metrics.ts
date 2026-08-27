@@ -105,29 +105,6 @@ async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetr
   }
 }
 
-async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse): Promise<void> {
-  const client = assertSupabaseClient();
-  const trends = data.metrics.leadTime.trendAcrossSprints;
-
-  if (!trends.length) {
-    return;
-  }
-
-  const rows = trends.map((trend) => ({
-    snapshot_id: snapshotId,
-    sprint_name: trend.sprintName,
-    avg_lead_time_days: trend.avgLeadTimeDays,
-  }));
-
-  const { error } = await client
-    .from('leadtimetrend')
-    .insert(rows);
-
-  if (error) {
-    throw new Error(`Failed to save lead time trend: ${error.message}`);
-  }
-}
-
 async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
   for (let i = 0; i < 3; i++) {
     try {
@@ -214,7 +191,6 @@ async function persistConnectorMetricsImpl(input: {
     }
 
     await insertProjectManagementMetrics(snapshotId, input.data);
-    await insertLeadTimeTrend(snapshotId, input.data);
     return snapshotId;
   }
 
