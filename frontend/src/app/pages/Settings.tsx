@@ -290,6 +290,22 @@ const SONARQUBE_SPEC: RealConnectorSpec = {
   docsUrl: "https://docs.sonarsource.com/sonarcloud/",
 };
 
+// Jira Cloud uses Basic auth (email:token), so email + the tenant URL are both required and can't be
+// derived. boardId is intentionally omitted — the connector degrades to null sprint metrics without it.
+const JIRA_SPEC: RealConnectorSpec = {
+  toolName: "jira",
+  fields: [
+    { key: "baseUrl", label: "Jira URL", placeholder: "https://yourorg.atlassian.net", hint: "Your Atlassian domain URL" },
+    { key: "email", label: "API Email", placeholder: "you@company.com", hint: "The email associated with your Atlassian account" },
+    { key: "projectKey", label: "Project Key", placeholder: "PROJ", hint: "The short key in your Jira board URL (e.g. PROJ for PROJ-123)" },
+  ],
+  tokenLabel: "API Token",
+  tokenHint: "Generate at id.atlassian.com → Security → API tokens",
+  tokenPlaceholder: "ATATT3xFf…",
+  tokenEditable: true,
+  docsUrl: "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/",
+};
+
 export function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
   const {settings,update}=useProjectSurveySettings(project.id);
@@ -393,6 +409,7 @@ export function SettingsView({project}:{project:Project;}) {
               {CONNECTORS.map(def=>{
                 if(project.backendProjectId && def.id==="github") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={GITHUB_SPEC}/>;
                 if(project.backendProjectId && def.id==="sonarqube") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={SONARQUBE_SPEC}/>;
+                if(project.backendProjectId && def.id==="jira") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={JIRA_SPEC}/>;
                 return <ConnectorCard key={def.id} def={def}/>;
               })}
             </div>
