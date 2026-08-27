@@ -114,18 +114,28 @@ function ConnectorCard({def}:{def:ConnectorDef}) {
   );
 }
 
-// Real GitHub connector — loads the project's current owner/token state and persists updates.
-function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendProjectId:string;}) {
+// Describes a real connector: which non-token fields to show and how its token is handled.
+interface RealConnectorSpec {
+  toolName: string;
+  fields: { key: string; label: string; placeholder: string; hint: string }[];
+  tokenLabel: string;
+  tokenHint: string;
+  tokenPlaceholder: string;
+  tokenEditable: boolean; // github: false (workspace PAT); sonarqube: true (stored in config)
+  fixedConfig?: Record<string, string>; // always sent on save, e.g. sonarqube baseUrl
+  docsUrl: string;
+}
+
+// Real connector card — loads the project's current config, reveals the token, and persists updates.
+function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backendProjectId:string;spec:RealConnectorSpec;}) {
   const [open,setOpen]=useState(false);
+  const [values,setValues]=useState<Record<string,string>>(Object.fromEntries(spec.fields.map(f=>[f.key,""])));
   const [token,setToken]=useState("");
-  const [org,setOrg]=useState("");
   const [tokenSet,setTokenSet]=useState(false);
   const [loading,setLoading]=useState(true);
   const [saving,setSaving]=useState(false);
-  const [testing,setTesting]=useState(false);
   const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
   const [msg,setMsg]=useState("");
-  // Reveal the current effective token (separate from the "enter a new token" field).
   const [revealed,setRevealed]=useState(false);
   const [currentToken,setCurrentToken]=useState<string|null>(null);
   const [revealing,setRevealing]=useState(false);
@@ -134,7 +144,7 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
     if(revealed){ setRevealed(false); return; }
     if(currentToken===null){
       setRevealing(true);
-      try{ setCurrentToken(await getIntegrationToken(Number(backendProjectId),"github")); }
+      try{ setCurrentToken(await getIntegrationToken(Number(backendProjectId),spec.toolName)); }
       catch{ setCurrentToken(""); }
       finally{ setRevealing(false); }
     }
@@ -146,37 +156,30 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
     getProject(Number(backendProjectId))
       .then(p=>{
         if(cancelled) return;
-        const gh=p.integrations.find(i=>i.category==="vcs" && i.toolName==="github");
-        setOrg((gh?.config?.owner as string) ?? "");
-        setTokenSet(Boolean(gh?.config?.token)); // config is redacted ('***') when a token is set
+        const integ=p.integrations.find(i=>i.toolName===spec.toolName);
+        const cfg=integ?.config ?? {};
+        setValues(Object.fromEntries(spec.fields.map(f=>[f.key,(cfg[f.key] as string) ?? ""])));
+        setTokenSet(Boolean(cfg.token)); // redacted ('***') when a token is set
       })
       .catch(()=>{})
       .finally(()=>{ if(!cancelled) setLoading(false); });
     return ()=>{cancelled=true;};
-  },[backendProjectId]);
+  },[backendProjectId,spec]);
 
-  const configured=tokenSet && org.trim().length>0;
+  const configured=tokenSet && spec.fields.every(f=>values[f.key]?.trim());
 
   const save=async()=>{
-    if(!org.trim()){ setStatus("err"); setMsg("Organization / owner is required"); return; }
+    for(const f of spec.fields){ if(!values[f.key]?.trim()){ setStatus("err"); setMsg(`${f.label} is required`); return; } }
+    if(spec.tokenEditable && !tokenSet && !token.trim()){ setStatus("err"); setMsg(`${spec.tokenLabel} is required`); return; }
     setSaving(true); setStatus("idle"); setMsg("");
     try{
-      const config:Record<string,string>={owner:org.trim()};
-      if(token.trim()) config.token=token.trim();
-      await updateProjectIntegration(Number(backendProjectId),"github",config);
-      setStatus("ok"); setMsg("Saved"); setToken(""); setTokenSet(true);
+      const config:Record<string,string>={...spec.fixedConfig};
+      for(const f of spec.fields) config[f.key]=values[f.key].trim();
+      if(spec.tokenEditable && token.trim()) config.token=token.trim();
+      await updateProjectIntegration(Number(backendProjectId),spec.toolName,config);
+      setStatus("ok"); setMsg("Saved"); setToken(""); setTokenSet(true); setRevealed(false); setCurrentToken(null);
     }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Save failed"); }
     finally{ setSaving(false); }
-  };
-
-  const test=async()=>{
-    if(!token.trim()){ setStatus("err"); setMsg("Enter a token to test the connection"); return; }
-    setTesting(true); setStatus("idle"); setMsg("");
-    try{
-      await previewWorkspaceRepos({vcs:"github",organization:org.trim(),token:token.trim()});
-      setStatus("ok"); setMsg("Connection verified");
-    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Connection failed"); }
-    finally{ setTesting(false); }
   };
 
   const inputClass="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors font-mono";
@@ -208,13 +211,16 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Personal Access Token</label>
+                      <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>{spec.tokenLabel}</label>
                       <div className="relative">
-                        {revealed ? (
-                          <input readOnly value={currentToken ?? ""} type="text" className={`${inputClass} pr-10`}/>
+                        {spec.tokenEditable ? (
+                          revealed
+                            ? <input readOnly value={currentToken ?? ""} type="text" className={`${inputClass} pr-10`}/>
+                            : <input type="password" value={token} onChange={e=>setToken(e.target.value)}
+                                placeholder={tokenSet?"•••••••• — leave blank to keep":spec.tokenPlaceholder} className={`${inputClass} pr-10`}/>
                         ) : (
-                          <input type="password" value={token} onChange={e=>setToken(e.target.value)}
-                            placeholder={tokenSet?"•••••••• — leave blank to keep":"ghp_abc123…"} className={`${inputClass} pr-10`}/>
+                          <input readOnly type={revealed?"text":"password"} value={revealed?(currentToken ?? ""):""}
+                            placeholder={revealed?"":"•••••••• — managed by the workspace"} className={`${inputClass} pr-10`}/>
                         )}
                         {tokenSet&&(
                           <button type="button" onClick={toggleReveal} disabled={revealing}
@@ -224,18 +230,18 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
                           </button>
                         )}
                       </div>
-                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                        {revealed?"Current token (via workspace unless overridden here). Toggle off to enter a new one.":"Create at github.com → Settings → Developer settings → Personal access tokens. Scopes: repo"}
+                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">{spec.tokenHint}</div>
+                    </div>
+                    {spec.fields.map(f=>(
+                      <div key={f.key}>
+                        <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>{f.label}</label>
+                        <input value={values[f.key]} onChange={e=>setValues(prev=>({...prev,[f.key]:e.target.value}))} placeholder={f.placeholder} className={inputClass}/>
+                        <div className="text-xs text-muted-foreground mt-1 leading-relaxed">{f.hint}</div>
                       </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Organization / Owner</label>
-                      <input value={org} onChange={e=>setOrg(e.target.value)} placeholder="your-org" className={inputClass}/>
-                      <div className="text-xs text-muted-foreground mt-1 leading-relaxed">Your GitHub organization name or username</div>
-                    </div>
+                    ))}
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t border-border gap-3 flex-wrap">
-                    <a href={def.docsUrl} target="_blank" rel="noreferrer" className="text-sm text-primary flex items-center gap-1 hover:opacity-75 transition-opacity">
+                    <a href={spec.docsUrl} target="_blank" rel="noreferrer" className="text-sm text-primary flex items-center gap-1 hover:opacity-75 transition-opacity">
                       <Link2 size={12}/> View API docs
                     </a>
                     <div className="flex items-center gap-3">
@@ -246,7 +252,7 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
                         style={{fontFamily:"var(--font-display)"}}>
                         <Link2 size={13}/>Test Connection
                       </button>
-                      <button onClick={save} disabled={saving||testing}
+                      <button onClick={save} disabled={saving}
                         className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                         style={{fontFamily:"var(--font-display)"}}>
                         {saving?<><RefreshCw size={13} className="animate-spin"/>Saving…</>:"Save"}
@@ -262,6 +268,27 @@ function GithubConnectorCard({def,backendProjectId}:{def:ConnectorDef;backendPro
     </div>
   );
 }
+
+const GITHUB_SPEC: RealConnectorSpec = {
+  toolName: "github",
+  fields: [{ key: "owner", label: "Organization / Owner", placeholder: "your-org", hint: "Your GitHub organization name or username" }],
+  tokenLabel: "Personal Access Token",
+  tokenHint: "Managed by the workspace — the workspace PAT is used to sync this repo.",
+  tokenPlaceholder: "ghp_abc123…",
+  tokenEditable: false,
+  docsUrl: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token",
+};
+
+const SONARQUBE_SPEC: RealConnectorSpec = {
+  toolName: "sonarqube",
+  fields: [{ key: "projectKey", label: "Project Key", placeholder: "my-org_my-project", hint: "Found in SonarQube → Project → Project Information" }],
+  tokenLabel: "Auth Token",
+  tokenHint: "Generate in SonarQube → My Account → Security",
+  tokenPlaceholder: "squ_abc123…",
+  tokenEditable: true,
+  fixedConfig: { baseUrl: "https://sonarcloud.io" },
+  docsUrl: "https://docs.sonarsource.com/sonarcloud/",
+};
 
 export function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
@@ -363,11 +390,11 @@ export function SettingsView({project}:{project:Project;}) {
               </p>
             </div>
             <div className="space-y-3">
-              {CONNECTORS.map(def=>(
-                def.id==="github" && project.backendProjectId
-                  ? <GithubConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId}/>
-                  : <ConnectorCard key={def.id} def={def}/>
-              ))}
+              {CONNECTORS.map(def=>{
+                if(project.backendProjectId && def.id==="github") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={GITHUB_SPEC}/>;
+                if(project.backendProjectId && def.id==="sonarqube") return <RealConnectorCard key={def.id} def={def} backendProjectId={project.backendProjectId} spec={SONARQUBE_SPEC}/>;
+                return <ConnectorCard key={def.id} def={def}/>;
+              })}
             </div>
           </div>
         )}

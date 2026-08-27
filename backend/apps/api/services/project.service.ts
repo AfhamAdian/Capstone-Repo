@@ -56,6 +56,15 @@ const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
 const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
 const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
 
+// Reverse lookup: tool name -> its category.
+const TOOL_CATEGORY: Record<string, ToolCategory> = {};
+for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
+  for (const tool of tools) TOOL_CATEGORY[tool] = category as ToolCategory;
+}
+
+// Tools whose token is stored in projecttoolintegration.config. GitHub/GitLab/CI use the workspace PAT instead.
+const CONFIG_TOKEN_TOOLS = new Set(['jira', 'sonarqube']);
+
 function assertToolInCategory(category: ToolCategory, toolName: string): void {
   if (!CATEGORY_TOOLS[category]?.has(toolName)) {
     throw new ProjectError(`${toolName} is not a valid ${category} tool`, 400);
@@ -341,11 +350,25 @@ export async function updateProjectIntegration(
       patch[key] = value.trim();
     }
   }
+  // GitHub/GitLab/CI tokens live on the workspace, never in config.
+  if (!CONFIG_TOKEN_TOOLS.has(toolName)) {
+    delete patch.token;
+  }
   if (Object.keys(patch).length === 0) {
     throw new ProjectError('Nothing to update', 400);
   }
 
-  await updateIntegrationConfig(projectId, toolName, patch);
+  // Upsert: merge into an existing integration, or create it (e.g. adding SonarQube to a project).
+  const existing = (await listIntegrations(projectId)).find((r) => r.tool_name === toolName);
+  if (existing) {
+    await updateIntegrationConfig(projectId, toolName, patch);
+  } else {
+    const category = TOOL_CATEGORY[toolName];
+    if (!category) throw new ProjectError(`Unknown tool: ${toolName}`, 400);
+    assertConfigForTool(toolName as SupportedTool, patch); // require the fields sync will need
+    const externalProjectId = patch.projectKey ?? (patch.owner && patch.repo ? `${patch.owner}/${patch.repo}` : toolName);
+    await addIntegration({ projectId, category, toolName: toolName as SupportedTool, externalProjectId, config: patch });
+  }
   return getProject(auth, projectId);
 }
 
