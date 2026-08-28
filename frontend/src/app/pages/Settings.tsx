@@ -3,6 +3,7 @@ import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, R
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
+import { useWorkspace } from "../context/WorkspaceContext";
 import { getProject, updateProjectIntegration, getIntegrationToken, inviteProjectMember, removeProjectMember, type ProjectMemberView } from "../api";
 
 // Presentational metadata only — the editable fields/token/docs live in each connector's RealConnectorSpec.
@@ -437,6 +438,8 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
 export function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
   const {settings,update}=useProjectSurveySettings(project.id);
+  const {user}=useWorkspace();
+  const isAdmin=user?.role==="admin"; // connector + member management are admin-only (backend enforces 403)
   const qi=settings.guidance;
   return (
     <div className="flex-1 overflow-y-auto bg-background">
@@ -497,7 +500,9 @@ export function SettingsView({project}:{project:Project;}) {
               </p>
             </div>
             <div className="space-y-3">
-              {project.backendProjectId
+              {!isAdmin
+                ? <p className="text-sm text-muted-foreground border border-border bg-card px-5 py-4">Only admins can view and manage data connectors.</p>
+                : project.backendProjectId
                 ? <>
                     {CONNECTORS.map(def=>{
                       const spec=REAL_SPECS[def.id];
