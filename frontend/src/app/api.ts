@@ -127,7 +127,6 @@ export interface ProjectMemberView {
   userId: number;
   name: string | null;
   email: string | null;
-  role: string;
 }
 
 export interface ProjectDetail extends ProjectListItem {

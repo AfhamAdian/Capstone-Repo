@@ -1,4 +1,4 @@
-// Project membership: which users are assigned to a project (project-level role, defaults to 'member').
+// Project membership: which users are assigned to a project. Everyone is a plain member (no per-member role).
 
 import { assertSupabaseClient } from '../config/supabase.js';
 
@@ -6,16 +6,14 @@ export interface ProjectMemberRecord {
   id: number;
   project_id: number;
   user_id: number;
-  role: string;
   joined_at: string | null;
 }
 
-const MEMBER_COLUMNS = 'id, project_id, user_id, role, joined_at';
+const MEMBER_COLUMNS = 'id, project_id, user_id, joined_at';
 
 export async function addProjectMember(input: {
   projectId: number;
   userId: number;
-  role?: string;
 }): Promise<ProjectMemberRecord> {
   const client = assertSupabaseClient();
 
@@ -25,7 +23,6 @@ export async function addProjectMember(input: {
       {
         project_id: input.projectId,
         user_id: input.userId,
-        role: input.role ?? 'member',
         joined_at: new Date().toISOString(),
       },
     ])

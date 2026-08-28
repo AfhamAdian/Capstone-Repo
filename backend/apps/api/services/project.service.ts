@@ -132,7 +132,7 @@ export interface ProjectDetail extends ProjectListItem {
     toolName: SupportedTool;
     config: Record<string, unknown>;
   }>;
-  members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
+  members: Array<{ userId: number; name: string | null; email: string | null }>;
 }
 
 // Mask secret values so tokens never leave the server.
@@ -178,7 +178,7 @@ async function toDetail(project: ProjectRecord): Promise<ProjectDetail> {
     }),
     members: members.map((m) => {
       const user = userById.get(m.user_id);
-      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
+      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null };
     }),
   };
 }
