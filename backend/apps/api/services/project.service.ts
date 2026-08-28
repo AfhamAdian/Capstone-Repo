@@ -4,8 +4,6 @@
 import type { SessionData } from '@libs/auth/session-store.js';
 import type { SupportedTool, ToolCategory } from '@libs/sync/types.js';
 import {
-  createProject as dbCreateProject,
-  deleteProject,
   getProjectById,
   isProjectMember,
   listProjectsByCompany,
@@ -21,7 +19,7 @@ import {
   listIntegrationsForProjects,
   updateIntegrationConfig,
 } from '../database/project-tool-integration.js';
-import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
+import { deleteProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
 import {
   getLatestScoreForProject,
@@ -53,9 +51,6 @@ const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
   cicd: new Set(['jenkins', 'circleci', 'travisci', 'github-actions']),
   codeQuality: new Set(['sonarqube', 'codeclimate', 'codacy']),
 };
-const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
-const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
-
 // Reverse lookup: tool name -> its category.
 const TOOL_CATEGORY: Record<string, ToolCategory> = {};
 for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
@@ -65,11 +60,6 @@ for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
 // Tools whose token is stored in projecttoolintegration.config. GitHub/GitLab/CI use the workspace PAT instead.
 const CONFIG_TOKEN_TOOLS = new Set(['jira', 'sonarqube']);
 
-function assertToolInCategory(category: ToolCategory, toolName: string): void {
-  if (!CATEGORY_TOOLS[category]?.has(toolName)) {
-    throw new ProjectError(`${toolName} is not a valid ${category} tool`, 400);
-  }
-}
 // Substrings that mark a config key as secret (matches accessToken, clientSecret, apiKey, …).
 const SECRET_KEY_PATTERNS = ['token', 'secret', 'password', 'passwd', 'apikey'];
 
@@ -103,20 +93,6 @@ function assertConfigForTool(toolName: SupportedTool, config: Record<string, unk
   }
 }
 
-interface IntegrationInput {
-  category: ToolCategory;
-  toolName: SupportedTool;
-  config: Record<string, unknown>;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  vcs: { toolName: string; config?: Record<string, unknown> };
-  integrations?: IntegrationInput[];
-  invites?: string[];
-}
-
 export interface ProjectListItem {
   id: number;
   name: string;
@@ -133,8 +109,7 @@ export interface ProjectDetail extends ProjectListItem {
     toolName: SupportedTool;
     config: Record<string, unknown>;
   }>;
-  members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
-  pendingInvites?: string[];
+  members: Array<{ userId: number; name: string | null; email: string | null }>;
 }
 
 // Mask secret values so tokens never leave the server.
@@ -146,7 +121,7 @@ function redactConfig(config: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
-async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Promise<ProjectDetail> {
+async function toDetail(project: ProjectRecord): Promise<ProjectDetail> {
   const [integrations, members, score] = await Promise.all([
     listIntegrations(project.id),
     listProjectMembers(project.id),
@@ -154,7 +129,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
   ]);
   const vcs = integrations.find((i) => i.tool_category === 'vcs')?.tool_name ?? null;
 
-  // Enrich members with name/email so they read like the pending-invite emails, not bare ids.
+  // Enrich members with name/email so they read as people, not bare ids.
   const users = await findUsersByIds(members.map((m) => m.user_id));
   const userById = new Map(users.map((u) => [u.id, u]));
 
@@ -180,9 +155,8 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     }),
     members: members.map((m) => {
       const user = userById.get(m.user_id);
-      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
+      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null };
     }),
-    ...(pendingInvites ? { pendingInvites } : {}),
   };
 }
 
@@ -216,95 +190,8 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
 }
 
-// M2.2 — admin creates a project with its vcs (workspace), optional other tools, and member invites.
-export async function createProject(auth: Auth, input: CreateProjectInput): Promise<ProjectDetail> {
-  if (auth.role !== 'admin') {
-    throw new ProjectError('Only admins can create projects', 403);
-  }
-  if (!input.name?.trim()) {
-    throw new ProjectError('Project name is required', 400);
-  }
-  if (!input.vcs?.toolName || !VCS_PROVIDERS.has(input.vcs.toolName)) {
-    throw new ProjectError('A valid version control tool (github, gitlab, bitbucket) is required', 400);
-  }
-  assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
-
-  // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
-  for (const integration of input.integrations ?? []) {
-    if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
-      throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
-    }
-    if (!integration.toolName) {
-      throw new ProjectError('Each integration needs a toolName', 400);
-    }
-    assertToolInCategory(integration.category, integration.toolName);
-    assertConfigForTool(integration.toolName, integration.config ?? {});
-  }
-
-  const project = await dbCreateProject({
-    companyId: auth.companyId,
-    name: input.name,
-    description: input.description ?? null,
-  });
-
-  const pendingInvites: string[] = [];
-
-  try {
-    // Version control — the workspace; always exactly one.
-    await addIntegration({
-      projectId: project.id,
-      category: 'vcs',
-      toolName: input.vcs.toolName as SupportedTool,
-      config: input.vcs.config ?? {},
-    });
-
-    // Other-category tools — optional (already validated above).
-    for (const integration of input.integrations ?? []) {
-      await addIntegration({
-        projectId: project.id,
-        category: integration.category,
-        toolName: integration.toolName,
-        config: integration.config ?? {},
-      });
-    }
-
-    // Invites: assign existing company members now; unknown emails get an email invite below.
-    // Dedupe emails and track added users so a repeated invitee can't hit the unique constraint.
-    const seenEmails = new Set<string>();
-    const addedUserIds = new Set<number>();
-    for (const rawEmail of input.invites ?? []) {
-      const email = rawEmail?.trim().toLowerCase();
-      if (!email || seenEmails.has(email)) continue;
-      seenEmails.add(email);
-      const user = await findUserByEmail(email);
-      if (user && user.company_id === auth.companyId) {
-        if (!addedUserIds.has(user.id)) {
-          await addProjectMember({ projectId: project.id, userId: user.id });
-          addedUserIds.add(user.id);
-        }
-      } else {
-        pendingInvites.push(email);
-      }
-    }
-  } catch (error) {
-    await deleteProject(project.id);
-    log.error({ err: error, projectId: project.id }, 'project creation failed, rolled back');
-    throw error;
-  }
-
-  // Project committed — email the unknown invitees a registration link (best-effort).
-  if (pendingInvites.length > 0) {
-    await sendProjectInvites({
-      companyId: auth.companyId,
-      projectId: project.id,
-      projectName: project.name,
-      emails: pendingInvites,
-    });
-  }
-
-  log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
-  return toDetail(project, pendingInvites);
-}
+// Projects are created by importing repos into a workspace — see workspace.service.ts
+// (listWorkspaceRepos / addWorkspaceProjects). There is no standalone project-create endpoint.
 
 // M2.3 — project detail, authorized (company match; non-admins must be assigned).
 export async function getProject(auth: Auth, projectId: number): Promise<ProjectDetail> {
@@ -318,6 +205,67 @@ export async function getProject(auth: Auth, projectId: number): Promise<Project
   if (auth.role !== 'admin' && !(await isProjectMember(auth.userId, String(projectId)))) {
     throw new ProjectError('You are not assigned to this project', 403);
   }
+  return toDetail(project);
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Admin-only: invite someone (by email) to an existing project. Always emails a single-use invite
+// link — the invitee joins by accepting it (new users register, existing users log in and accept).
+// Returns the refreshed project detail.
+export async function inviteMemberToProject(
+  auth: Auth,
+  projectId: number,
+  email: string,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can invite members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail || !EMAIL_RE.test(normalizedEmail)) {
+    throw new ProjectError('A valid email address is required', 400);
+  }
+
+  // Reject if that email already belongs to an assigned member of this project.
+  const existingUser = await findUserByEmail(normalizedEmail);
+  if (existingUser) {
+    const members = await listProjectMembers(projectId);
+    if (members.some((m) => m.user_id === existingUser.id)) {
+      throw new ProjectError('That person is already a member of this project', 409);
+    }
+  }
+
+  await sendProjectInvites({
+    companyId: auth.companyId,
+    projectId,
+    projectName: project.name,
+    invites: [{ email: normalizedEmail }],
+  });
+
+  log.info({ projectId, email: normalizedEmail }, 'project member invited');
+  return toDetail(project);
+}
+
+// Admin-only: remove an assigned member from a project.
+export async function removeMemberFromProject(
+  auth: Auth,
+  projectId: number,
+  userId: number,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can remove members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  await deleteProjectMember(projectId, userId);
+  log.info({ projectId, userId }, 'project member removed');
   return toDetail(project);
 }
 
@@ -554,11 +502,13 @@ function buildProjectHealth(
   project: ProjectRow,
   history: ProjectRiskScore[],
   opsHistory: SnapshotOpsMetricsRow[],
+  vcs: { owner: string | null; repo: string | null },
 ): ProjectHealth {
   const latest = history[history.length - 1] ?? null;
   const previous = history.length > 1 ? history[history.length - 2] : null;
 
-  const team = project.owner && project.repo ? `${project.owner}/${project.repo}` : (project.owner ?? '');
+  // owner/repo come from the vcs integration config (the project row's own columns are legacy/unused).
+  const team = vcs.owner && vcs.repo ? `${vcs.owner}/${vcs.repo}` : (vcs.owner ?? '');
 
   const round = (value: number | null | undefined): number => Math.round(value ?? 0);
   const label = (h: ProjectRiskScore): string => formatLabel(h.snapshotTime ?? '');
@@ -603,8 +553,8 @@ function buildProjectHealth(
   return {
     id: project.id,
     name: project.name,
-    owner: project.owner,
-    repo: project.repo,
+    owner: vcs.owner,
+    repo: vcs.repo,
     team,
     description: project.description ?? '',
     score: score !== null ? Math.round(score) : null,
@@ -623,6 +573,16 @@ function buildProjectHealth(
   };
 }
 
+// owner/repo for the dashboard come from the project's vcs integration config (project.owner/repo are legacy).
+async function getVcsOwnerRepo(projectId: number): Promise<{ owner: string | null; repo: string | null }> {
+  const integrations = await listIntegrations(projectId);
+  const cfg = (integrations.find((i) => i.tool_category === 'vcs')?.config ?? {}) as Record<string, unknown>;
+  return {
+    owner: typeof cfg.owner === 'string' ? cfg.owner : null,
+    repo: typeof cfg.repo === 'string' ? cfg.repo : null,
+  };
+}
+
 export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[]> {
   // Company-scoped feed; members are further narrowed to projects they belong to (mirrors listProjects).
   const allowed =
@@ -633,11 +593,12 @@ export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[
   const projects = (await dbListAllProjects(auth.companyId)).filter((p) => allowedIds.has(p.id));
   return Promise.all(
     projects.map(async (project) => {
-      const [history, opsHistory] = await Promise.all([
+      const [history, opsHistory, vcs] = await Promise.all([
         listScoreHistoryForProject(project.id),
         listProjectOpsMetricsHistory(project.id),
+        getVcsOwnerRepo(project.id),
       ]);
-      return buildProjectHealth(project, history, opsHistory);
+      return buildProjectHealth(project, history, opsHistory, vcs);
     }),
   );
 }
@@ -646,9 +607,10 @@ export async function getProjectHealth(auth: Auth, projectId: number): Promise<P
   const project = await dbGetProjectRow(projectId);
   // Don't leak other companies' projects — treat cross-company as not found.
   if (!project || project.companyId !== auth.companyId) return null;
-  const [history, opsHistory] = await Promise.all([
+  const [history, opsHistory, vcs] = await Promise.all([
     listScoreHistoryForProject(projectId),
     listProjectOpsMetricsHistory(projectId),
+    getVcsOwnerRepo(projectId),
   ]);
-  return buildProjectHealth(project, history, opsHistory);
+  return buildProjectHealth(project, history, opsHistory, vcs);
 }

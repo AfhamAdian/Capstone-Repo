@@ -3,6 +3,15 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
 
 // credentials:"include" makes the browser send/receive the session cookie.
+// Carries the HTTP status so callers can branch on it (e.g. 409 = account already exists) without
+// matching on the error message text.
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
@@ -11,7 +20,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
   });
   const data = (await response.json().catch(() => ({}))) as { message?: string } & T;
   if (!response.ok) {
-    throw new Error(data.message || `Request failed (${response.status})`);
+    throw new ApiError(data.message || `Request failed (${response.status})`, response.status);
   }
   return data;
 }
@@ -127,27 +136,11 @@ export interface ProjectMemberView {
   userId: number;
   name: string | null;
   email: string | null;
-  role: string;
 }
 
 export interface ProjectDetail extends ProjectListItem {
   integrations: ToolIntegrationView[];
   members: ProjectMemberView[];
-  pendingInvites?: string[];
-}
-
-export interface IntegrationInput {
-  category: ToolCategory;
-  toolName: string;
-  config: Record<string, string>;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  vcs: { toolName: string; config: Record<string, string> };
-  integrations?: IntegrationInput[];
-  invites?: string[];
 }
 
 // Company projects, optionally filtered by version-control tool (the "workspace").
@@ -155,15 +148,6 @@ export async function listProjects(vcs?: string): Promise<ProjectListItem[]> {
   const query = vcs ? `?vcs=${encodeURIComponent(vcs)}` : "";
   const { projects } = await apiRequest<{ projects: ProjectListItem[] }>(`/projects${query}`);
   return projects;
-}
-
-// Admin-only; returns the full project (integrations + members + which invites were emailed).
-export async function createProject(input: CreateProjectInput): Promise<ProjectDetail> {
-  const { project } = await apiRequest<{ project: ProjectDetail }>("/projects", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return project;
 }
 
 export async function getProject(id: number): Promise<ProjectDetail> {
@@ -210,6 +194,28 @@ export interface WorkspaceView {
   createdAt: string | null;
 }
 
+// A repo reachable by a workspace's PAT, plus whether it's already tracked as a project here.
+export interface WorkspaceRepoStatus extends WorkspaceRepo {
+  imported: boolean;
+}
+
+// "Add Project": repos this workspace's stored PAT can reach, flagging already-imported ones (admin only).
+export async function listWorkspaceRepos(workspaceId: string | number): Promise<WorkspaceRepoStatus[]> {
+  const { repos } = await apiRequest<{ repos: WorkspaceRepoStatus[] }>(`/workspaces/${workspaceId}/repos`);
+  return repos;
+}
+
+// Import the selected repos as projects under an existing workspace (admin only).
+export async function addWorkspaceProjects(
+  workspaceId: string | number,
+  repos: string[],
+): Promise<{ projects: Array<{ id: number; name: string }> }> {
+  return apiRequest<{ projects: Array<{ id: number; name: string }> }>(`/workspaces/${workspaceId}/projects`, {
+    method: "POST",
+    body: JSON.stringify({ repos }),
+  });
+}
+
 // Step 2 of the wizard: validate the PAT and list the repos it can access (nothing is saved).
 export async function previewWorkspaceRepos(input: {
   vcs: string;
@@ -242,6 +248,7 @@ export async function listWorkspaces(): Promise<WorkspaceView[]> {
 export interface InvitePreview {
   email: string;
   projectId: number;
+  hasAccount: boolean; // true → the invited email already has an account; client routes them to login
 }
 
 // Resolves an invite token for prefilling the registration form; null when not found/expired.
@@ -251,6 +258,31 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
   if (!response.ok) throw new Error(`Failed to load invite (${response.status})`);
   const { invite } = (await response.json()) as { invite: InvitePreview };
   return invite;
+}
+
+// Logged-in user accepts a project invite (the existing-account path). Returns the joined project id.
+export async function acceptInvite(token: string): Promise<{ projectId: number }> {
+  return apiRequest<{ projectId: number }>("/auth/accept-invite", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+// Admin-only: email a project invite to someone. Returns the refreshed project.
+export async function inviteProjectMember(projectId: number, email: string): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/invites`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  return project;
+}
+
+// Admin-only: remove an assigned member from a project. Returns the refreshed project.
+export async function removeProjectMember(projectId: number, userId: number): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/members/${userId}`, {
+    method: "DELETE",
+  });
+  return project;
 }
 
 // Returns null when not authenticated (401), instead of throwing.

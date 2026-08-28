@@ -243,7 +243,7 @@ export function PortfolioEntry() {
       onViewSurveys={()=>navigate(paths.globalSurveys)}
       onRatingOpen={onRatingOpen}
       trackedIds={trackedIds} onToggleTracked={toggleTracked}
-      onAddProject={()=>navigate(paths.addProject)} isAdmin={isAdmin}
+      onAddProject={()=>navigate(paths.addProject(wsId))} isAdmin={isAdmin}
       workspaceName={workspaceName} onBackToWorkspaces={()=>navigate(paths.workspaces)}
       onSyncComplete={onSyncComplete}
     />

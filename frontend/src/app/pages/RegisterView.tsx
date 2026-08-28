@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { getInvite, sendVerificationCode, verifyEmailCode } from "../api";
+import { getInvite, sendVerificationCode, verifyEmailCode, ApiError } from "../api";
 
 export function RegisterView({
   onSuccess,
@@ -24,13 +24,15 @@ export function RegisterView({
   const [step, setStep] = useState<"form" | "verify">("form");
   const [code, setCode] = useState("");
 
-  // For an invite, prefill and lock the email from the token.
+  // For an invite: send an existing account straight to login (they accept after signing in);
+  // otherwise prefill and lock the email so a new user just sets name + password.
   useEffect(() => {
     if (!inviteToken) return;
     getInvite(inviteToken)
       .then((invite) => {
-        if (invite) setEmail(invite.email);
-        else setErrors({ form: "This invitation is invalid or has expired." });
+        if (!invite) { setErrors({ form: "This invitation is invalid or has expired." }); return; }
+        if (invite.hasAccount) { onNavigateToLogin?.(); return; }
+        setEmail(invite.email);
       })
       .catch(() => setErrors({ form: "Could not load the invitation." }));
   }, [inviteToken]);
@@ -67,6 +69,11 @@ export function RegisterView({
         setStep("verify");
       }
     } catch (err) {
+      // Invited email already has an account (409) — send them to log in and accept (token preserved).
+      if (isInvite && err instanceof ApiError && err.status === 409) {
+        onNavigateToLogin?.();
+        return;
+      }
       setErrors({ form: err instanceof Error ? err.message : "Registration failed" });
     } finally {
       setIsLoading(false);

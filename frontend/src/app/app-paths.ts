@@ -10,7 +10,7 @@ export const paths = {
   workspacePortfolio: (workspaceId: string | number) => `/workspaces/${encodeURIComponent(String(workspaceId))}`,
   portfolio: "/",
   projectsAdmin: "/projects",
-  addProject: "/projects/new",
+  addProject: (workspaceId: string | number) => `/workspaces/${encodeURIComponent(String(workspaceId))}/projects/new`,
   globalActions: "/actions",
   globalSurveys: "/surveys",
   publicSurvey: (token: string) => `/survey/${encodeURIComponent(token)}`,

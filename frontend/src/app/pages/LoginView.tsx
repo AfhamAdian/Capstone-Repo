@@ -1,21 +1,33 @@
-import { useState } from "react";
-import { Activity, AlertCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Activity, AlertCircle, Mail } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { acceptInvite, getInvite } from "../api";
 
 export function LoginView({
   onSuccess,
   onNavigateToRegister,
   onNavigateToForgot,
+  inviteToken,
 }: {
   onSuccess: () => void;
   onNavigateToRegister?: () => void;
   onNavigateToForgot?: () => void;
+  inviteToken?: string;
 }) {
   const { login } = useWorkspace();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const isInvite = Boolean(inviteToken);
+
+  // Arriving via an invite link: prefill and lock the invited email so the user only types a password.
+  useEffect(() => {
+    if (!inviteToken) return;
+    getInvite(inviteToken)
+      .then((invite) => { if (invite) setEmail(invite.email); })
+      .catch(() => {});
+  }, [inviteToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +46,9 @@ export function LoginView({
     setErrors({});
     try {
       await login(email, password);
+      // Existing-account invite path: consume the token now that we're authenticated. Best-effort —
+      // a mismatched/expired invite shouldn't block sign-in.
+      if (inviteToken) await acceptInvite(inviteToken).catch(() => {});
       onSuccess();
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : "Sign in failed" });
@@ -55,6 +70,13 @@ export function LoginView({
           <p className="text-sm text-muted-foreground text-center">Sign in to access your dashboard and insights</p>
         </div>
 
+        {inviteToken && (
+          <div className="mb-5 flex items-start gap-2 border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-foreground">
+            <Mail size={15} className="mt-0.5 text-primary shrink-0"/>
+            <span>You've been invited to a project. Log in and you'll be added automatically.</span>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="block text-sm font-semibold text-foreground mb-1.5" style={{ fontFamily: "var(--font-display)" }}>
@@ -65,13 +87,14 @@ export function LoginView({
               type="email"
               placeholder="you@company.com"
               value={email}
+              readOnly={isInvite}
               onChange={(e) => {
                 setEmail(e.target.value);
                 if (errors.email) setErrors({ ...errors, email: "" });
               }}
               className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
                 errors.email ? "border-red-500" : "border-border"
-              }`}
+              }${isInvite ? " opacity-60 cursor-not-allowed" : ""}`}
             />
             {errors.email && (
               <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">

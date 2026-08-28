@@ -105,7 +105,7 @@ export async function sendProjectInviteEmail(
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
         <h2>You've been invited${projectName ? ` to <b>${projectName}</b>` : ''}</h2>
-        <p>Create your account to join the project. This invitation expires in 7 days.</p>
+        <p>Create your account (or log in) to join the project. This invitation expires in 7 days.</p>
         <p><a href="${inviteUrl}" style="display:inline-block; background:#111; color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px;">Accept invitation</a></p>
         <p>If you weren't expecting this, you can safely ignore this email.</p>
       </div>

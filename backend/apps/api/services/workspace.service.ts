@@ -9,11 +9,16 @@ import { listAccessibleRepos, VcsError, type RepoSummary } from '@libs/connector
 import {
   createWorkspace as dbCreateWorkspace,
   deleteWorkspace as dbDeleteWorkspace,
+  getWorkspaceById,
   listWorkspacesByCompany,
   type WorkspaceRecord,
 } from '../database/workspace.js';
-import { createProject as dbCreateProject, deleteProject as dbDeleteProject } from '../database/project.js';
-import { addIntegration } from '../database/project-tool-integration.js';
+import {
+  createProject as dbCreateProject,
+  deleteProject as dbDeleteProject,
+  listProjectsByCompany,
+} from '../database/project.js';
+import { addIntegration, listIntegrations } from '../database/project-tool-integration.js';
 import { logger } from '@libs/logger.js';
 
 const log = logger.child({ component: 'workspace-service' });
@@ -148,4 +153,101 @@ export async function createWorkspace(
 export async function listWorkspaces(auth: Auth): Promise<WorkspaceView[]> {
   const rows = await listWorkspacesByCompany(auth.companyId);
   return rows.map(toView);
+}
+
+// The repo names already imported as projects under this workspace (from each project's vcs config).
+async function importedRepoNames(companyId: number, workspaceId: number): Promise<Set<string>> {
+  const projects = (await listProjectsByCompany(companyId)).filter((p) => p.workspace_id === workspaceId);
+  const names = new Set<string>();
+  for (const project of projects) {
+    const integrations = await listIntegrations(project.id);
+    const repo = (integrations.find((i) => i.tool_category === 'vcs')?.config as Record<string, unknown>)?.repo;
+    if (typeof repo === 'string') names.add(repo);
+  }
+  return names;
+}
+
+// Load, verify and return the workspace, admin-only and company-scoped. Shared by the two calls below.
+async function requireOwnedWorkspace(auth: Auth, workspaceId: number): Promise<WorkspaceRecord> {
+  if (auth.role !== 'admin') {
+    throw new WorkspaceError('Only admins can add projects', 403);
+  }
+  const workspace = await getWorkspaceById(workspaceId);
+  if (!workspace || workspace.company_id !== auth.companyId) {
+    throw new WorkspaceError('Workspace not found', 404);
+  }
+  return workspace;
+}
+
+export type WorkspaceRepoView = RepoSummary & { imported: boolean };
+
+// "Add Project": list the repos this workspace's stored PAT can reach, flagging the ones already imported.
+export async function listWorkspaceRepos(auth: Auth, workspaceId: number): Promise<WorkspaceRepoView[]> {
+  const workspace = await requireOwnedWorkspace(auth, workspaceId);
+  let repos: RepoSummary[];
+  try {
+    repos = await listAccessibleRepos(workspace.vcs_provider, workspace.organization, workspace.access_token);
+  } catch (error) {
+    if (error instanceof VcsError) throw new WorkspaceError(error.message, error.status);
+    throw error;
+  }
+  const imported = await importedRepoNames(auth.companyId, workspaceId);
+  return repos.map((r) => ({ ...r, imported: imported.has(r.name) }));
+}
+
+// Import the newly-selected repos as projects under an existing workspace (already-imported ones are skipped).
+export async function addWorkspaceProjects(
+  auth: Auth,
+  workspaceId: number,
+  repoNames: string[],
+): Promise<{ projects: Array<{ id: number; name: string }> }> {
+  const workspace = await requireOwnedWorkspace(auth, workspaceId);
+  if (!Array.isArray(repoNames) || repoNames.length === 0) {
+    throw new WorkspaceError('Select at least one repository to add', 400);
+  }
+
+  let accessible: RepoSummary[];
+  try {
+    accessible = await listAccessibleRepos(workspace.vcs_provider, workspace.organization, workspace.access_token);
+  } catch (error) {
+    if (error instanceof VcsError) throw new WorkspaceError(error.message, error.status);
+    throw error;
+  }
+  const byName = new Map(accessible.map((r) => [r.name, r]));
+  const already = await importedRepoNames(auth.companyId, workspaceId);
+  // Only reachable repos that aren't already tracked.
+  const selected = [...new Set(repoNames)].filter((name) => byName.has(name) && !already.has(name));
+  if (selected.length === 0) {
+    throw new WorkspaceError('No new repositories to add', 400);
+  }
+
+  const createdProjectIds: number[] = [];
+  try {
+    const projects: Array<{ id: number; name: string }> = [];
+    for (const repoName of selected) {
+      const repo = byName.get(repoName)!;
+      const project = await dbCreateProject({
+        companyId: auth.companyId,
+        name: repoName,
+        description: repo.description,
+        workspaceId,
+      });
+      createdProjectIds.push(project.id);
+      await addIntegration({
+        projectId: project.id,
+        category: 'vcs',
+        toolName: workspace.vcs_provider as SupportedTool,
+        config: { owner: workspace.organization, repo: repoName },
+      });
+      projects.push({ id: project.id, name: repoName });
+    }
+    log.info({ workspaceId, companyId: auth.companyId, added: projects.length }, 'projects added to workspace');
+    return { projects };
+  } catch (error) {
+    for (const id of createdProjectIds) {
+      await dbDeleteProject(id).catch(() => {});
+    }
+    log.error({ err: error, workspaceId }, 'add-projects failed, rolled back');
+    throw error;
+  }
 }

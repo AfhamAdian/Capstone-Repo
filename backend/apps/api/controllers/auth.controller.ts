@@ -4,6 +4,7 @@ import type { CookieOptions, Request, Response } from 'express';
 import { sessionStore } from '@libs/auth/session-store.js';
 import {
   AuthError,
+  acceptProjectInvite,
   forgotPassword,
   getCurrentUser,
   getInvite,
@@ -110,6 +111,25 @@ export async function getInviteHandler(request: Request, response: Response): Pr
     return;
   }
   response.status(200).json({ invite });
+}
+
+// POST /api/v1/auth/accept-invite — logged-in user accepts a project invite (existing-account path).
+export async function acceptInviteHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { token } = request.body ?? {};
+    if (!token || typeof token !== 'string') {
+      response.status(400).json({ message: 'Invite token is required' });
+      return;
+    }
+    const auth = request.auth!;
+    const result = await acceptProjectInvite(
+      { userId: auth.userId, companyId: auth.companyId, email: auth.email },
+      token,
+    );
+    response.status(200).json(result);
+  } catch (error) {
+    handleAuthError(error, response);
+  }
 }
 
 // POST /api/v1/auth/forgot-password — always 200 to avoid revealing whether the email is registered.
