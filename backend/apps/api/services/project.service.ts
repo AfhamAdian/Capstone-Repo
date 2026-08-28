@@ -21,7 +21,7 @@ import {
   listIntegrationsForProjects,
   updateIntegrationConfig,
 } from '../database/project-tool-integration.js';
-import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
+import { deleteProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
 import {
   getLatestScoreForProject,
@@ -114,7 +114,6 @@ export interface CreateProjectInput {
   description?: string;
   vcs: { toolName: string; config?: Record<string, unknown> };
   integrations?: IntegrationInput[];
-  invites?: string[];
 }
 
 export interface ProjectListItem {
@@ -134,7 +133,6 @@ export interface ProjectDetail extends ProjectListItem {
     config: Record<string, unknown>;
   }>;
   members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
-  pendingInvites?: string[];
 }
 
 // Mask secret values so tokens never leave the server.
@@ -146,7 +144,7 @@ function redactConfig(config: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
-async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Promise<ProjectDetail> {
+async function toDetail(project: ProjectRecord): Promise<ProjectDetail> {
   const [integrations, members, score] = await Promise.all([
     listIntegrations(project.id),
     listProjectMembers(project.id),
@@ -154,7 +152,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
   ]);
   const vcs = integrations.find((i) => i.tool_category === 'vcs')?.tool_name ?? null;
 
-  // Enrich members with name/email so they read like the pending-invite emails, not bare ids.
+  // Enrich members with name/email so they read as people, not bare ids.
   const users = await findUsersByIds(members.map((m) => m.user_id));
   const userById = new Map(users.map((u) => [u.id, u]));
 
@@ -182,7 +180,6 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
       const user = userById.get(m.user_id);
       return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
     }),
-    ...(pendingInvites ? { pendingInvites } : {}),
   };
 }
 
@@ -216,7 +213,8 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
 }
 
-// M2.2 — admin creates a project with its vcs (workspace), optional other tools, and member invites.
+// M2.2 — admin creates a project with its vcs (workspace) and optional other tools. Members are
+// invited afterward from Settings → Team.
 export async function createProject(auth: Auth, input: CreateProjectInput): Promise<ProjectDetail> {
   if (auth.role !== 'admin') {
     throw new ProjectError('Only admins can create projects', 403);
@@ -247,8 +245,6 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
     description: input.description ?? null,
   });
 
-  const pendingInvites: string[] = [];
-
   try {
     // Version control — the workspace; always exactly one.
     await addIntegration({
@@ -267,43 +263,15 @@ export async function createProject(auth: Auth, input: CreateProjectInput): Prom
         config: integration.config ?? {},
       });
     }
-
-    // Invites: assign existing company members now; unknown emails get an email invite below.
-    // Dedupe emails and track added users so a repeated invitee can't hit the unique constraint.
-    const seenEmails = new Set<string>();
-    const addedUserIds = new Set<number>();
-    for (const rawEmail of input.invites ?? []) {
-      const email = rawEmail?.trim().toLowerCase();
-      if (!email || seenEmails.has(email)) continue;
-      seenEmails.add(email);
-      const user = await findUserByEmail(email);
-      if (user && user.company_id === auth.companyId) {
-        if (!addedUserIds.has(user.id)) {
-          await addProjectMember({ projectId: project.id, userId: user.id });
-          addedUserIds.add(user.id);
-        }
-      } else {
-        pendingInvites.push(email);
-      }
-    }
   } catch (error) {
     await deleteProject(project.id);
     log.error({ err: error, projectId: project.id }, 'project creation failed, rolled back');
     throw error;
   }
 
-  // Project committed — email the unknown invitees a registration link (best-effort).
-  if (pendingInvites.length > 0) {
-    await sendProjectInvites({
-      companyId: auth.companyId,
-      projectId: project.id,
-      projectName: project.name,
-      emails: pendingInvites,
-    });
-  }
-
+  // Members are invited afterward from Settings → Team (see inviteMemberToProject).
   log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
-  return toDetail(project, pendingInvites);
+  return toDetail(project);
 }
 
 // M2.3 — project detail, authorized (company match; non-admins must be assigned).
@@ -318,6 +286,68 @@ export async function getProject(auth: Auth, projectId: number): Promise<Project
   if (auth.role !== 'admin' && !(await isProjectMember(auth.userId, String(projectId)))) {
     throw new ProjectError('You are not assigned to this project', 403);
   }
+  return toDetail(project);
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Admin-only: invite someone (by email) to an existing project. Always emails a single-use invite
+// link — the invitee joins by accepting it (new users register, existing users log in and accept).
+// Returns the refreshed project detail.
+export async function inviteMemberToProject(
+  auth: Auth,
+  projectId: number,
+  email: string,
+  name?: string,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can invite members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail || !EMAIL_RE.test(normalizedEmail)) {
+    throw new ProjectError('A valid email address is required', 400);
+  }
+
+  // Reject if that email already belongs to an assigned member of this project.
+  const existingUser = await findUserByEmail(normalizedEmail);
+  if (existingUser) {
+    const members = await listProjectMembers(projectId);
+    if (members.some((m) => m.user_id === existingUser.id)) {
+      throw new ProjectError('That person is already a member of this project', 409);
+    }
+  }
+
+  await sendProjectInvites({
+    companyId: auth.companyId,
+    projectId,
+    projectName: project.name,
+    invites: [{ email: normalizedEmail, name: name?.trim() || undefined }],
+  });
+
+  log.info({ projectId, email: normalizedEmail }, 'project member invited');
+  return toDetail(project);
+}
+
+// Admin-only: remove an assigned member from a project.
+export async function removeMemberFromProject(
+  auth: Auth,
+  projectId: number,
+  userId: number,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can remove members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  await deleteProjectMember(projectId, userId);
+  log.info({ projectId, userId }, 'project member removed');
   return toDetail(project);
 }
 

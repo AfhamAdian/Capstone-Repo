@@ -133,7 +133,6 @@ export interface ProjectMemberView {
 export interface ProjectDetail extends ProjectListItem {
   integrations: ToolIntegrationView[];
   members: ProjectMemberView[];
-  pendingInvites?: string[];
 }
 
 export interface IntegrationInput {
@@ -147,7 +146,6 @@ export interface CreateProjectInput {
   description?: string;
   vcs: { toolName: string; config: Record<string, string> };
   integrations?: IntegrationInput[];
-  invites?: string[];
 }
 
 // Company projects, optionally filtered by version-control tool (the "workspace").
@@ -157,7 +155,7 @@ export async function listProjects(vcs?: string): Promise<ProjectListItem[]> {
   return projects;
 }
 
-// Admin-only; returns the full project (integrations + members + which invites were emailed).
+// Admin-only; returns the full project (integrations + members).
 export async function createProject(input: CreateProjectInput): Promise<ProjectDetail> {
   const { project } = await apiRequest<{ project: ProjectDetail }>("/projects", {
     method: "POST",
@@ -251,6 +249,31 @@ export async function getInvite(token: string): Promise<InvitePreview | null> {
   if (!response.ok) throw new Error(`Failed to load invite (${response.status})`);
   const { invite } = (await response.json()) as { invite: InvitePreview };
   return invite;
+}
+
+// Logged-in user accepts a project invite (the existing-account path). Returns the joined project id.
+export async function acceptInvite(token: string): Promise<{ projectId: number }> {
+  return apiRequest<{ projectId: number }>("/auth/accept-invite", {
+    method: "POST",
+    body: JSON.stringify({ token }),
+  });
+}
+
+// Admin-only: email a project invite to someone. Returns the refreshed project.
+export async function inviteProjectMember(projectId: number, email: string, name?: string): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/invites`, {
+    method: "POST",
+    body: JSON.stringify({ email, name }),
+  });
+  return project;
+}
+
+// Admin-only: remove an assigned member from a project. Returns the refreshed project.
+export async function removeProjectMember(projectId: number, userId: number): Promise<ProjectDetail> {
+  const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/members/${userId}`, {
+    method: "DELETE",
+  });
+  return project;
 }
 
 // Returns null when not authenticated (401), instead of throwing.

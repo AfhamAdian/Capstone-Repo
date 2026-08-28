@@ -11,6 +11,8 @@ import {
   getProjectHealth,
   updateProjectIntegration,
   getIntegrationToken,
+  inviteMemberToProject,
+  removeMemberFromProject,
 } from '../services/project.service.js';
 import { getProjectHealthProvenance } from '../services/health-provenance.service.js';
 
@@ -73,6 +75,38 @@ export async function updateIntegrationHandler(request: Request, response: Respo
       return;
     }
     const project = await updateProjectIntegration(request.auth!, projectId, toolName, config ?? {});
+    response.status(200).json({ project });
+  } catch (error) {
+    handleProjectError(error, response);
+  }
+}
+
+// POST /api/v1/projects/:projectId/invites — email a project invite to someone (admin only).
+export async function inviteMemberHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const projectId = Number(request.params.projectId);
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      response.status(400).json({ message: 'Invalid project id' });
+      return;
+    }
+    const { email, name } = request.body ?? {};
+    const project = await inviteMemberToProject(request.auth!, projectId, email, name);
+    response.status(200).json({ project });
+  } catch (error) {
+    handleProjectError(error, response);
+  }
+}
+
+// DELETE /api/v1/projects/:projectId/members/:userId — remove an assigned member (admin only).
+export async function removeMemberHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const projectId = Number(request.params.projectId);
+    const userId = Number(request.params.userId);
+    if (!Number.isFinite(projectId) || projectId <= 0 || !Number.isFinite(userId) || userId <= 0) {
+      response.status(400).json({ message: 'Invalid project or user id' });
+      return;
+    }
+    const project = await removeMemberFromProject(request.auth!, projectId, userId);
     response.status(200).json({ project });
   } catch (error) {
     handleProjectError(error, response);

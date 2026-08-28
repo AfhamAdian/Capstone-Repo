@@ -67,7 +67,13 @@ export function RegisterView({
         setStep("verify");
       }
     } catch (err) {
-      setErrors({ form: err instanceof Error ? err.message : "Registration failed" });
+      const message = err instanceof Error ? err.message : "Registration failed";
+      // Invited email already has an account — send them to log in and accept (token is preserved).
+      if (isInvite && /already exists|log in/i.test(message)) {
+        onNavigateToLogin?.();
+        return;
+      }
+      setErrors({ form: message });
     } finally {
       setIsLoading(false);
     }

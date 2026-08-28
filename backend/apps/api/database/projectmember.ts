@@ -38,6 +38,21 @@ export async function addProjectMember(input: {
   return data as ProjectMemberRecord;
 }
 
+// Remove a member from a project. Idempotent — deleting a non-member is a no-op.
+export async function deleteProjectMember(projectId: number, userId: number): Promise<void> {
+  const client = assertSupabaseClient();
+
+  const { error } = await client
+    .from('projectmember')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('user_id', userId);
+
+  if (error) {
+    throw new Error(`Failed to remove project member: ${error.message}`);
+  }
+}
+
 export async function listProjectMembers(projectId: number): Promise<ProjectMemberRecord[]> {
   const client = assertSupabaseClient();
 

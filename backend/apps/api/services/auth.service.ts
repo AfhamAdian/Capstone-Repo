@@ -15,7 +15,7 @@ import {
   updatePassword,
   type PublicUser,
 } from '../database/user.js';
-import { addProjectMember } from '../database/projectmember.js';
+import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { sendPasswordResetEmail, sendWelcomeEmail, sendVerificationCodeEmail } from './email.service.js';
 import { emailVerificationStore } from '@libs/auth/email-verification-store.js';
 import { env } from '../config/env.js';
@@ -200,6 +200,31 @@ export async function getInvite(
   if (!token) return null;
   const invite = await inviteTokenStore.get(token);
   return invite ? { email: invite.email, projectId: invite.projectId } : null;
+}
+
+// Accept a project invite as an already-logged-in user: adds them to the invited project and burns
+// the token. The invite must be addressed to this account (same email + company). Idempotent — an
+// already-assigned member just succeeds.
+export async function acceptProjectInvite(
+  auth: { userId: number; companyId: number; email: string },
+  token: string,
+): Promise<{ projectId: number }> {
+  const invite = await inviteTokenStore.get(token);
+  if (!invite) {
+    throw new AuthError('Invalid or expired invitation', 400);
+  }
+  if (invite.email.toLowerCase() !== auth.email.toLowerCase() || invite.companyId !== auth.companyId) {
+    throw new AuthError('This invitation is for a different account', 403);
+  }
+
+  const members = await listProjectMembers(invite.projectId);
+  if (!members.some((m) => m.user_id === auth.userId)) {
+    await addProjectMember({ projectId: invite.projectId, userId: auth.userId });
+  }
+  await inviteTokenStore.consume(token); // burn it now that it's been honored
+
+  log.info({ userId: auth.userId, projectId: invite.projectId }, 'accepted project invite');
+  return { projectId: invite.projectId };
 }
 
 // Same error for unknown email and wrong password so accounts cannot be enumerated.

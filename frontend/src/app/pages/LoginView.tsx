@@ -1,15 +1,18 @@
 import { useState } from "react";
-import { Activity, AlertCircle } from "lucide-react";
+import { Activity, AlertCircle, Mail } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { acceptInvite } from "../api";
 
 export function LoginView({
   onSuccess,
   onNavigateToRegister,
   onNavigateToForgot,
+  inviteToken,
 }: {
   onSuccess: () => void;
   onNavigateToRegister?: () => void;
   onNavigateToForgot?: () => void;
+  inviteToken?: string;
 }) {
   const { login } = useWorkspace();
   const [email, setEmail] = useState("");
@@ -34,6 +37,9 @@ export function LoginView({
     setErrors({});
     try {
       await login(email, password);
+      // Existing-account invite path: consume the token now that we're authenticated. Best-effort —
+      // a mismatched/expired invite shouldn't block sign-in.
+      if (inviteToken) await acceptInvite(inviteToken).catch(() => {});
       onSuccess();
     } catch (err) {
       setErrors({ form: err instanceof Error ? err.message : "Sign in failed" });
@@ -54,6 +60,13 @@ export function LoginView({
           </span>
           <p className="text-sm text-muted-foreground text-center">Sign in to access your dashboard and insights</p>
         </div>
+
+        {inviteToken && (
+          <div className="mb-5 flex items-start gap-2 border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-foreground">
+            <Mail size={15} className="mt-0.5 text-primary shrink-0"/>
+            <span>You've been invited to a project. Log in and you'll be added automatically.</span>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

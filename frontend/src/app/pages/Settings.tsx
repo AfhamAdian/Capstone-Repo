@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
-import { getProject, updateProjectIntegration, getIntegrationToken } from "../api";
+import { getProject, updateProjectIntegration, getIntegrationToken, inviteProjectMember, removeProjectMember, type ProjectMemberView } from "../api";
 
 // Presentational metadata only — the editable fields/token/docs live in each connector's RealConnectorSpec.
 interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; }
@@ -348,17 +348,98 @@ const REAL_SPECS: Record<string, RealConnectorSpec> = {
   jira: JIRA_SPEC,
 };
 
+// Real project members backed by the projectmember table. Admins invite by email (a single-use link
+// is emailed); invitees appear here once they accept (register, or log in and accept). No local state.
+function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
+  const pid=Number(backendProjectId);
+  const [members,setMembers]=useState<ProjectMemberView[]>([]);
+  const [loading,setLoading]=useState(true);
+  const [draft,setDraft]=useState({name:"",email:""});
+  const [inviting,setInviting]=useState(false);
+  const [removingId,setRemovingId]=useState<number|null>(null);
+  const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
+  const [msg,setMsg]=useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    getProject(pid)
+      .then(p=>{ if(!cancelled) setMembers(p.members); })
+      .catch(()=>{})
+      .finally(()=>{ if(!cancelled) setLoading(false); });
+    return ()=>{cancelled=true;};
+  },[pid]);
+
+  const invite=async()=>{
+    const email=draft.email.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ setStatus("err"); setMsg("Enter a valid email address"); return; }
+    setInviting(true); setStatus("idle"); setMsg("");
+    try{
+      await inviteProjectMember(pid,email,draft.name.trim()||undefined);
+      setStatus("ok"); setMsg(`Invitation sent to ${email}. They'll appear here once they accept.`);
+      setDraft({name:"",email:""});
+    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Invite failed"); }
+    finally{ setInviting(false); }
+  };
+
+  const remove=async(userId:number)=>{
+    setRemovingId(userId); setStatus("idle"); setMsg("");
+    try{
+      const p=await removeProjectMember(pid,userId);
+      setMembers(p.members);
+    }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Remove failed"); }
+    finally{ setRemovingId(null); }
+  };
+
+  const initials=(m:ProjectMemberView)=>(m.name??m.email??"?").split(" ").map(s=>s[0]).slice(0,2).join("").toUpperCase();
+
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="text-[15px] font-bold text-foreground">Team directory — {members.length} member{members.length===1?"":"s"}</div>
+        <p className="text-sm text-muted-foreground mt-1">Invite people by email. They join once they accept the emailed link — new users register, existing users log in and accept. The public survey form stays anonymous.</p>
+      </div>
+      <div className="border border-border bg-card mb-4">
+        {loading?(
+          <div className="px-5 py-4 text-sm text-muted-foreground">Loading members…</div>
+        ):members.length===0?(
+          <div className="px-5 py-4 text-sm text-muted-foreground">No members yet. Invite someone below.</div>
+        ):members.map(m=>(
+          <div key={m.userId} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 bg-primary/15 text-primary flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{initials(m)}</div>
+              <div className="text-[15px] font-semibold text-foreground">{m.name??"—"}</div>
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.email}</span>
+              <button onClick={()=>remove(m.userId)} disabled={removingId===m.userId} title="Remove member"
+                className="text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-40">
+                {removingId===m.userId?<RefreshCw size={15} className="animate-spin"/>:<X size={15}/>}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+        <input value={draft.name} onChange={e=>setDraft(d=>({...d,name:e.target.value}))} placeholder="Name (optional)"
+          className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+        <input value={draft.email} onChange={e=>setDraft(d=>({...d,email:e.target.value}))} placeholder="Email" type="email"
+          onKeyDown={e=>{if(e.key==="Enter") invite();}}
+          className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+        <button onClick={invite} disabled={inviting}
+          className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+          {inviting?<><RefreshCw size={14} className="animate-spin"/>Inviting…</>:<><Mail size={14}/>Invite</>}
+        </button>
+      </div>
+      {status==="ok"&&<p className="text-sm text-emerald-500 font-medium mt-3 flex items-center gap-1.5"><Check size={13}/>{msg}</p>}
+      {status==="err"&&<p className="text-sm text-red-500 font-medium mt-3 flex items-center gap-1.5"><AlertCircle size={13}/>{msg}</p>}
+    </div>
+  );
+}
+
 export function SettingsView({project}:{project:Project;}) {
   const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
   const {settings,update}=useProjectSurveySettings(project.id);
-  const [draftMember,setDraftMember]=useState({n:"",r:"",e:""});
-  const team=settings.team;
   const qi=settings.guidance;
-  const addMember=()=>{
-    if(!draftMember.n.trim()||!draftMember.e.trim()) return;
-    update(prev=>({...prev,team:[...prev.team,{n:draftMember.n.trim(),r:draftMember.r.trim()||"Team member",e:draftMember.e.trim()}]}));
-    setDraftMember({n:"",r:"",e:""});
-  };
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-4xl mx-auto px-8 py-8">
@@ -373,39 +454,9 @@ export function SettingsView({project}:{project:Project;}) {
           ))}
         </div>
         {tab==="team"&&(
-          <div>
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <div className="text-[15px] font-bold text-foreground">Team directory — {team.length} members</div>
-                <p className="text-sm text-muted-foreground mt-1">This list is local notes only. Survey response rate (`1 of N`) uses how many `projectmember` rows have role DEVELOPER. The public form stays anonymous.</p>
-              </div>
-            </div>
-            <div className="border border-border bg-card mb-4">
-              {team.map((m,i)=>(
-                <div key={`${m.e}-${i}`} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 bg-primary/15 text-primary flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{m.n.split(" ").map(n=>n[0]).join("")}</div>
-                    <div><div className="text-[15px] font-semibold text-foreground">{m.n}</div><div className="text-sm text-muted-foreground">{m.r}</div></div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.e}</span>
-                    <button onClick={()=>update(prev=>({...prev,team:prev.team.filter((_,idx)=>idx!==i)}))} className="text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_1fr_auto] gap-2">
-              <input value={draftMember.n} onChange={e=>setDraftMember(m=>({...m,n:e.target.value}))} placeholder="Name"
-                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
-              <input value={draftMember.r} onChange={e=>setDraftMember(m=>({...m,r:e.target.value}))} placeholder="Role"
-                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
-              <input value={draftMember.e} onChange={e=>setDraftMember(m=>({...m,e:e.target.value}))} placeholder="Email"
-                className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
-              <button onClick={addMember} className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90">
-                <Plus size={14}/>Add
-              </button>
-            </div>
-          </div>
+          project.backendProjectId
+            ? <TeamDirectory backendProjectId={project.backendProjectId}/>
+            : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so members can't be managed.</p>
         )}
         {tab==="questions"&&(
           <div>

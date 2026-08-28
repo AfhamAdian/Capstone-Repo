@@ -46,13 +46,17 @@ function PublicSurveyRoute() {
 
 function LoginRoute() {
   const navigate=useNavigate();
-  return <LoginView onSuccess={()=>navigate(paths.workspaces)} onNavigateToRegister={()=>navigate(paths.register)} onNavigateToForgot={()=>navigate(paths.forgotPassword)}/>;
+  const [searchParams]=useSearchParams();
+  const invite=searchParams.get("invite") ?? undefined;
+  return <LoginView onSuccess={()=>navigate(paths.workspaces)} onNavigateToRegister={()=>navigate(paths.register)} onNavigateToForgot={()=>navigate(paths.forgotPassword)} inviteToken={invite}/>;
 }
 
 function RegisterRoute() {
   const navigate=useNavigate();
   const [searchParams]=useSearchParams();
-  return <RegisterView onSuccess={()=>navigate(paths.workspaces)} onNavigateToLogin={()=>navigate(paths.login)} inviteToken={searchParams.get("invite") ?? undefined}/>;
+  const invite=searchParams.get("invite") ?? undefined;
+  // Preserve the invite token when bouncing an existing-account invitee to the login page.
+  return <RegisterView onSuccess={()=>navigate(paths.workspaces)} onNavigateToLogin={()=>navigate(invite?`${paths.login}?invite=${invite}`:paths.login)} inviteToken={invite}/>;
 }
 
 function ForgotPasswordRoute() {

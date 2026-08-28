@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, AlertCircle, ArrowLeft, Plus, X } from "lucide-react";
+import { Activity, AlertCircle, ArrowLeft } from "lucide-react";
 import { createProject, type CreateProjectInput, type ProjectDetail } from "../api";
 
 // Shared input styling (mirrors LoginView).
@@ -102,15 +102,8 @@ export function AddProjectView({
   const [jenkinsToken, setJenkinsToken] = useState("");
   const [jenkinsJob, setJenkinsJob] = useState("");
 
-  // Invites.
-  const [invites, setInvites] = useState<string[]>([""]);
-
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  const setInvite = (i: number, v: string) => setInvites((prev) => prev.map((e, idx) => (idx === i ? v : e)));
-  const addInvite = () => setInvites((prev) => [...prev, ""]);
-  const removeInvite = (i: number) => setInvites((prev) => prev.filter((_, idx) => idx !== i));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,7 +132,6 @@ export function AddProjectView({
         config: { token: vcsToken.trim(), owner: owner.trim(), repo: repo.trim() },
       },
       integrations: [],
-      invites: invites.map((e) => e.trim()).filter(Boolean),
     };
 
     if (jiraOn) {
@@ -297,32 +289,6 @@ export function AddProjectView({
                   </>
                 )}
               </ToolSection>
-            </div>
-          </div>
-
-          <div className="pt-2">
-            <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground mb-3">Invite Members (optional)</h2>
-            <div className="space-y-2">
-              {invites.map((email, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input
-                    type="email"
-                    value={email}
-                    placeholder="teammate@company.com"
-                    onChange={(e) => setInvite(i, e.target.value)}
-                    className={inputClass}
-                  />
-                  {invites.length > 1 && (
-                    <button type="button" onClick={() => removeInvite(i)} className="text-muted-foreground hover:text-red-500 p-2">
-                      <X size={16} />
-                    </button>
-                  )}
-                </div>
-              ))}
-              <button type="button" onClick={addInvite} className="flex items-center gap-1 text-sm text-primary font-semibold hover:underline">
-                <Plus size={14} />
-                Add another
-              </button>
             </div>
           </div>
 
