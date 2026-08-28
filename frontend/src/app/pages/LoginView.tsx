@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Activity, AlertCircle, Mail } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { acceptInvite } from "../api";
+import { acceptInvite, getInvite } from "../api";
 
 export function LoginView({
   onSuccess,
@@ -19,6 +19,15 @@ export function LoginView({
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
+  const isInvite = Boolean(inviteToken);
+
+  // Arriving via an invite link: prefill and lock the invited email so the user only types a password.
+  useEffect(() => {
+    if (!inviteToken) return;
+    getInvite(inviteToken)
+      .then((invite) => { if (invite) setEmail(invite.email); })
+      .catch(() => {});
+  }, [inviteToken]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,13 +87,14 @@ export function LoginView({
               type="email"
               placeholder="you@company.com"
               value={email}
+              readOnly={isInvite}
               onChange={(e) => {
                 setEmail(e.target.value);
                 if (errors.email) setErrors({ ...errors, email: "" });
               }}
               className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
                 errors.email ? "border-red-500" : "border-border"
-              }`}
+              }${isInvite ? " opacity-60 cursor-not-allowed" : ""}`}
             />
             {errors.email && (
               <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
