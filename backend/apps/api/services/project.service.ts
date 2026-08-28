@@ -584,11 +584,13 @@ function buildProjectHealth(
   project: ProjectRow,
   history: ProjectRiskScore[],
   opsHistory: SnapshotOpsMetricsRow[],
+  vcs: { owner: string | null; repo: string | null },
 ): ProjectHealth {
   const latest = history[history.length - 1] ?? null;
   const previous = history.length > 1 ? history[history.length - 2] : null;
 
-  const team = project.owner && project.repo ? `${project.owner}/${project.repo}` : (project.owner ?? '');
+  // owner/repo come from the vcs integration config (the project row's own columns are legacy/unused).
+  const team = vcs.owner && vcs.repo ? `${vcs.owner}/${vcs.repo}` : (vcs.owner ?? '');
 
   const round = (value: number | null | undefined): number => Math.round(value ?? 0);
   const label = (h: ProjectRiskScore): string => formatLabel(h.snapshotTime ?? '');
@@ -633,8 +635,8 @@ function buildProjectHealth(
   return {
     id: project.id,
     name: project.name,
-    owner: project.owner,
-    repo: project.repo,
+    owner: vcs.owner,
+    repo: vcs.repo,
     team,
     description: project.description ?? '',
     score: score !== null ? Math.round(score) : null,
@@ -653,6 +655,16 @@ function buildProjectHealth(
   };
 }
 
+// owner/repo for the dashboard come from the project's vcs integration config (project.owner/repo are legacy).
+async function getVcsOwnerRepo(projectId: number): Promise<{ owner: string | null; repo: string | null }> {
+  const integrations = await listIntegrations(projectId);
+  const cfg = (integrations.find((i) => i.tool_category === 'vcs')?.config ?? {}) as Record<string, unknown>;
+  return {
+    owner: typeof cfg.owner === 'string' ? cfg.owner : null,
+    repo: typeof cfg.repo === 'string' ? cfg.repo : null,
+  };
+}
+
 export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[]> {
   // Company-scoped feed; members are further narrowed to projects they belong to (mirrors listProjects).
   const allowed =
@@ -663,11 +675,12 @@ export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[
   const projects = (await dbListAllProjects(auth.companyId)).filter((p) => allowedIds.has(p.id));
   return Promise.all(
     projects.map(async (project) => {
-      const [history, opsHistory] = await Promise.all([
+      const [history, opsHistory, vcs] = await Promise.all([
         listScoreHistoryForProject(project.id),
         listProjectOpsMetricsHistory(project.id),
+        getVcsOwnerRepo(project.id),
       ]);
-      return buildProjectHealth(project, history, opsHistory);
+      return buildProjectHealth(project, history, opsHistory, vcs);
     }),
   );
 }
@@ -676,9 +689,10 @@ export async function getProjectHealth(auth: Auth, projectId: number): Promise<P
   const project = await dbGetProjectRow(projectId);
   // Don't leak other companies' projects — treat cross-company as not found.
   if (!project || project.companyId !== auth.companyId) return null;
-  const [history, opsHistory] = await Promise.all([
+  const [history, opsHistory, vcs] = await Promise.all([
     listScoreHistoryForProject(projectId),
     listProjectOpsMetricsHistory(projectId),
+    getVcsOwnerRepo(projectId),
   ]);
-  return buildProjectHealth(project, history, opsHistory);
+  return buildProjectHealth(project, history, opsHistory, vcs);
 }

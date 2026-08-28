@@ -280,15 +280,14 @@ export interface ProjectRow {
   companyId: number;
   name: string;
   description: string | null;
-  owner: string | null;
-  repo: string | null;
   createdAt: string | null;
   pendingSurvey: boolean;
   pendingSurveyTrigger: string | null;
 }
 
 /** Every project, for the dashboard's project list. No auth/company scoping yet (see authorization.service.ts's known gaps). */
-const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, owner, repo, created_at, pending_survey, pending_survey_trigger';
+// owner/repo intentionally omitted — they're legacy columns; the dashboard reads owner/repo from the vcs integration config.
+const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, created_at, pending_survey, pending_survey_trigger';
 
 function toProjectRow(p: Record<string, unknown>): ProjectRow {
   return {
@@ -296,8 +295,6 @@ function toProjectRow(p: Record<string, unknown>): ProjectRow {
     companyId: p.company_id as number,
     name: p.name as string,
     description: (p.description as string) ?? null,
-    owner: (p.owner as string) ?? null,
-    repo: (p.repo as string) ?? null,
     createdAt: (p.created_at as string) ?? null,
     pendingSurvey: Boolean(p.pending_survey),
     pendingSurveyTrigger: (p.pending_survey_trigger as string) ?? null,
