@@ -354,7 +354,7 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
   const pid=Number(backendProjectId);
   const [members,setMembers]=useState<ProjectMemberView[]>([]);
   const [loading,setLoading]=useState(true);
-  const [draft,setDraft]=useState({name:"",email:""});
+  const [email,setEmail]=useState("");
   const [inviting,setInviting]=useState(false);
   const [removingId,setRemovingId]=useState<number|null>(null);
   const [status,setStatus]=useState<"idle"|"ok"|"err">("idle");
@@ -370,13 +370,13 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
   },[pid]);
 
   const invite=async()=>{
-    const email=draft.email.trim();
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ setStatus("err"); setMsg("Enter a valid email address"); return; }
+    const addr=email.trim();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)){ setStatus("err"); setMsg("Enter a valid email address"); return; }
     setInviting(true); setStatus("idle"); setMsg("");
     try{
-      await inviteProjectMember(pid,email,draft.name.trim()||undefined);
-      setStatus("ok"); setMsg(`Invitation sent to ${email}. They'll appear here once they accept.`);
-      setDraft({name:"",email:""});
+      await inviteProjectMember(pid,addr);
+      setStatus("ok"); setMsg(`Invitation sent to ${addr}. They'll appear here once they accept.`);
+      setEmail("");
     }catch(e){ setStatus("err"); setMsg(e instanceof Error?e.message:"Invite failed"); }
     finally{ setInviting(false); }
   };
@@ -419,10 +419,8 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
-        <input value={draft.name} onChange={e=>setDraft(d=>({...d,name:e.target.value}))} placeholder="Name (optional)"
-          className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
-        <input value={draft.email} onChange={e=>setDraft(d=>({...d,email:e.target.value}))} placeholder="Email" type="email"
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+        <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" type="email"
           onKeyDown={e=>{if(e.key==="Enter") invite();}}
           className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
         <button onClick={invite} disabled={inviting}

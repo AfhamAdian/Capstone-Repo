@@ -268,10 +268,10 @@ export async function acceptInvite(token: string): Promise<{ projectId: number }
 }
 
 // Admin-only: email a project invite to someone. Returns the refreshed project.
-export async function inviteProjectMember(projectId: number, email: string, name?: string): Promise<ProjectDetail> {
+export async function inviteProjectMember(projectId: number, email: string): Promise<ProjectDetail> {
   const { project } = await apiRequest<{ project: ProjectDetail }>(`/projects/${projectId}/invites`, {
     method: "POST",
-    body: JSON.stringify({ email, name }),
+    body: JSON.stringify({ email }),
   });
   return project;
 }

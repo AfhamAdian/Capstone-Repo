@@ -11,9 +11,9 @@ export async function sendProjectInvites(input: {
   companyId: number;
   projectId: number;
   projectName: string;
-  invites: Array<{ email: string; name?: string }>;
+  invites: Array<{ email: string }>;
 }): Promise<void> {
-  for (const { email, name } of input.invites) {
+  for (const { email } of input.invites) {
     try {
       const token = await inviteTokenStore.create({
         email,
@@ -21,7 +21,7 @@ export async function sendProjectInvites(input: {
         projectId: input.projectId,
       });
       const inviteUrl = `${env.frontendUrl}/register?invite=${token}`;
-      await sendProjectInviteEmail(email, inviteUrl, input.projectName, name);
+      await sendProjectInviteEmail(email, inviteUrl, input.projectName);
     } catch (error) {
       log.error({ err: error, email, projectId: input.projectId }, 'failed to send project invite');
     }

@@ -92,14 +92,11 @@ export async function sendProjectInviteEmail(
   to: string,
   inviteUrl: string,
   projectName?: string,
-  inviteeName?: string,
 ): Promise<void> {
   if (!transporter) {
     log.warn({ to, inviteUrl }, 'SMTP not configured — skipping send, logging invite link instead');
     return;
   }
-
-  const greeting = inviteeName?.trim() ? `Hi ${escapeHtml(inviteeName.trim())},` : '';
 
   await transporter.sendMail({
     from: env.smtpFrom,
@@ -107,7 +104,6 @@ export async function sendProjectInviteEmail(
     subject: projectName ? `You've been invited to ${projectName} on Pulse` : "You've been invited to Pulse",
     html: `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-        ${greeting ? `<p>${greeting}</p>` : ''}
         <h2>You've been invited${projectName ? ` to <b>${projectName}</b>` : ''}</h2>
         <p>Create your account (or log in) to join the project. This invitation expires in 7 days.</p>
         <p><a href="${inviteUrl}" style="display:inline-block; background:#111; color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px;">Accept invitation</a></p>

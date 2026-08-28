@@ -298,7 +298,6 @@ export async function inviteMemberToProject(
   auth: Auth,
   projectId: number,
   email: string,
-  name?: string,
 ): Promise<ProjectDetail> {
   if (auth.role !== 'admin') {
     throw new ProjectError('Only admins can invite members', 403);
@@ -326,7 +325,7 @@ export async function inviteMemberToProject(
     companyId: auth.companyId,
     projectId,
     projectName: project.name,
-    invites: [{ email: normalizedEmail, name: name?.trim() || undefined }],
+    invites: [{ email: normalizedEmail }],
   });
 
   log.info({ projectId, email: normalizedEmail }, 'project member invited');

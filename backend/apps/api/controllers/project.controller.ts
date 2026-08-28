@@ -89,8 +89,8 @@ export async function inviteMemberHandler(request: Request, response: Response):
       response.status(400).json({ message: 'Invalid project id' });
       return;
     }
-    const { email, name } = request.body ?? {};
-    const project = await inviteMemberToProject(request.auth!, projectId, email, name);
+    const { email } = request.body ?? {};
+    const project = await inviteMemberToProject(request.auth!, projectId, email);
     response.status(200).json({ project });
   } catch (error) {
     handleProjectError(error, response);
