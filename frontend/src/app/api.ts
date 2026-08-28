@@ -248,6 +248,7 @@ export async function listWorkspaces(): Promise<WorkspaceView[]> {
 export interface InvitePreview {
   email: string;
   projectId: number;
+  hasAccount: boolean; // true → the invited email already has an account; client routes them to login
 }
 
 // Resolves an invite token for prefilling the registration form; null when not found/expired.

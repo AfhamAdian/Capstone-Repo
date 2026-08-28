@@ -194,12 +194,15 @@ async function registerInvitedMember(input: RegisterInput): Promise<AuthResult> 
 }
 
 // Returns the invite's email/project for prefilling the registration form (non-consuming).
+// `hasAccount` lets the client send an existing user straight to login instead of the register form.
 export async function getInvite(
   token: string,
-): Promise<{ email: string; projectId: number } | null> {
+): Promise<{ email: string; projectId: number; hasAccount: boolean } | null> {
   if (!token) return null;
   const invite = await inviteTokenStore.get(token);
-  return invite ? { email: invite.email, projectId: invite.projectId } : null;
+  if (!invite) return null;
+  const existing = await findUserByEmail(invite.email);
+  return { email: invite.email, projectId: invite.projectId, hasAccount: Boolean(existing) };
 }
 
 // Accept a project invite as an already-logged-in user: adds them to the invited project and burns
