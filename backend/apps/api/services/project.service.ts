@@ -4,8 +4,6 @@
 import type { SessionData } from '@libs/auth/session-store.js';
 import type { SupportedTool, ToolCategory } from '@libs/sync/types.js';
 import {
-  createProject as dbCreateProject,
-  deleteProject,
   getProjectById,
   isProjectMember,
   listProjectsByCompany,
@@ -53,9 +51,6 @@ const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
   cicd: new Set(['jenkins', 'circleci', 'travisci', 'github-actions']),
   codeQuality: new Set(['sonarqube', 'codeclimate', 'codacy']),
 };
-const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
-const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
-
 // Reverse lookup: tool name -> its category.
 const TOOL_CATEGORY: Record<string, ToolCategory> = {};
 for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
@@ -65,11 +60,6 @@ for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
 // Tools whose token is stored in projecttoolintegration.config. GitHub/GitLab/CI use the workspace PAT instead.
 const CONFIG_TOKEN_TOOLS = new Set(['jira', 'sonarqube']);
 
-function assertToolInCategory(category: ToolCategory, toolName: string): void {
-  if (!CATEGORY_TOOLS[category]?.has(toolName)) {
-    throw new ProjectError(`${toolName} is not a valid ${category} tool`, 400);
-  }
-}
 // Substrings that mark a config key as secret (matches accessToken, clientSecret, apiKey, …).
 const SECRET_KEY_PATTERNS = ['token', 'secret', 'password', 'passwd', 'apikey'];
 
@@ -101,19 +91,6 @@ function assertConfigForTool(toolName: SupportedTool, config: Record<string, unk
   if (missing.length > 0) {
     throw new ProjectError(`Missing config for ${toolName}: ${missing.join(', ')}`, 400);
   }
-}
-
-interface IntegrationInput {
-  category: ToolCategory;
-  toolName: SupportedTool;
-  config: Record<string, unknown>;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  vcs: { toolName: string; config?: Record<string, unknown> };
-  integrations?: IntegrationInput[];
 }
 
 export interface ProjectListItem {
@@ -213,66 +190,8 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
 }
 
-// M2.2 — admin creates a project with its vcs (workspace) and optional other tools. Members are
-// invited afterward from Settings → Team.
-export async function createProject(auth: Auth, input: CreateProjectInput): Promise<ProjectDetail> {
-  if (auth.role !== 'admin') {
-    throw new ProjectError('Only admins can create projects', 403);
-  }
-  if (!input.name?.trim()) {
-    throw new ProjectError('Project name is required', 400);
-  }
-  if (!input.vcs?.toolName || !VCS_PROVIDERS.has(input.vcs.toolName)) {
-    throw new ProjectError('A valid version control tool (github, gitlab, bitbucket) is required', 400);
-  }
-  assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
-
-  // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
-  for (const integration of input.integrations ?? []) {
-    if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
-      throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
-    }
-    if (!integration.toolName) {
-      throw new ProjectError('Each integration needs a toolName', 400);
-    }
-    assertToolInCategory(integration.category, integration.toolName);
-    assertConfigForTool(integration.toolName, integration.config ?? {});
-  }
-
-  const project = await dbCreateProject({
-    companyId: auth.companyId,
-    name: input.name,
-    description: input.description ?? null,
-  });
-
-  try {
-    // Version control — the workspace; always exactly one.
-    await addIntegration({
-      projectId: project.id,
-      category: 'vcs',
-      toolName: input.vcs.toolName as SupportedTool,
-      config: input.vcs.config ?? {},
-    });
-
-    // Other-category tools — optional (already validated above).
-    for (const integration of input.integrations ?? []) {
-      await addIntegration({
-        projectId: project.id,
-        category: integration.category,
-        toolName: integration.toolName,
-        config: integration.config ?? {},
-      });
-    }
-  } catch (error) {
-    await deleteProject(project.id);
-    log.error({ err: error, projectId: project.id }, 'project creation failed, rolled back');
-    throw error;
-  }
-
-  // Members are invited afterward from Settings → Team (see inviteMemberToProject).
-  log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
-  return toDetail(project);
-}
+// Projects are created by importing repos into a workspace — see workspace.service.ts
+// (listWorkspaceRepos / addWorkspaceProjects). There is no standalone project-create endpoint.
 
 // M2.3 — project detail, authorized (company match; non-admins must be assigned).
 export async function getProject(auth: Auth, projectId: number): Promise<ProjectDetail> {

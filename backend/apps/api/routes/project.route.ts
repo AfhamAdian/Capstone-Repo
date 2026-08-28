@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import {
-  createProjectHandler,
   getProjectHandler,
   listProjectsHandler,
   listProjectsHealthHandler,
@@ -17,7 +16,6 @@ import { asyncHandler } from '../utils/async-handler.js';
 export const projectRouter = Router();
 
 projectRouter.get('/', requireAuth, asyncHandler(listProjectsHandler));
-projectRouter.post('/', requireAuth, asyncHandler(createProjectHandler));
 
 // Read-only project + health-score dashboard feed, scoped to the caller's company. Registered
 // before '/:id' so the literal '/health' segment isn't swallowed by the :id param.

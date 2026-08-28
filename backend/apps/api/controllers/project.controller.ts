@@ -4,7 +4,6 @@
 import type { Request, Response } from 'express';
 import {
   ProjectError,
-  createProject,
   getProject,
   listProjects,
   listProjectsWithHealth,
@@ -36,15 +35,6 @@ export async function listProjectsHandler(request: Request, response: Response):
   }
 }
 
-// POST /api/v1/projects
-export async function createProjectHandler(request: Request, response: Response): Promise<void> {
-  try {
-    const project = await createProject(request.auth!, request.body ?? {});
-    response.status(201).json({ project });
-  } catch (error) {
-    handleProjectError(error, response);
-  }
-}
 
 // GET /api/v1/projects/:projectId/integrations/:toolName/token — reveal the effective token (admin only).
 export async function getIntegrationTokenHandler(request: Request, response: Response): Promise<void> {

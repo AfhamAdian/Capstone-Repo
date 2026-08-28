@@ -1,314 +1,206 @@
-import { useState } from "react";
-import { Activity, AlertCircle, ArrowLeft } from "lucide-react";
-import { createProject, type CreateProjectInput, type ProjectDetail } from "../api";
+import { useState, useEffect } from "react";
+import { Activity, AlertCircle, ArrowLeft, ArrowRight, Check, Clock, Globe, Loader2, Lock, Search, Star } from "lucide-react";
+import { listWorkspaceRepos, addWorkspaceProjects, type WorkspaceRepoStatus } from "../api";
 
-// Shared input styling (mirrors LoginView).
-const inputClass =
-  "w-full bg-input-background border border-border px-4 py-2.5 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
-const labelClass = "block text-sm font-semibold text-foreground mb-1.5";
-
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-}) {
-  return (
-    <div>
-      <label className={labelClass} style={{ fontFamily: "var(--font-display)" }}>
-        {label}
-      </label>
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className={inputClass}
-      />
-    </div>
-  );
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${Math.max(mins, 1)} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs !== 1 ? "s" : ""} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days !== 1 ? "s" : ""} ago`;
 }
 
-// Collapsible optional-tool section with an enable toggle.
-function ToolSection({
-  title,
-  enabled,
-  onToggle,
-  children,
-}: {
-  title: string;
-  enabled: boolean;
-  onToggle: (v: boolean) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="border border-border">
-      <label className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none">
-        <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
-        <span className="text-sm font-semibold" style={{ fontFamily: "var(--font-display)" }}>
-          {title}
-        </span>
-      </label>
-      {enabled && <div className="px-4 pb-4 space-y-3">{children}</div>}
-    </div>
-  );
-}
-
+// Add Project: lists the repos reachable by the workspace's stored PAT. Already-imported repos show
+// as tracked (checked + locked); the admin ticks the new ones to import them as projects.
 export function AddProjectView({
+  workspaceId,
   onCreated,
   onCancel,
 }: {
-  onCreated: (project: ProjectDetail) => void;
+  workspaceId: string;
+  onCreated: () => void;
   onCancel: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-
-  // Version control (the workspace) — required.
-  const [vcsTool, setVcsTool] = useState("github");
-  const [owner, setOwner] = useState("");
-  const [repo, setRepo] = useState("");
-  const [vcsToken, setVcsToken] = useState("");
-
-  // Optional: Jira (project management).
-  const [jiraOn, setJiraOn] = useState(false);
-  const [jiraEmail, setJiraEmail] = useState("");
-  const [jiraBaseUrl, setJiraBaseUrl] = useState("");
-  const [jiraProjectKey, setJiraProjectKey] = useState("");
-  const [jiraBoardId, setJiraBoardId] = useState("");
-  const [jiraToken, setJiraToken] = useState("");
-
-  // Optional: SonarQube (code quality).
-  const [sonarOn, setSonarOn] = useState(false);
-  const [sonarOrg, setSonarOrg] = useState("");
-  const [sonarProjectKey, setSonarProjectKey] = useState("");
-  const [sonarBaseUrl, setSonarBaseUrl] = useState("");
-  const [sonarToken, setSonarToken] = useState("");
-
-  // Optional: CI/CD. GitHub Actions syncs today; Jenkins is stored until its connector ships.
-  const [cicdOn, setCicdOn] = useState(false);
-  const [cicdProvider, setCicdProvider] = useState("github-actions");
-  const [reuseVcsToken, setReuseVcsToken] = useState(true);
-  const [actionsToken, setActionsToken] = useState("");
-  const [jenkinsBaseUrl, setJenkinsBaseUrl] = useState("");
-  const [jenkinsUser, setJenkinsUser] = useState("");
-  const [jenkinsToken, setJenkinsToken] = useState("");
-  const [jenkinsJob, setJenkinsJob] = useState("");
-
+  const [repos, setRepos] = useState<WorkspaceRepoStatus[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) return setError("Project name is required");
-    if (!owner.trim() || !repo.trim() || !vcsToken.trim()) {
-      return setError("Version control needs owner, repository, and a token");
-    }
-    if (jiraOn && (!jiraEmail || !jiraBaseUrl || !jiraProjectKey || !jiraToken)) {
-      return setError("Jira needs email, base URL, project key, and a token");
-    }
-    if (sonarOn && (!sonarProjectKey || !sonarToken)) {
-      return setError("SonarQube needs a project key and a token");
-    }
-    if (cicdOn && cicdProvider === "github-actions" && !(reuseVcsToken ? vcsToken : actionsToken).trim()) {
-      return setError("GitHub Actions needs a token (or reuse the version control token)");
-    }
-    if (cicdOn && cicdProvider === "jenkins" && (!jenkinsBaseUrl.trim() || !jenkinsJob.trim() || !jenkinsToken.trim())) {
-      return setError("Jenkins needs a server URL, job name, and API token");
-    }
+  useEffect(() => {
+    let cancelled = false;
+    listWorkspaceRepos(workspaceId)
+      .then((r) => { if (!cancelled) setRepos(r); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : "Could not load repositories"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [workspaceId]);
 
-    const input: CreateProjectInput = {
-      name: name.trim(),
-      description: description.trim() || undefined,
-      vcs: {
-        toolName: vcsTool,
-        config: { token: vcsToken.trim(), owner: owner.trim(), repo: repo.trim() },
-      },
-      integrations: [],
-    };
+  const visibleRepos = repos.filter(
+    (r) =>
+      !search.trim() ||
+      r.name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.description ?? "").toLowerCase().includes(search.toLowerCase()),
+  );
+  const importedCount = repos.filter((r) => r.imported).length;
 
-    if (jiraOn) {
-      input.integrations!.push({
-        category: "projectManagement",
-        toolName: "jira",
-        config: {
-          token: jiraToken.trim(),
-          email: jiraEmail.trim(),
-          baseUrl: jiraBaseUrl.trim(),
-          projectKey: jiraProjectKey.trim(),
-          ...(jiraBoardId.trim() ? { boardId: jiraBoardId.trim() } : {}),
-        },
-      });
-    }
-    if (sonarOn) {
-      input.integrations!.push({
-        category: "codeQuality",
-        toolName: "sonarqube",
-        config: {
-          token: sonarToken.trim(),
-          projectKey: sonarProjectKey.trim(),
-          ...(sonarOrg.trim() ? { organization: sonarOrg.trim() } : {}),
-          ...(sonarBaseUrl.trim() ? { baseUrl: sonarBaseUrl.trim() } : {}),
-        },
-      });
-    }
+  const toggleRepo = (name: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
 
-    if (cicdOn) {
-      if (cicdProvider === "github-actions") {
-        input.integrations!.push({
-          category: "cicd",
-          toolName: "github-actions",
-          config: {
-            token: (reuseVcsToken ? vcsToken : actionsToken).trim(),
-            owner: owner.trim(),
-            repo: repo.trim(),
-          },
-        });
-      } else {
-        input.integrations!.push({
-          category: "cicd",
-          toolName: "jenkins",
-          config: {
-            baseUrl: jenkinsBaseUrl.trim(),
-            username: jenkinsUser.trim(),
-            apiToken: jenkinsToken.trim(),
-            jobName: jenkinsJob.trim(),
-          },
-        });
-      }
-    }
-
-    setIsLoading(true);
+  const add = async () => {
+    if (selected.size === 0) { setError("Select at least one repository to add"); return; }
     setError("");
+    setAdding(true);
     try {
-      const project = await createProject(input);
-      onCreated(project);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create project");
-    } finally {
-      setIsLoading(false);
+      await addWorkspaceProjects(workspaceId, [...selected]);
+      onCreated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not add projects");
+      setAdding(false);
     }
   };
 
-  return (
-    <div className="min-h-screen bg-background text-foreground overflow-y-auto">
-      <div className="w-full max-w-lg mx-auto px-6 py-10">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mb-6"
-        >
-          <ArrowLeft size={14} />
-          Back
-        </button>
+  const labelStyle = { fontFamily: "var(--font-display)" };
+  const cols = "auto minmax(200px,1fr) 120px 80px 130px";
 
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-9 h-9 bg-primary flex items-center justify-center">
-            <Activity size={18} className="text-primary-foreground" />
+  return (
+    <div className="h-screen overflow-y-auto bg-background text-foreground">
+      <header className="border-b border-border bg-card flex items-center gap-6 px-6" style={{ height: 56 }}>
+        <button onClick={onCancel} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <ArrowLeft size={14} /> Back
+        </button>
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 bg-primary flex items-center justify-center">
+            <Activity size={14} className="text-primary-foreground" />
           </div>
-          <h1 className="text-xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
-            Add Project
-          </h1>
+          <span className="text-base font-bold tracking-widest uppercase" style={labelStyle}>Pulse</span>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-8 py-10">
+        {error && (
+          <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+            <AlertCircle size={14} className="shrink-0" />
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-bold uppercase tracking-tight" style={labelStyle}>Add Project</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {loading
+                ? "Loading repositories from this workspace…"
+                : <>
+                    <span className="font-semibold text-foreground">{selected.size}</span> selected · {importedCount} already tracked · Check the repositories you want to add
+                  </>}
+            </p>
+          </div>
+          <button
+            onClick={add}
+            disabled={adding || selected.size === 0}
+            className="flex items-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            style={labelStyle}
+          >
+            {adding ? <Loader2 size={16} className="animate-spin" /> : null}
+            {adding ? "Adding…" : `Add ${selected.size}`}
+            {!adding && <ArrowRight size={16} />}
+          </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <Field label="Project Name" value={name} onChange={setName} placeholder="Payments Service" />
-          <Field label="Description (optional)" value={description} onChange={setDescription} placeholder="What is this project?" />
-
-          <div className="pt-2">
-            <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground mb-3">Version Control</h2>
-            <div className="space-y-3">
-              <div>
-                <label className={labelClass} style={{ fontFamily: "var(--font-display)" }}>Provider</label>
-                <select value={vcsTool} onChange={(e) => setVcsTool(e.target.value)} className={inputClass}>
-                  <option value="github">GitHub</option>
-                  <option value="gitlab">GitLab</option>
-                  <option value="bitbucket">Bitbucket</option>
-                </select>
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground px-5 py-12 justify-center">
+            <Loader2 size={16} className="animate-spin" /> Loading…
+          </div>
+        ) : (
+          <>
+            {repos.length > 0 && (
+              <div className="relative mb-4">
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search repositories…"
+                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                />
               </div>
-              <Field label="Owner / Organization" value={owner} onChange={setOwner} placeholder="acme" />
-              <Field label="Repository" value={repo} onChange={setRepo} placeholder="web" />
-              <Field label="Access Token" value={vcsToken} onChange={setVcsToken} placeholder="ghp_…" type="password" />
-            </div>
-          </div>
+            )}
 
-          <div className="pt-2">
-            <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground mb-3">Additional Tools (optional)</h2>
-            <div className="space-y-3">
-              <ToolSection title="Jira (Project Management)" enabled={jiraOn} onToggle={setJiraOn}>
-                <Field label="Email" value={jiraEmail} onChange={setJiraEmail} placeholder="you@company.com" />
-                <Field label="Base URL" value={jiraBaseUrl} onChange={setJiraBaseUrl} placeholder="https://acme.atlassian.net" />
-                <Field label="Project Key" value={jiraProjectKey} onChange={setJiraProjectKey} placeholder="WEB" />
-                <Field label="Board ID (optional)" value={jiraBoardId} onChange={setJiraBoardId} placeholder="5" />
-                <Field label="API Token" value={jiraToken} onChange={setJiraToken} placeholder="•••" type="password" />
-              </ToolSection>
-
-              <ToolSection title="SonarQube (Code Quality)" enabled={sonarOn} onToggle={setSonarOn}>
-                <Field label="Organization (optional)" value={sonarOrg} onChange={setSonarOrg} placeholder="acme" />
-                <Field label="Project Key" value={sonarProjectKey} onChange={setSonarProjectKey} placeholder="acme_web" />
-                <Field label="Base URL (optional)" value={sonarBaseUrl} onChange={setSonarBaseUrl} placeholder="https://sonarcloud.io" />
-                <Field label="Token" value={sonarToken} onChange={setSonarToken} placeholder="•••" type="password" />
-              </ToolSection>
-
-              <ToolSection title="CI/CD" enabled={cicdOn} onToggle={setCicdOn}>
-                <div>
-                  <label className={labelClass} style={{ fontFamily: "var(--font-display)" }}>Provider</label>
-                  <select value={cicdProvider} onChange={(e) => setCicdProvider(e.target.value)} className={inputClass}>
-                    <option value="github-actions">GitHub Actions</option>
-                    <option value="jenkins">Jenkins (sync coming soon)</option>
-                  </select>
+            {repos.length === 0 ? (
+              <div className="border border-dashed border-border p-12 text-center text-sm text-muted-foreground">
+                No repositories reachable with this workspace's token.
+              </div>
+            ) : (
+              <div className="border border-border">
+                <div className="grid items-center bg-muted px-5 py-3 border-b border-border" style={{ gridTemplateColumns: cols }}>
+                  <span className="w-8" />
+                  <span className="text-sm font-semibold" style={labelStyle}>Repository</span>
+                  <span className="text-sm font-semibold" style={labelStyle}>Language</span>
+                  <span className="text-sm font-semibold" style={labelStyle}>Stars</span>
+                  <span className="text-sm font-semibold" style={labelStyle}>Updated</span>
                 </div>
-
-                {cicdProvider === "github-actions" ? (
-                  <>
-                    <p className="text-xs text-muted-foreground">
-                      Runs on your version control repo ({owner || "owner"}/{repo || "repo"}).
-                    </p>
-                    <label className="flex items-center gap-2 text-sm">
-                      <input type="checkbox" checked={reuseVcsToken} onChange={(e) => setReuseVcsToken(e.target.checked)} />
-                      Reuse version control token
-                    </label>
-                    {!reuseVcsToken && (
-                      <Field label="Token" value={actionsToken} onChange={setActionsToken} placeholder="ghp_…" type="password" />
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs text-muted-foreground">Stored now; syncing works once the Jenkins connector ships.</p>
-                    <Field label="Server URL" value={jenkinsBaseUrl} onChange={setJenkinsBaseUrl} placeholder="https://jenkins.company.com" />
-                    <Field label="Username" value={jenkinsUser} onChange={setJenkinsUser} placeholder="ci-user" />
-                    <Field label="API Token" value={jenkinsToken} onChange={setJenkinsToken} placeholder="•••" type="password" />
-                    <Field label="Job Name" value={jenkinsJob} onChange={setJenkinsJob} placeholder="my-pipeline" />
-                  </>
+                {visibleRepos.length === 0 && (
+                  <div className="px-5 py-8 text-center text-sm text-muted-foreground">No repositories match “{search}”.</div>
                 )}
-              </ToolSection>
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
-              <AlertCircle size={13} />
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ fontFamily: "var(--font-display)" }}
-          >
-            {isLoading ? "Creating…" : "Create Project"}
-          </button>
-        </form>
-      </div>
+                {visibleRepos.map((r) => {
+                  const checked = r.imported || selected.has(r.name);
+                  const Row = r.imported ? "div" : "label";
+                  return (
+                    <Row
+                      key={r.name}
+                      className={`grid items-center px-5 py-3.5 border-b border-border last:border-b-0 transition-colors ${
+                        r.imported ? "opacity-60" : "hover:bg-muted/40 cursor-pointer"
+                      }`}
+                      style={{ gridTemplateColumns: cols }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={r.imported}
+                        onChange={() => !r.imported && toggleRepo(r.name)}
+                        className="w-8 accent-primary disabled:cursor-not-allowed"
+                      />
+                      <div className="min-w-0 pr-4">
+                        <div className="flex items-center gap-1.5">
+                          {r.private ? <Lock size={13} className="text-muted-foreground shrink-0" /> : <Globe size={13} className="text-muted-foreground shrink-0" />}
+                          <span className="font-semibold truncate" style={{ fontFamily: "var(--font-mono)" }}>{r.name}</span>
+                          {r.imported && (
+                            <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 shrink-0">
+                              <Check size={11} /> Tracked
+                            </span>
+                          )}
+                        </div>
+                        {r.description && <p className="text-sm text-muted-foreground truncate mt-0.5 pl-[19px]">{r.description}</p>}
+                      </div>
+                      <div>
+                        {r.language ? (
+                          <span className="text-xs font-medium px-2 py-0.5 bg-muted border border-border">{r.language}</span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Star size={13} /> {r.stars}
+                      </div>
+                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                        <Clock size={13} /> {timeAgo(r.updatedAt)}
+                      </div>
+                    </Row>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </main>
     </div>
   );
 }

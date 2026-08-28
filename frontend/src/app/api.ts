@@ -143,33 +143,11 @@ export interface ProjectDetail extends ProjectListItem {
   members: ProjectMemberView[];
 }
 
-export interface IntegrationInput {
-  category: ToolCategory;
-  toolName: string;
-  config: Record<string, string>;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  vcs: { toolName: string; config: Record<string, string> };
-  integrations?: IntegrationInput[];
-}
-
 // Company projects, optionally filtered by version-control tool (the "workspace").
 export async function listProjects(vcs?: string): Promise<ProjectListItem[]> {
   const query = vcs ? `?vcs=${encodeURIComponent(vcs)}` : "";
   const { projects } = await apiRequest<{ projects: ProjectListItem[] }>(`/projects${query}`);
   return projects;
-}
-
-// Admin-only; returns the full project (integrations + members).
-export async function createProject(input: CreateProjectInput): Promise<ProjectDetail> {
-  const { project } = await apiRequest<{ project: ProjectDetail }>("/projects", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
-  return project;
 }
 
 export async function getProject(id: number): Promise<ProjectDetail> {
@@ -214,6 +192,28 @@ export interface WorkspaceView {
   vcsProvider: string;
   organization: string;
   createdAt: string | null;
+}
+
+// A repo reachable by a workspace's PAT, plus whether it's already tracked as a project here.
+export interface WorkspaceRepoStatus extends WorkspaceRepo {
+  imported: boolean;
+}
+
+// "Add Project": repos this workspace's stored PAT can reach, flagging already-imported ones (admin only).
+export async function listWorkspaceRepos(workspaceId: string | number): Promise<WorkspaceRepoStatus[]> {
+  const { repos } = await apiRequest<{ repos: WorkspaceRepoStatus[] }>(`/workspaces/${workspaceId}/repos`);
+  return repos;
+}
+
+// Import the selected repos as projects under an existing workspace (admin only).
+export async function addWorkspaceProjects(
+  workspaceId: string | number,
+  repos: string[],
+): Promise<{ projects: Array<{ id: number; name: string }> }> {
+  return apiRequest<{ projects: Array<{ id: number; name: string }> }>(`/workspaces/${workspaceId}/projects`, {
+    method: "POST",
+    body: JSON.stringify({ repos }),
+  });
 }
 
 // Step 2 of the wizard: validate the PAT and list the repos it can access (nothing is saved).
