@@ -351,7 +351,7 @@ const REAL_SPECS: Record<string, RealConnectorSpec> = {
 
 // Real project members backed by the projectmember table. Admins invite by email (a single-use link
 // is emailed); invitees appear here once they accept (register, or log in and accept). No local state.
-function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
+function TeamDirectory({backendProjectId,isAdmin}:{backendProjectId:string;isAdmin:boolean;}) {
   const pid=Number(backendProjectId);
   const [members,setMembers]=useState<ProjectMemberView[]>([]);
   const [loading,setLoading]=useState(true);
@@ -397,13 +397,15 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
     <div>
       <div className="mb-5">
         <div className="text-[15px] font-bold text-foreground">Team directory — {members.length} member{members.length===1?"":"s"}</div>
-        <p className="text-sm text-muted-foreground mt-1">Invite people by email. They join once they accept the emailed link — new users register, existing users log in and accept. The public survey form stays anonymous.</p>
+        <p className="text-sm text-muted-foreground mt-1">{isAdmin
+          ? "Invite people by email. They join once they accept the emailed link — new users register, existing users log in and accept. The public survey form stays anonymous."
+          : "People assigned to this project. Only admins can invite or remove members."}</p>
       </div>
       <div className="border border-border bg-card mb-4">
         {loading?(
           <div className="px-5 py-4 text-sm text-muted-foreground">Loading members…</div>
         ):members.length===0?(
-          <div className="px-5 py-4 text-sm text-muted-foreground">No members yet. Invite someone below.</div>
+          <div className="px-5 py-4 text-sm text-muted-foreground">{isAdmin?"No members yet. Invite someone below.":"No members yet."}</div>
         ):members.map(m=>(
           <div key={m.userId} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
             <div className="flex items-center gap-3">
@@ -412,25 +414,31 @@ function TeamDirectory({backendProjectId}:{backendProjectId:string;}) {
             </div>
             <div className="flex items-center gap-4">
               <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.email}</span>
-              <button onClick={()=>remove(m.userId)} disabled={removingId===m.userId} title="Remove member"
-                className="text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-40">
-                {removingId===m.userId?<RefreshCw size={15} className="animate-spin"/>:<X size={15}/>}
-              </button>
+              {isAdmin&&(
+                <button onClick={()=>remove(m.userId)} disabled={removingId===m.userId} title="Remove member"
+                  className="text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-40">
+                  {removingId===m.userId?<RefreshCw size={15} className="animate-spin"/>:<X size={15}/>}
+                </button>
+              )}
             </div>
           </div>
         ))}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
-        <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" type="email"
-          onKeyDown={e=>{if(e.key==="Enter") invite();}}
-          className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
-        <button onClick={invite} disabled={inviting}
-          className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
-          {inviting?<><RefreshCw size={14} className="animate-spin"/>Inviting…</>:<><Mail size={14}/>Invite</>}
-        </button>
-      </div>
-      {status==="ok"&&<p className="text-sm text-emerald-500 font-medium mt-3 flex items-center gap-1.5"><Check size={13}/>{msg}</p>}
-      {status==="err"&&<p className="text-sm text-red-500 font-medium mt-3 flex items-center gap-1.5"><AlertCircle size={13}/>{msg}</p>}
+      {isAdmin&&(
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
+            <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" type="email"
+              onKeyDown={e=>{if(e.key==="Enter") invite();}}
+              className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+            <button onClick={invite} disabled={inviting}
+              className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
+              {inviting?<><RefreshCw size={14} className="animate-spin"/>Inviting…</>:<><Mail size={14}/>Invite</>}
+            </button>
+          </div>
+          {status==="ok"&&<p className="text-sm text-emerald-500 font-medium mt-3 flex items-center gap-1.5"><Check size={13}/>{msg}</p>}
+          {status==="err"&&<p className="text-sm text-red-500 font-medium mt-3 flex items-center gap-1.5"><AlertCircle size={13}/>{msg}</p>}
+        </>
+      )}
     </div>
   );
 }
@@ -456,7 +464,7 @@ export function SettingsView({project}:{project:Project;}) {
         </div>
         {tab==="team"&&(
           project.backendProjectId
-            ? <TeamDirectory backendProjectId={project.backendProjectId}/>
+            ? <TeamDirectory backendProjectId={project.backendProjectId} isAdmin={isAdmin}/>
             : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so members can't be managed.</p>
         )}
         {tab==="questions"&&(
