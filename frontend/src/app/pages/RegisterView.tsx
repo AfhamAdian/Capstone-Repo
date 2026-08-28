@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertCircle } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { getInvite, sendVerificationCode, verifyEmailCode } from "../api";
+import { getInvite, sendVerificationCode, verifyEmailCode, ApiError } from "../api";
 
 export function RegisterView({
   onSuccess,
@@ -67,13 +67,12 @@ export function RegisterView({
         setStep("verify");
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Registration failed";
-      // Invited email already has an account — send them to log in and accept (token is preserved).
-      if (isInvite && /already exists|log in/i.test(message)) {
+      // Invited email already has an account (409) — send them to log in and accept (token preserved).
+      if (isInvite && err instanceof ApiError && err.status === 409) {
         onNavigateToLogin?.();
         return;
       }
-      setErrors({ form: message });
+      setErrors({ form: err instanceof Error ? err.message : "Registration failed" });
     } finally {
       setIsLoading(false);
     }

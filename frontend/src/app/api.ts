@@ -3,6 +3,15 @@ export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
 
 // credentials:"include" makes the browser send/receive the session cookie.
+// Carries the HTTP status so callers can branch on it (e.g. 409 = account already exists) without
+// matching on the error message text.
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     credentials: "include",
@@ -11,7 +20,7 @@ async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T
   });
   const data = (await response.json().catch(() => ({}))) as { message?: string } & T;
   if (!response.ok) {
-    throw new Error(data.message || `Request failed (${response.status})`);
+    throw new ApiError(data.message || `Request failed (${response.status})`, response.status);
   }
   return data;
 }
