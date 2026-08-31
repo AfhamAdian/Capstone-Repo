@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   ChevronLeft, Plus, Search, RefreshCw, X, AlertCircle, ChevronDown, Pencil, Trash2,
 } from "lucide-react";
@@ -8,7 +8,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { listAllProjectActions, searchActions, type ActionSearchMode } from "../api";
 import type { Project, Action } from "../types";
-import { actionIncludesProject, actionSearchModeLabel, actionSimilarityLabel, projectTagStyle, fmtDate, ttStyle } from "../format";
+import { actionIncludesProject, actionMatchesKeywordSearch, actionSearchModeLabel, actionSimilarityLabel, projectTagStyle, fmtDate, ttStyle } from "../format";
 import { InlineRating } from "../components/InlineRating";
 
 export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAction,onEditAction,onDeleteAction,onRateAction}:{
@@ -20,36 +20,17 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
   const [filterProject,setFilterProject]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [ex,setEx]=useState<string|null>(null);
-  const [searchResults,setSearchResults]=useState<Action[]|null>(null);
-  const [searching,setSearching]=useState(false);
-  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
-  const [searchError,setSearchError]=useState<string|null>(null);
   const [confirmDelete,setConfirmDelete]=useState<string|null>(null);
   const [deleting,setDeleting]=useState<string|null>(null);
   const [mutationError,setMutationError]=useState<string|null>(null);
 
-  useEffect(()=>{
-    const query=q.trim();
-    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
-    const controller=new AbortController();
-    setSearching(true);setSearchError(null);
-    const timer=setTimeout(()=>{
-      searchActions(query,50,{projectId:filterProject!=="all"?filterProject:undefined,signal:controller.signal})
-        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
-        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
-    },300);
-    return()=>{clearTimeout(timer);controller.abort();};
-  },[q,filterProject]);
-
   const filtered=useMemo(()=>{
-    const semanticQuery=q.trim().length>=3;
-    let list=[...(semanticQuery&&!searchError?(searchResults??[]):actions)];
+    let list=[...actions];
     if(filterProject!=="all") list=list.filter(a=>a.projectIds.includes(filterProject));
-    if(q&&(!semanticQuery||searchError)){const lq=q.toLowerCase();list=list.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));}
-    if(!semanticQuery||searchError)list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
+    if(q)list=list.filter(a=>actionMatchesKeywordSearch(a,q));
+    list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
     return list;
-  },[actions,searchResults,searchError,q,filterProject,sortOrder]);
+  },[actions,q,filterProject,sortOrder]);
 
   const COL="minmax(0,2.5fr) 150px 130px 120px 104px";
   const ROW_COL="minmax(0,2.5fr) 150px 130px";
@@ -84,9 +65,8 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
         <div className="flex items-center gap-3 mb-5 flex-wrap">
           <div className="flex items-center gap-2 bg-card border border-border px-3 py-2.5 flex-1 max-w-sm">
             <Search size={14} className="text-muted-foreground"/>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by meaning…"
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by keyword…"
               className="bg-transparent text-sm outline-none flex-1 placeholder:text-muted-foreground"/>
-            {searching&&<RefreshCw size={13} className="text-primary animate-spin"/>}
             {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
           </div>
           <select value={filterProject} onChange={e=>setFilterProject(e.target.value)}
@@ -94,7 +74,6 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
             <option value="all">All Projects</option>
             {projects.map(p=><option key={p.id} value={String(p.backendProjectId??p.id)}>{p.name}</option>)}
           </select>
-          {q.trim().length>=3&&<div className="border border-border bg-card px-3 py-2.5 text-sm font-semibold text-primary">{searching?"Searching…":searchError?"Local keyword results":actionSearchModeLabel(searchMode)}</div>}
           <div className="flex border border-border">
             {(["newest","oldest"] as const).map(o=>(
               <button key={o} onClick={()=>setSortOrder(o)}
@@ -105,8 +84,6 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
             ))}
           </div>
         </div>
-
-        {searchError&&q.trim().length>=3&&<div className="mb-4 flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={14}/>{searchError}</div>}
 
         <div className="border border-border bg-card overflow-x-auto">
           <div className="min-w-[760px]">
@@ -362,26 +339,35 @@ export function ActionsLibrary({actions,project,currentUserId,onRateAction}:{act
   const [searching,setSearching]=useState(false);
   const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
   const [searchError,setSearchError]=useState<string|null>(null);
-  useEffect(()=>{
+  const searchController=useRef<AbortController|null>(null);
+  useEffect(()=>()=>searchController.current?.abort(),[]);
+  const updateQuery=(query:string)=>{
+    searchController.current?.abort();searchController.current=null;
+    setQ(query);setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);
+  };
+  const deepSearch=async()=>{
     const query=q.trim();
-    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
+    if(query.length<3||searching)return;
+    searchController.current?.abort();
     const controller=new AbortController();
-    setSearching(true);setSearchError(null);
-    const timer=setTimeout(()=>{
-      searchActions(query,50,{projectId,signal:controller.signal})
-        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
-        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
-    },300);
-    return()=>{clearTimeout(timer);controller.abort();};
-  },[q,projectId]);
+    searchController.current=controller;
+    setSearching(true);setSearchResults(null);setSearchMode(null);setSearchError(null);
+    try{
+      const result=await searchActions(query,50,{deep:true,projectId,signal:controller.signal});
+      if(controller.signal.aborted)return;
+      setSearchResults(result.actions);setSearchMode(result.mode);
+    }catch(error){
+      if(!controller.signal.aborted)setSearchError(error instanceof Error?error.message:"Deep search is unavailable");
+    }finally{
+      if(searchController.current===controller){searchController.current=null;setSearching(false);}
+    }
+  };
   const filtered=useMemo(()=>{
     const base=actions.filter(a=>!project||actionIncludesProject(a,project));
-    if(q.trim().length>=3&&!searchError)return searchResults??[];
+    if(searchResults)return searchResults;
     if(!q)return base;
-    const lq=q.toLowerCase();
-    return base.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));
-  },[actions,searchResults,searchError,q,project,projectId]);
+    return base.filter(a=>actionMatchesKeywordSearch(a,q));
+  },[actions,searchResults,q,project]);
   const COL="minmax(0,3fr) 140px 120px 120px";
   return (
     <div className="flex-1 overflow-y-auto bg-background">
@@ -390,14 +376,20 @@ export function ActionsLibrary({actions,project,currentUserId,onRateAction}:{act
           <h2 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>Actions Library</h2>
           <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} records</span>
         </div>
-        <div className="flex items-center gap-2 bg-card border border-border px-4 py-3.5 mb-6">
-          <Search size={16} className="text-muted-foreground shrink-0"/>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search action history by meaning…"
-            className="flex-1 text-[15px] bg-transparent outline-none placeholder:text-muted-foreground"/>
-          {searching&&<RefreshCw size={14} className="text-primary animate-spin"/>}
-          {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={15}/></button>}
+        <div className="flex items-stretch gap-2 mb-6">
+          <div className="flex flex-1 items-center gap-2 bg-card border border-border px-4 py-3.5">
+            <Search size={16} className="text-muted-foreground shrink-0"/>
+            <input value={q} onChange={e=>updateQuery(e.target.value)} placeholder="Search action history by keyword…"
+              className="flex-1 text-[15px] bg-transparent outline-none placeholder:text-muted-foreground"/>
+            {q&&<button onClick={()=>updateQuery("")} className="text-muted-foreground hover:text-foreground"><X size={15}/></button>}
+          </div>
+          <button onClick={()=>void deepSearch()} disabled={q.trim().length<3||searching}
+            className="flex items-center gap-2 border border-primary bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Rerank action history by deep similarity">
+            {searching?<RefreshCw size={14} className="animate-spin"/>:<Search size={14}/>} {searching?"Searching…":"Deep Search"}
+          </button>
         </div>
-        {q.trim().length>=3&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
+        {(searchError||searchMode)&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
           {searchError?<AlertCircle size={14}/>:<Search size={14}/>} {searchError??actionSearchModeLabel(searchMode)}
         </div>}
         <div className="border border-border bg-card">
@@ -428,7 +420,7 @@ export function ActionsLibrary({actions,project,currentUserId,onRateAction}:{act
               </AnimatePresence>
             </div>
           ))}
-          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Searching action history…":"No actions match your search."}</div>}
+          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Reranking action history…":"No actions match your search."}</div>}
         </div>
       </div>
     </div>

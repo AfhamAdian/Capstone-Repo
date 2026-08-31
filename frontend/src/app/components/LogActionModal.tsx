@@ -41,9 +41,14 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
     searchController.current=controller;
     setSearchTriggered(true);setSearching(true);setSearchMode(null);setSearchError(null);setSimilar([]);
     try{
-      const result=await searchActions(query,5,{projectId:sel.length===1?sel[0]:undefined,signal:controller.signal});
+      const result=await searchActions(query,5,{
+        deep:true,
+        projectId:sel.length===1?sel[0]:undefined,
+        excludeActionId:initialAction?.id,
+        signal:controller.signal,
+      });
       if(controller.signal.aborted)return;
-      setSimilar(result.actions.filter(action=>action.id!==initialAction?.id));
+      setSimilar(result.actions);
       setSearchMode(result.mode);
     }catch(err){
       if(!controller.signal.aborted)setSearchError(err instanceof Error?err.message:"Similar-action search is unavailable");
@@ -128,7 +133,7 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
                     onClick={()=>void findSimilar()}
                     disabled={problemAndCause.trim().length<3||searching}
                     className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Search for similar past problems">
+                    title="Deep-search past problems with Pinecone reranking">
                     {searching?<RefreshCw size={11} className="animate-spin"/>:<Search size={11}/>} {searching?"Searching…":"Find Similar"}
                   </button>
                 </div>

@@ -33,6 +33,13 @@ export async function getHealthStatus() {
         dimensions: env.geminiEmbeddingDimensions,
         embeddingVersion: env.actionEmbeddingVersion,
       },
+      actionReranking: {
+        status: env.isActionRerankConfigured ? 'configured' : 'not_configured',
+        provider: 'pinecone',
+        model: env.pineconeRerankModel,
+        minScore: env.pineconeRerankMinScore,
+        candidateLimit: env.pineconeRerankCandidateLimit,
+      },
     },
   };
 }

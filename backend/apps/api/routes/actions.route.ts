@@ -27,8 +27,9 @@ actionsRouter.use(requireAuth);
 actionsRouter.post('/', asyncHandler(createAction));
 
 /**
- * GET /api/v1/actions/search?q=...&limit=...
- * Company-scoped semantic search. Registered before /:id so "search"
+ * GET /api/v1/actions/search?q=...&limit=...&mode=deep
+ * Company-scoped keyword search, or explicit Pinecone reranking with mode=deep.
+ * Registered before /:id so "search"
  * is not captured as an id param.
  */
 actionsRouter.get('/search', asyncHandler(searchActions));

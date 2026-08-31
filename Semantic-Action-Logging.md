@@ -1,11 +1,12 @@
-# Action Logging to Semantic Action Search
+# Action Logging and Explicit Deep Action Search
 
-Last verified: **2026-08-31**
+Last verified: **2026-09-01**
 
 This is the current implementation and operations reference for management-action
-logging, embedding, and semantic search. New embeddings use Google's Gemini API
-with `gemini-embedding-001`; SiliconFlow appears only in the historical verification
-record and as truthful metadata on legacy rows.
+logging, embedding, keyword search, and explicit Pinecone reranking. The historical
+Gemini/pgvector embedding pipeline remains available for stored embeddings, but user-facing
+deep action search now uses Pinecone's `bge-reranker-v2-m3` only when a deep-search button
+is clicked. Typing in a search field never invokes a semantic provider.
 
 ## Current status
 
@@ -16,12 +17,13 @@ The end-to-end code path is implemented:
 - BullMQ and Redis deliver that task to the worker.
 - The worker calls Google's Gemini batch embedding endpoint.
 - The vector is stored in Supabase Postgres using pgvector.
-- Search embeds the query, retrieves cosine matches, and fuses them with lexical
-  matches using reciprocal-rank fusion (RRF).
-- If Gemini, Redis, or the vector path is unavailable, action logging still
-  works and search automatically uses lexical matching.
-- The Log Action modal, global Actions page, and project Actions Library all use
-  the server search endpoint.
+- Ordinary searches use local typo-tolerant keyword matching (or the lexical API mode).
+- Explicit deep search sends at most 100 scoped action documents to Pinecone's
+  `bge-reranker-v2-m3`, filters by `PINECONE_RERANK_MIN_SCORE`, and returns scores.
+- Deep search is triggered only by **Find Similar** in Log Action and **Deep Search**
+  in the project Action Library.
+- If Pinecone is unavailable, deep search reports an error; it does not mislabel
+  keyword fallback results as similarity results.
 
 The pgvector migration has been applied to the currently configured Supabase
 database. The live database currently has pgvector **0.8.0**, the
@@ -92,15 +94,16 @@ connector under `backend/libs/connectors/cicd/` is unrelated.
 | Migration | `supabase/migrations/20260822000000_action_semantic_search.sql` | Enables pgvector; creates embedding storage, claim RPC, and match RPC. |
 | Reference schema | `backend/apps/api/database/schema.sql` | Documents action and embedding tables. |
 | Provider migration | `supabase/migrations/20260831010000_action_embeddings_gemini_provider.sql` | Allows Gemini rows while preserving legacy provider metadata. |
-| Environment | `backend/apps/api/config/env.ts` | Parses Gemini and search configuration. |
-| Environment example | `backend/.env.example` | Documents every semantic-search variable. |
+| Environment | `backend/apps/api/config/env.ts` | Parses Gemini, keyword-search, and Pinecone reranker configuration. |
+| Environment example | `backend/.env.example` | Documents embedding and reranker variables. |
 | Provider contract | `backend/libs/embeddings/embedding-provider.ts` | Provider interface, safe provider error, and vector validation. |
 | Gemini adapter | `backend/libs/embeddings/gemini-embedding.provider.ts` | Batch requests, timeout, response validation, L2 normalization, and error classification. |
 | Canonical text | `backend/libs/embeddings/embedding-text.ts` | Builds stable action text and SHA-256 content hash. |
 | Action database | `backend/apps/api/database/actions.ts` | Insert/list/get/rate and bounded lexical search. |
 | Embedding database | `backend/apps/api/database/action-embeddings.ts` | Pending/claim/complete/fail/retry operations and vector RPC call. |
 | Creation service | `backend/apps/api/services/actions.service.ts` | Stores the action, prepares an embedding row, and enqueues best effort. |
-| Search service | `backend/apps/api/services/action-search.service.ts` | Query embedding, vector retrieval, RRF, and lexical fallback. |
+| Reranker adapter | `backend/libs/reranking/pinecone-reranker.ts` | Pinecone HTTP request, timeout, and response validation. |
+| Search service | `backend/apps/api/services/action-search.service.ts` | Keyword mode plus explicit scoped Pinecone reranking and threshold filtering. |
 | Controller | `backend/apps/api/controllers/actions.controller.ts` | Input bounds, date validation, search mode header, and service calls. |
 | Queue | `backend/libs/queue/action-embedding-queue.ts` | Dedicated BullMQ queue with deterministic job IDs and retries. |
 | Worker processor | `backend/apps/worker/processors/action-embedding.processor.ts` | Claims tasks, embeds action text, and writes status/vector. |
@@ -109,7 +112,8 @@ connector under `backend/libs/connectors/cicd/` is unrelated.
 | Frontend API | `frontend/src/app/api.ts` | Sends search options and maps optional similarity. |
 | Frontend UI | `frontend/src/app/` | Integrates the action-search surfaces. |
 | Tests | `backend/tests/embeddings.test.ts` | Canonical text, validation, provider request, and safe-error tests. |
-| Tests | `backend/tests/action-search.test.ts` | Sanitization, date, and RRF tests. |
+| Tests | `backend/tests/action-search.test.ts` | Sanitization, date, scope, and effectiveness tests. |
+| Tests | `backend/tests/pinecone-reranker.test.ts` | Pinecone request mapping and response validation. |
 
 ## Action data model
 
@@ -231,21 +235,19 @@ HTTP 201, the embedding row became `failed`, and `attempt_count` remained 1.
 Endpoint:
 
 ```http
-GET /api/v1/actions/search?q=sprint%20capacity&limit=5&projectId=onyx-mobile
+GET /api/v1/actions/search?q=sprint%20capacity&limit=5&projectId=42&mode=deep
 ```
 
 ```text
 request
   -> validate q and clamp limit
-  -> start bounded lexical candidate query
-  -> if Gemini is configured:
-       embed q synchronously
-       call match_actions RPC for active embedding version
-       apply project filter before ranking/limit
-       keep rows above cosine threshold
-       fuse semantic and lexical rankings with RRF
-  -> otherwise, or on semantic failure:
-       return lexical results
+  -> without mode=deep: run bounded database keyword search
+  -> with mode=deep:
+       load at most PINECONE_RERANK_CANDIDATE_LIMIT scoped actions
+       build labeled Problem / Root cause / Action taken documents
+       call Pinecone Inference with bge-reranker-v2-m3
+       keep scores at or above PINECONE_RERANK_MIN_SCORE
+       return the requested top results in reranker order
   -> set x-action-search-mode
   -> expose x-action-search-mode through CORS
 ```
@@ -254,45 +256,33 @@ Search modes:
 
 | Header value | Meaning |
 |---|---|
-| `hybrid` | Semantic and lexical candidates were fused. |
-| `semantic` | Semantic results were returned because lexical produced none. |
-| `lexical` | Gemini was unconfigured/unavailable, vector search failed, or normal lexical matching was the only path. |
+| `rerank` | Pinecone reranker results, ordered and thresholded by relevance score. |
+| `lexical` | Keyword-only API results; no semantic provider was called. |
 
 The API includes `Access-Control-Expose-Headers: x-action-search-mode`, allowing
 browser JavaScript to read the result mode. The frontend maps the header to
-`hybrid`, `semantic`, or `lexical`; a missing or unknown value safely defaults to
+`rerank` or `lexical`; a missing or unknown value safely defaults to
 `lexical`.
 
-The API response stays an array of normal action rows. Semantic rows add an
+The API response stays an array of normal action rows. Reranked rows add an
 optional `similarity` number; stored vectors are never returned.
-
-RRF lets exact names, issue identifiers, and acronyms from lexical search coexist
-with paraphrases from semantic search. A row present in both candidate sets is
-promoted without comparing incompatible raw lexical and cosine scores.
 
 ### 4. Frontend search
 
-All connected surfaces now call the same endpoint:
+Search behavior by surface:
 
-- Log Action modal: explicit **Find Similar** click, five results, and optional
-  single-project scope. Typing never sends a search request.
-- Global Actions view: 300 ms debounce, optional selected-project scope, relevance
-  order while a semantic-length query is active.
-- Project Actions Library: 300 ms debounce and mandatory active-project scope.
+- Log Action modal: explicit **Find Similar** click invokes Pinecone reranking,
+  returns five results, excludes the edited action, and optionally scopes to one project.
+- Global Actions view: typing performs local typo-tolerant keyword matching only.
+- Project Actions Library: typing performs local typo-tolerant keyword matching;
+  **Deep Search** explicitly invokes Pinecone reranking within the active project.
 
-Each surface aborts obsolete requests so an older response cannot replace a newer
-query. The Log Action modal enables **Find Similar** after at least three trimmed
-characters in Problem and searches only when clicked. Shorter queries elsewhere
-use the existing local behavior or no similar lookup.
+Deep-search surfaces abort obsolete requests so an older response cannot replace a newer
+query. Both deep-search buttons require at least three trimmed characters.
 
-The Global Actions view displays the actual search mode, cosine similarity when
-available, and a loading state. If the search API is unreachable, it warns the user
-and filters the already-loaded actions locally instead of showing a false empty
-state. Its selected-project filter is sent to the backend before vector ranking.
-
-The Project Actions Library supplies the active project ID and displays mode,
-loading, similarity, and fallback states. It uses already-loaded project actions
-if the search request fails and distinguishes request failure from no results.
+The Global Actions view never calls the search endpoint while typing. The Project
+Actions Library supplies the active project ID only when its Deep Search button is
+clicked and displays loading, reranker scores, no-result, and error states.
 
 The Log Action modal clears results and cancels an active request when Problem text
 or the project selection changes, requiring another explicit click. It displays
@@ -392,6 +382,12 @@ ACTION_EMBEDDING_VERSION=gemini-embedding-001-768-l2-v1
 ACTION_SEARCH_MIN_SIMILARITY=0.70
 ACTION_SEARCH_MAX_RESULTS=50
 ACTION_EMBEDDING_TIMEOUT_MS=10000
+PINECONE_API_KEY=
+PINECONE_RERANK_URL=https://api.pinecone.io/rerank
+PINECONE_RERANK_MODEL=bge-reranker-v2-m3
+PINECONE_RERANK_MIN_SCORE=0.10
+PINECONE_RERANK_CANDIDATE_LIMIT=100
+PINECONE_RERANK_TIMEOUT_MS=10000
 ```
 
 `GEMINI_API_KEY` is shared with the survey feature; `GEMINI_MODEL` controls survey
@@ -409,10 +405,15 @@ services.semanticActionSearch.provider
 services.semanticActionSearch.model
 services.semanticActionSearch.dimensions
 services.semanticActionSearch.embeddingVersion
+services.actionReranking.status
+services.actionReranking.provider
+services.actionReranking.model
+services.actionReranking.minScore
+services.actionReranking.candidateLimit
 ```
 
-Status is `configured` when the Gemini key and provider settings exist;
-otherwise it is `lexical_fallback`.
+`semanticActionSearch` describes the embedding worker. `actionReranking` is
+`configured` when `PINECONE_API_KEY` exists and otherwise `not_configured`.
 
 ## Setup and operation
 
@@ -469,11 +470,12 @@ npm run backfill:action-embeddings -- --limit=500 --stale-minutes=15
 
 ```bash
 curl -i 'http://localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5'
+curl -i 'http://localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5&mode=deep'
 curl -s 'http://localhost:3000/api/v1/health'
 ```
 
-After the worker finishes a backfill, search should report `hybrid` or `semantic`.
-Without the key or ready vectors, `lexical` is the expected healthy behavior.
+The first request reports `lexical`; the second reports `rerank` when Pinecone is
+configured. The embedding worker and ready vectors are not required for reranking.
 
 Useful database checks:
 
@@ -491,7 +493,20 @@ from public.action_embeddings
 order by updated_at desc;
 ```
 
-## Gemini migration verification
+## Pinecone reranker verification
+
+Verification date: **2026-09-01**
+
+- A live `bge-reranker-v2-m3` request returned HTTP 200.
+- A relevant deployment-delay document scored `0.9284088`; an unrelated office
+  furniture document scored `0.000016187581`.
+- `npm run test:actions` passed all **11/11** focused tests, including the new
+  reranker request mapping and malformed-score validation.
+- The frontend production build succeeded; only the existing large-chunk warning remains.
+- Repository-wide TypeScript checking still reports the eight pre-existing
+  health-score property errors listed in the historical verification below.
+
+## Historical Gemini migration verification
 
 Verification date: **2026-08-31**
 
@@ -693,37 +708,18 @@ orphaned dummy embeddings: 0
 The temporary embedding fixture and temporary port-3100 API were stopped. No fake
 embedding remains in Supabase or repository configuration.
 
-## Obtaining Gemini semantic results
+## Using Pinecone deep action search
 
-The frontend is ready and automatically displays the correct mode. To obtain real
-hybrid or semantic results:
+To obtain reranked results:
 
-1. Set a Gemini API key with access to `gemini-embedding-001`. Standard requests
-   are currently available on Google's free tier, subject to quota.
-2. Keep the API, Redis, and worker running.
-3. Run:
+1. Set `PINECONE_API_KEY` in the ignored `backend/.env`.
+2. Start the API. Redis, the embedding worker, and a vector backfill are not required
+   for reranking because the API sends bounded action text directly to Pinecone.
+3. Click **Find Similar** in Log Action or **Deep Search** in Action Library.
+4. Evaluate realistic queries and tune `PINECONE_RERANK_MIN_SCORE`.
 
-   ```bash
-   cd backend
-   npm run backfill:action-embeddings
-   ```
-
-4. Wait for existing rows to become ready:
-
-   ```sql
-   select status, count(*)
-   from public.action_embeddings
-   group by status;
-   ```
-
-5. Search from Global Actions, a project's Actions Library, or the Log Action
-   modal. The UI labels results as hybrid, semantic, or keyword fallback.
-6. Evaluate realistic paraphrase queries and tune
-   `ACTION_SEARCH_MIN_SIMILARITY` using observed relevance.
-
-If Gemini is unconfigured or reaches a quota/provider error, action logging and
-keyword search remain fully usable. The application will not silently switch to a
-paid or different provider.
+If Pinecone is unconfigured or reaches a quota/provider error, action logging and
+keyword search remain fully usable. Deep search reports that it is unavailable.
 
 Future scale work, only when measurements justify it:
 

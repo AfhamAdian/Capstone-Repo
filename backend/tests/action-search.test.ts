@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sanitizeActionSearchQuery, type ActionRow, type ActionSearchRow } from '../apps/api/database/actions.js';
-import { fuseActionSearchResults } from '../apps/api/services/action-search.service.js';
+import { sanitizeActionSearchQuery, type ActionRow } from '../apps/api/database/actions.js';
 import { actionScopeForSession, groupEffectivenessReviews, isValidDateOnly } from '../apps/api/controllers/actions.controller.js';
 
 function row(id: string, date: string): ActionRow {
@@ -59,17 +58,4 @@ test('effectiveness queue separates last week, overdue, and deferred actions', (
   assert.deepEqual(queue.earlier.map((action) => action.id), ['overdue']);
   assert.deepEqual(queue.waiting_for_outcome.map((action) => action.id), ['deferred']);
   assert.equal(queue.ready_count, 2);
-});
-
-test('hybrid RRF promotes rows present in semantic and lexical results', () => {
-  const semantic: ActionSearchRow[] = [
-    { ...row('semantic-only', '2026-08-20'), similarity: 0.91 },
-    { ...row('both', '2026-08-19'), similarity: 0.82 },
-  ];
-  const lexical: ActionRow[] = [row('both', '2026-08-19'), row('lexical-only', '2026-08-22')];
-
-  const result = fuseActionSearchResults(semantic, lexical, 3);
-  assert.equal(result[0]?.id, 'both');
-  assert.equal(result.length, 3);
-  assert.equal(result.find((item) => item.id === 'both')?.similarity, 0.82);
 });

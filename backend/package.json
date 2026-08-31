@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:actions": "node --import tsx --test tests/action-search.test.ts tests/embeddings.test.ts",
+    "test:actions": "node --import tsx --test tests/action-search.test.ts tests/embeddings.test.ts tests/pinecone-reranker.test.ts",
     "backfill:action-embeddings": "tsx scripts/backfill-action-embeddings.ts",
     "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js",
     "test:jira-metrics": "npm run build && node dist/scripts/test-jira-metrics.js"

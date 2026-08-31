@@ -56,6 +56,12 @@ const actionSearchMinSimilarity = boundedNumber(
 );
 const actionSearchMaxResults = positiveInteger(process.env.ACTION_SEARCH_MAX_RESULTS, 50);
 const actionEmbeddingTimeoutMs = positiveInteger(process.env.ACTION_EMBEDDING_TIMEOUT_MS, 10_000);
+const pineconeApiKey = process.env.PINECONE_API_KEY;
+const pineconeRerankUrl = process.env.PINECONE_RERANK_URL ?? 'https://api.pinecone.io/rerank';
+const pineconeRerankModel = process.env.PINECONE_RERANK_MODEL ?? 'bge-reranker-v2-m3';
+const pineconeRerankMinScore = boundedNumber(process.env.PINECONE_RERANK_MIN_SCORE, 0.1, 0, 1);
+const pineconeRerankCandidateLimit = Math.min(100, positiveInteger(process.env.PINECONE_RERANK_CANDIDATE_LIMIT, 100));
+const pineconeRerankTimeoutMs = positiveInteger(process.env.PINECONE_RERANK_TIMEOUT_MS, 10_000);
 
 // Frontend origin allowed to send credentialed (cookie) requests
 const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
@@ -131,6 +137,13 @@ export const env = {
   actionSearchMinSimilarity,
   actionSearchMaxResults,
   actionEmbeddingTimeoutMs,
+  pineconeApiKey,
+  pineconeRerankUrl,
+  pineconeRerankModel,
+  pineconeRerankMinScore,
+  pineconeRerankCandidateLimit,
+  pineconeRerankTimeoutMs,
+  isActionRerankConfigured: Boolean(pineconeApiKey),
   isSemanticSearchConfigured: Boolean(geminiApiKey),
   frontendOrigin,
   smtpUser,

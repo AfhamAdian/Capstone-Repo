@@ -6,6 +6,7 @@ import {
   deferActionReview as deferReviewRecord,
   deleteActionRecord,
   getActionById,
+  isActionId,
   listActions as queryActions,
   listOwnerPendingReviews,
   sanitizeActionSearchQuery,
@@ -18,7 +19,7 @@ import {
 import { getProjectById, isProjectMember } from '../database/project.js';
 import { findUserById } from '../database/user.js';
 import { createAction as createActionRecord, updateAction as updateActionRecord } from '../services/actions.service.js';
-import { searchActions as querySearchActions } from '../services/action-search.service.js';
+import { ActionRerankingUnavailableError, searchActions as querySearchActions } from '../services/action-search.service.js';
 import { env } from '../config/env.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -183,7 +184,7 @@ export async function listActions(request: Request, response: Response): Promise
 
 export async function searchActions(request: Request, response: Response): Promise<void> {
   try {
-    const { q, limit, projectId } = request.query;
+    const { q, limit, projectId, mode, excludeActionId } = request.query;
     if (typeof q !== 'string' || q.trim().length < 3 || !sanitizeActionSearchQuery(q)) {
       response.status(400).json({ message: 'Search query must contain at least 3 searchable characters' });
       return;
@@ -198,10 +199,16 @@ export async function searchActions(request: Request, response: Response): Promi
       companyId: scope.companyId,
       ownerUserId: scope.ownerUserId,
       projectId: typeof projectId === 'string' && /^\d+$/.test(projectId) ? projectId : undefined,
+      deep: mode === 'deep',
+      excludeActionId: typeof excludeActionId === 'string' && isActionId(excludeActionId) ? excludeActionId : undefined,
     });
     response.setHeader('x-action-search-mode', result.mode);
     response.status(200).json(result.rows);
   } catch (error) {
+    if (error instanceof ActionRerankingUnavailableError) {
+      response.status(503).json({ message: error.message });
+      return;
+    }
     response.status(500).json({ message: error instanceof Error ? error.message : 'Failed to search actions' });
   }
 }

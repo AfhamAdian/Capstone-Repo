@@ -50,10 +50,36 @@ Then open **http://localhost:5173** in your browser.
 
 ---
 
-## Enable semantic action search (Gemini + Supabase pgvector)
+## Enable deep action search (Pinecone reranker)
 
-The API always works: without Gemini configuration it reports and uses
-`lexical_fallback`. No paid provider is used as a fallback.
+Add a Pinecone API key to the ignored `backend/.env`:
+
+```dotenv
+PINECONE_API_KEY=your-key
+PINECONE_RERANK_MODEL=bge-reranker-v2-m3
+PINECONE_RERANK_MIN_SCORE=0.10
+PINECONE_RERANK_CANDIDATE_LIMIT=100
+```
+
+Start the API, then use **Find Similar** in Log Action or **Deep Search** in the
+project Action Library. Only these buttons call Pinecone. All search-as-you-type
+fields use local typo-tolerant keyword matching.
+
+The deep endpoint is explicit:
+
+```bash
+curl -i 'localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5&mode=deep'
+```
+
+Successful deep results include `x-action-search-mode: rerank` and a normalized
+`similarity` score. Results below `PINECONE_RERANK_MIN_SCORE` are omitted. If
+Pinecone is unavailable, the deep request reports an error while action logging
+and keyword search remain usable.
+
+## Optional action embedding pipeline (Gemini + Supabase pgvector)
+
+The existing Gemini worker can still store versioned action embeddings, but the
+current user-facing deep search does not query those vectors.
 
 1. Create a Gemini API key in Google AI Studio. Standard
    `gemini-embedding-001` requests are available on the Gemini API free tier,
@@ -96,16 +122,6 @@ Safe inspection without writes:
 cd backend
 npm run backfill:action-embeddings -- --dry-run
 ```
-
-5. Verify API mode:
-
-```bash
-curl -i 'localhost:3000/api/v1/actions/search?q=sprint+capacity&limit=5'
-```
-
-The `x-action-search-mode` response header is `hybrid`, `semantic`, or `lexical`.
-The Log Action modal, global Actions view, and project Actions Library all use
-this endpoint with debouncing and stale-request cancellation.
 
 ---
 

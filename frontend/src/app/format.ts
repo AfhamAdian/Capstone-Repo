@@ -143,15 +143,49 @@ export function projectTagStyle(score: number): { bg: string; text: string } {
 }
 
 export function actionSearchModeLabel(mode: ActionSearchMode | null): string {
-  if (mode === "hybrid") return "Hybrid semantic + keyword results";
-  if (mode === "semantic") return "Semantic similarity results";
-  if (mode === "lexical") return "Keyword fallback results";
+  if (mode === "rerank") return "Pinecone deep similarity results";
+  if (mode === "lexical") return "Keyword results";
   return "Searching by relevance";
 }
 
 export function actionSimilarityLabel(similarity: number | undefined): string | null {
   if (similarity === undefined || !Number.isFinite(similarity)) return null;
   return `${Math.round(Math.max(0, Math.min(1, similarity)) * 100)}% similar`;
+}
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1]! + 1,
+        previous[rightIndex]! + 1,
+        previous[rightIndex - 1]! + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length]!;
+}
+
+/** Lightweight local keyword matching with typo tolerance; it never invokes semantic search. */
+export function actionMatchesKeywordSearch(
+  action: Pick<Action, "problem" | "reason" | "actionTaken">,
+  query: string,
+): boolean {
+  const normalizedQuery = query.toLocaleLowerCase().trim().replace(/\s+/g, " ");
+  if (!normalizedQuery) return true;
+  const text = `${action.problem} ${action.reason} ${action.actionTaken}`.toLocaleLowerCase();
+  if (text.includes(normalizedQuery)) return true;
+  const words = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const tokens = normalizedQuery.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length === 0) return false;
+  return tokens.every(token => words.some(word => {
+    if (word.includes(token) || (word.length >= 3 && token.includes(word))) return true;
+    const tolerance = token.length >= 8 ? 2 : token.length >= 4 ? 1 : 0;
+    return tolerance > 0 && Math.abs(word.length - token.length) <= tolerance && editDistance(word, token) <= tolerance;
+  }));
 }
 
 export const SURVEY_STATUS_CONFIG: Record<SurveyStatus, { c: string; l: string }> = {

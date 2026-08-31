@@ -494,10 +494,12 @@ export async function createAction(input: CreateActionInput): Promise<ApiAction>
 
 export interface SearchActionsOptions {
   projectId?: string;
+  deep?: boolean;
+  excludeActionId?: string;
   signal?: AbortSignal;
 }
 
-export type ActionSearchMode = "hybrid" | "semantic" | "lexical";
+export type ActionSearchMode = "rerank" | "lexical";
 
 export interface SearchActionsResult {
   actions: ApiAction[];
@@ -511,6 +513,8 @@ export async function searchActions(
 ): Promise<SearchActionsResult> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   if (options.projectId) params.set("projectId", options.projectId);
+  if (options.deep) params.set("mode", "deep");
+  if (options.excludeActionId) params.set("excludeActionId", options.excludeActionId);
   const response = await fetch(`${API_BASE_URL}/actions/search?${params}`, {
     credentials: "include",
     signal: options.signal,
@@ -518,9 +522,7 @@ export async function searchActions(
   if (!response.ok) throw await parseError(response, "Failed to search actions");
   const rows = (await response.json()) as ActionRow[];
   const modeHeader = response.headers.get("x-action-search-mode");
-  const mode: ActionSearchMode = modeHeader === "hybrid" || modeHeader === "semantic"
-    ? modeHeader
-    : "lexical";
+  const mode: ActionSearchMode = modeHeader === "rerank" ? "rerank" : "lexical";
   return { actions: rows.map(rowToAction), mode };
 }
 
