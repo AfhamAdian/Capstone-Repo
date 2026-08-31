@@ -1,6 +1,6 @@
 import type { ActionSearchMode } from "./api";
 import type { SurveyStatus } from "./api-survey";
-import type { Survey } from "./types";
+import type { Action, Project, Survey } from "./types";
 
 export const SUBSCORE_LABELS: Record<string, string> = {
   codeQuality: "Code Quality",
@@ -123,6 +123,11 @@ export function fmtDate(d: string) {
   const dt = new Date(d.length === 10 ? `${d}T00:00:00` : d);
   if (Number.isNaN(dt.getTime())) return "Not scheduled";
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** Actions persist stable backend project ids; legacy rows may still contain the display slug. */
+export function actionIncludesProject(action: Pick<Action, "projectIds">, project: Pick<Project, "id" | "backendProjectId">): boolean {
+  return action.projectIds.includes(project.backendProjectId ?? project.id) || action.projectIds.includes(project.id);
 }
 
 export function triggerColor(trigger: string): string {

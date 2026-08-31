@@ -1,25 +1,24 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import {
-  Star, ArrowRight, Check, Rocket, ShieldCheck, GitBranch, Users, AlertTriangle, X,
+  Star, ArrowRight, Rocket, ShieldCheck, GitBranch, Users, AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   AreaChart, Area, Tooltip as ReTooltip,
 } from "recharts";
-import { motion, AnimatePresence } from "motion/react";
-import type { SyncRiskKey } from "../api";
+import { AnimatePresence } from "motion/react";
+import type { ActionReviewQueue, SyncRiskKey } from "../api";
 import type { HealthCategoryKey } from "../api-project";
 import type { Project, Action, Survey } from "../types";
-import { scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, type DisplaySubscores } from "../format";
+import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, type DisplaySubscores } from "../format";
 import { Ring, Spark, TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { ScoreProvenancePanel } from "../components/ScoreProvenancePanel";
 
-export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
+export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
-  const [reviewOpen,setReviewOpen]=useState(false);
   const [provenanceFocus,setProvenanceFocus]=useState<"overall"|HealthCategoryKey|null>(null);
   const openProvenance=(focus:"overall"|HealthCategoryKey)=>{
     if(!project.backendProjectId) return;
@@ -37,7 +36,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
     planningExecution: project.subscoreSeries.planningExecution??[],
   };
   const radarData=(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(display[k])}));
-  const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
+  const pending=[...(reviewQueue?.fromLastWeek??[]),...(reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,project));
   const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
   const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
@@ -51,7 +50,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
           </div>
         )}
         {pending.length>0&&(
-          <button onClick={()=>setReviewOpen(true)}
+          <button onClick={onRatingOpen}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
             <span className="text-base font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2.5">
               <Star size={16}/>{pending.length} action{pending.length>1?"s":""} pending your effectiveness review
@@ -275,7 +274,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
               </Link>
             </div>
             <div className="divide-y divide-border">
-              {actions.filter(a=>a.projectIds.includes(project.id)).slice(0,4).map(a=>(
+              {actions.filter(a=>actionIncludesProject(a,project)).slice(0,4).map(a=>(
                 <div key={a.id} className="px-5 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-[14px] font-medium text-foreground leading-snug truncate">{a.problem}</div>
@@ -288,7 +287,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
                   </div>
                 </div>
               ))}
-              {actions.filter(a=>a.projectIds.includes(project.id)).length===0&&(
+              {actions.filter(a=>actionIncludesProject(a,project)).length===0&&(
                 <div className="px-5 py-6 text-sm text-muted-foreground text-center">No actions logged yet.</div>
               )}
             </div>
@@ -345,39 +344,6 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
           />
         )}
       </AnimatePresence>
-      <AnimatePresence>
-        {reviewOpen&&(
-          <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={()=>setReviewOpen(false)}>
-            <motion.div initial={{y:32,opacity:0}} animate={{y:0,opacity:1}} exit={{y:32,opacity:0}} onClick={e=>e.stopPropagation()} className="w-full max-w-lg bg-card border border-border mb-8 mx-4 shadow-2xl">
-              <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Effectiveness Review</div>
-                <button onClick={()=>setReviewOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
-              </div>
-              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a}/>)}</div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function EffRow({action}:{action:Action}) {
-  const [r,setR]=useState(0), [done,setDone]=useState(false);
-  return (
-    <div className={`border border-border p-4 transition-opacity ${done?"opacity-40":""}`}>
-      <div className="text-[15px] font-semibold text-foreground mb-1">{action.problem}</div>
-      <div className="text-sm text-muted-foreground mb-4">{action.actionTaken}</div>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {Array.from({length:5}).map((_,i)=>(
-            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>{setR(i+1);setTimeout(()=>setDone(true),300)}} className="transition-transform hover:scale-110">
-              <Star size={22} className={i<r?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
-            </button>
-          ))}
-        </div>
-        {done&&<span className="text-[15px] text-emerald-500 flex items-center gap-1.5"><Check size={14}/>Saved</span>}
-      </div>
     </div>
   );
 }

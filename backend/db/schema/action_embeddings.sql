@@ -4,7 +4,7 @@
 CREATE TABLE public.action_embeddings (
   action_id uuid NOT NULL,
   embedding_version text NOT NULL,
-  provider text NOT NULL CHECK (provider = 'siliconflow'::text),
+  provider text NOT NULL CHECK (provider = ANY (ARRAY['gemini'::text, 'siliconflow'::text])),
   model text NOT NULL,
   dimensions integer NOT NULL CHECK (dimensions > 0),
   content_hash text NOT NULL,

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Outlet, Navigate, useNavigate, useParams, useLocation, useOutletContext } from "react-router";
-import { AlertTriangle, MessageSquare, X } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { AlertTriangle, MessageSquare } from "lucide-react";
+import { AnimatePresence } from "motion/react";
 import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
-import { createAction, listActions, listProjects, rateAction, type SyncRiskKey } from "./api";
+import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
 import { SurveyFlow } from "./components/SurveyFlow";
@@ -12,26 +12,31 @@ import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectPageSkeleton } from "./components/ProjectPageSkeleton";
 import { LogActionModal } from "./components/LogActionModal";
-import { GlobalEffRow } from "./components/InlineRating";
+import { EffectivenessReview } from "./components/EffectivenessReview";
+import { WeeklyReviewBanner } from "./components/WeeklyReviewBanner";
 import { PortfolioView } from "./pages/ProjectsOverview";
 import { Dashboard } from "./pages/Dashboard";
 import { SurveysView, GlobalSurveysView } from "./pages/Surveys";
 import { GlobalActionsView, ActionsTimeline, ActionsLibrary } from "./pages/GlobalActions";
 import { SettingsView } from "./pages/Settings";
 import type { Action, Project, Survey } from "./types";
-import { projectTagStyle, fmtDate } from "./format";
+import { actionIncludesProject } from "./format";
 
 // ─── Shared "authenticated app" context, handed down through <Outlet context={...}/> ──
 
 interface AppContext {
   projects: Project[];
   actions: Action[];
+  reviewQueue: ActionReviewQueue | null;
+  currentUserId: number | null;
   surveys: Survey[];
   trackedIds: Set<string>;
   toggleTracked: (id: string) => void;
   onLogAction: () => void;
   onRatingOpen: () => void;
   onRateAction: (id: string, rating: number) => Promise<void>;
+  onEditAction: (action: Action) => void;
+  onDeleteAction: (id: string) => Promise<void>;
   onSyncComplete: (projectId: string, riskScore?: number, riskScores?: Partial<Record<SyncRiskKey, number | null>>) => void;
   refetchSurveys: () => void;
   surveysError: string | null;
@@ -51,10 +56,13 @@ function useAppContext() {
 export function AppLayout() {
   const {user,activeWorkspace,setActiveWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
+  const location=useLocation();
   const {workspaceId:urlWorkspaceId,projectId}=useParams();
   const [dark,setDark]=useState(false);
   const [logOpen,setLogOpen]=useState(false);
+  const [editingAction,setEditingAction]=useState<Action|null>(null);
   const [actions,setActions]=useState<Action[]>([]);
+  const [reviewQueue,setReviewQueue]=useState<ActionReviewQueue|null>(null);
   const [surveyDemo,setSurveyDemo]=useState(false);
   const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
   // workspace_id per project (company-scoped) from our own API — used to filter the portfolio by workspace.
@@ -111,23 +119,43 @@ export function AppLayout() {
     const rows=await listActions();
     setActions(rows);
   },[]);
-  useEffect(()=>{void refreshActions().catch(()=>setActions([]));},[refreshActions]);
+  const refreshReviews=useCallback(async()=>{
+    const queue=await listActionEffectivenessReviews();setReviewQueue(queue);
+  },[]);
+  useEffect(()=>{
+    void refreshActions().catch(()=>setActions([]));
+    void refreshReviews().catch(()=>setReviewQueue(null));
+  },[refreshActions,refreshReviews]);
   const handleLogAction=useCallback(async(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>{
-    await createAction({...input,loggedBy:user?.name??user?.email??"Unknown user"});
-    await refreshActions();
-  },[user,refreshActions]);
+    await createAction(input);
+    await Promise.all([refreshActions(),refreshReviews()]);
+  },[refreshActions,refreshReviews]);
+  const handleUpdateAction=useCallback(async(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>{
+    if(!editingAction)return;
+    const updated=await updateAction(editingAction.id,input);
+    setActions(current=>current.map(action=>action.id===updated.id?updated:action));
+    await refreshReviews();
+  },[editingAction,refreshReviews]);
+  const handleDeleteAction=useCallback(async(id:string)=>{
+    await deleteAction(id);setActions(current=>current.filter(action=>action.id!==id));await refreshReviews();
+  },[refreshReviews]);
   const handleRateAction=useCallback(async(id:string,rating:number)=>{
-    setActions(current=>current.map(action=>action.id===id?{...action,effectiveness:rating}:action));
-    try{await rateAction(id,rating);}catch(error){await refreshActions();throw error;}
-  },[refreshActions]);
-  const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
+    const updated=await rateAction(id,rating);setActions(current=>current.map(action=>action.id===id?updated:action));
+    await refreshReviews();
+  },[refreshReviews]);
+  const handleDeferAction=useCallback(async(id:string,weeks:1|2|4)=>{
+    const updated=await deferActionReview(id,weeks);setActions(current=>current.map(action=>action.id===id?updated:action));
+  },[]);
   const [ratingOpen,setRatingOpen]=useState(false);
+  const unratedOwnerCount=reviewQueue
+    ? reviewQueue.fromLastWeek.length+reviewQueue.earlier.length+reviewQueue.waitingForOutcome.length
+    : 0;
 
   let content: React.ReactNode;
   if(projectsLoading){
     content = projectId ? <ProjectPageSkeleton/> : (
       <PortfolioView
-        projects={[]} actions={actions} surveys={surveys} loading
+        projects={[]} surveys={surveys} pendingReviewCount={reviewQueue?.readyCount??0} loading
         onSelect={id=>navigate(paths.project(id))} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>navigate(paths.globalActions)}
         onViewSurveys={()=>navigate(paths.globalSurveys)}
@@ -149,10 +177,12 @@ export function AppLayout() {
     );
   } else {
     const context: AppContext = {
-      projects, actions, surveys, trackedIds, toggleTracked,
+      projects, actions, reviewQueue, currentUserId:user?.id??null, surveys, trackedIds, toggleTracked,
       onLogAction: ()=>setLogOpen(true),
       onRatingOpen: ()=>setRatingOpen(true),
       onRateAction: handleRateAction,
+      onEditAction: setEditingAction,
+      onDeleteAction: handleDeleteAction,
       onSyncComplete: updateProjectRisk,
       refetchSurveys, surveysError, surveysLoading, refetchHealth,
       portfolioPath, workspaceById,
@@ -164,7 +194,8 @@ export function AppLayout() {
   return (
     <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
       <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={projects} activeId={projectId??null} onSelect={id=>navigate(paths.project(id))} onHome={()=>navigate(portfolioPath)}
-        pendingCount={pendingRatings.length} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>navigate(paths.workspaces)}/>
+        pendingCount={unratedOwnerCount} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>navigate(paths.workspaces)}/>
+      {!projectId&&(/^\/workspaces\/\d+\/?$/.test(location.pathname)||location.pathname==="/")&&user&&reviewQueue&&<WeeklyReviewBanner queue={reviewQueue} userId={user.id} onReview={()=>setRatingOpen(true)}/>}
       <div className="flex-1 flex min-h-0">{content}</div>
       {!projectId&&(
         <div className="border-t border-border bg-card px-6 py-2.5 flex items-center gap-6 text-sm text-muted-foreground">
@@ -178,44 +209,13 @@ export function AppLayout() {
       )}
       <AnimatePresence>
         {logOpen&&<LogActionModal key="log" onClose={()=>setLogOpen(false)} preId={projectId} projects={projects} actions={actions} onSubmit={handleLogAction}/>}
+        {editingAction&&<LogActionModal key={`edit-${editingAction.id}`} onClose={()=>setEditingAction(null)} projects={projects} actions={actions} initialAction={editingAction} onSubmit={handleUpdateAction}/>}
       </AnimatePresence>
       <AnimatePresence>
         {surveyDemo&&<SurveyFlow key="sf" onClose={()=>setSurveyDemo(false)}/>}
       </AnimatePresence>
-      {/* Global rating panel — accessible from nav icon anywhere in the app */}
       <AnimatePresence>
-        {ratingOpen&&(
-          <motion.div key="rating-panel" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
-            className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={()=>setRatingOpen(false)}>
-            <motion.div initial={{y:32,opacity:0}} animate={{y:0,opacity:1}} exit={{y:32,opacity:0}} transition={{duration:0.18}}
-              onClick={e=>e.stopPropagation()}
-              className="w-full max-w-xl bg-card border border-border mb-8 mx-4 shadow-2xl">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-                <div>
-                  <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Effectiveness Review</div>
-                  <div className="text-sm text-muted-foreground mt-0.5">{pendingRatings.length} action{pendingRatings.length>1?"s":""} awaiting your rating</div>
-                </div>
-                <button onClick={()=>setRatingOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
-              </div>
-              <div className="p-4 space-y-3 max-h-[60vh] overflow-y-auto">
-                {pendingRatings.map(a=>{
-                  const projs=projects.filter(p=>a.projectIds.includes(p.id));
-                  return (
-                    <div key={a.id} className="border border-border p-4">
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        {projs.map(p=>{const st=projectTagStyle(p.score);return <span key={p.id} className={`text-xs font-bold px-2 py-0.5 ${st.bg} ${st.text}`}>{p.name}</span>;})}
-                        <span className="text-sm text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</span>
-                      </div>
-                      <div className="text-[15px] font-semibold text-foreground mb-1">{a.problem}</div>
-                      <div className="text-sm text-muted-foreground mb-4 leading-relaxed">{a.actionTaken}</div>
-                      <GlobalEffRow action={a} onRate={rating=>void handleRateAction(a.id,rating)}/>
-                    </div>
-                  );
-                })}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
+        {ratingOpen&&reviewQueue&&<EffectivenessReview key="rating-panel" queue={reviewQueue} projects={projects} onClose={()=>setRatingOpen(false)} onRate={handleRateAction} onDefer={handleDeferAction} onRefresh={refreshReviews}/>}
       </AnimatePresence>
     </div>
   );
@@ -228,7 +228,7 @@ export function PortfolioEntry() {
   const {workspaceId:urlWorkspaceId}=useParams();
   const {activeWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {projects,actions,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
+  const {projects,reviewQueue,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
   if(!isValidWorkspaceId(urlWorkspaceId)){
     return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   }
@@ -237,7 +237,7 @@ export function PortfolioEntry() {
   const workspaceName=backendWorkspaces.find(w=>w.id===wsId)?.name ?? `Workspace ${urlWorkspaceId}`;
   return (
     <PortfolioView
-      projects={visibleProjects} actions={actions} surveys={surveys}
+      projects={visibleProjects} surveys={surveys} pendingReviewCount={reviewQueue?.readyCount??0}
       onSelect={id=>navigate(paths.project(id))} onLogAction={onLogAction}
       onViewActions={()=>navigate(paths.globalActions)}
       onViewSurveys={()=>navigate(paths.globalSurveys)}
@@ -252,10 +252,10 @@ export function PortfolioEntry() {
 
 export function GlobalActionsRoute() {
   const navigate=useNavigate();
-  const {projects,actions,onLogAction,onRateAction,portfolioPath}=useAppContext();
+  const {projects,actions,currentUserId,onLogAction,onEditAction,onDeleteAction,onRateAction,portfolioPath}=useAppContext();
   return (
     <GlobalActionsView actions={actions} projects={projects} onBack={()=>navigate(portfolioPath)}
-      onLogAction={onLogAction} onRateAction={(id,rating)=>void onRateAction(id,rating)}/>
+      currentUserId={currentUserId} onLogAction={onLogAction} onEditAction={onEditAction} onDeleteAction={onDeleteAction} onRateAction={onRateAction}/>
   );
 }
 
@@ -282,27 +282,28 @@ export function ProjectShell() {
     navigate(location.pathname.replace(`/projects/${projectId}`,`/projects/${active.id}`),{replace:true});
   },[active,projectId,location.pathname,navigate]);
   if(!active) return <Navigate to={ctx.portfolioPath} replace/>;
+  const pendingReviewCount=[...(ctx.reviewQueue?.fromLastWeek??[]),...(ctx.reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,active)).length;
   return (
     <div className="flex flex-1 min-h-0">
-      <Sidebar project={active} onLogAction={ctx.onLogAction}/>
+      <Sidebar project={active} onLogAction={ctx.onLogAction} pendingReviewCount={pendingReviewCount} onRatingOpen={ctx.onRatingOpen}/>
       <Outlet context={{...ctx,project:active}}/>
     </div>
   );
 }
 
 export function DashboardRoute() {
-  const {project,actions,surveys,onSyncComplete}=useProjectContext();
-  return <Dashboard project={project} actions={actions} surveys={surveys} onSyncComplete={onSyncComplete}/>;
+  const {project,actions,reviewQueue,surveys,onSyncComplete,onRatingOpen}=useProjectContext();
+  return <Dashboard project={project} actions={actions} reviewQueue={reviewQueue} surveys={surveys} onSyncComplete={onSyncComplete} onRatingOpen={onRatingOpen}/>;
 }
 
 export function ActionsTimelineRoute() {
-  const {project,actions}=useProjectContext();
-  return <ActionsTimeline project={project} actions={actions}/>;
+  const {project,actions,currentUserId,onRateAction}=useProjectContext();
+  return <ActionsTimeline project={project} actions={actions} currentUserId={currentUserId} onRateAction={onRateAction}/>;
 }
 
 export function ActionsLibraryRoute() {
-  const {project,actions}=useProjectContext();
-  return <ActionsLibrary actions={actions} projectId={project.id}/>;
+  const {project,actions,currentUserId,onRateAction}=useProjectContext();
+  return <ActionsLibrary actions={actions} project={project} currentUserId={currentUserId} onRateAction={onRateAction}/>;
 }
 
 export function SurveysRoute() {

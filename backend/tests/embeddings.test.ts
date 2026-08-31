@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   EmbeddingProviderError,
-  SiliconFlowEmbeddingProvider,
+  GeminiEmbeddingProvider,
   buildActionEmbeddingText,
   hashEmbeddingText,
   validateEmbeddingVectors,
@@ -29,38 +29,47 @@ test('validateEmbeddingVectors rejects wrong dimensions and non-finite values', 
   assert.throws(() => validateEmbeddingVectors([[Number.NaN, 0.2]], 1, 2), EmbeddingProviderError);
 });
 
-test('SiliconFlow provider uses its OpenAI-compatible request and parses data embeddings', async () => {
+test('Gemini provider sends semantic-similarity batch requests and normalizes embeddings', async () => {
   let capturedBody = '';
-  let capturedAuthorization = '';
-  const provider = new SiliconFlowEmbeddingProvider({
-    endpoint: 'http://siliconflow.local/v1/embeddings',
+  let capturedApiKey = '';
+  let capturedUrl = '';
+  const provider = new GeminiEmbeddingProvider({
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/',
     apiKey: 'test-only-key',
-    model: 'BAAI/bge-large-en-v1.5',
+    model: 'gemini-embedding-001',
     dimensions: 3,
     timeoutMs: 1_000,
-  }, async (_input, init) => {
+  }, async (input, init) => {
+    capturedUrl = String(input);
     capturedBody = String(init?.body);
-    capturedAuthorization = new Headers(init?.headers).get('authorization') ?? '';
-    return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), {
+    capturedApiKey = new Headers(init?.headers).get('x-goog-api-key') ?? '';
+    return new Response(JSON.stringify({ embeddings: [{ values: [3, 4, 0] }] }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });
   });
 
-  assert.deepEqual(await provider.embed(['hello']), [[0.1, 0.2, 0.3]]);
+  assert.deepEqual(await provider.embed(['hello']), [[0.6, 0.8, 0]]);
+  assert.equal(
+    capturedUrl,
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents',
+  );
   assert.deepEqual(JSON.parse(capturedBody), {
-    model: 'BAAI/bge-large-en-v1.5',
-    input: ['hello'],
-    encoding_format: 'float',
+    requests: [{
+      model: 'models/gemini-embedding-001',
+      content: { parts: [{ text: 'hello' }] },
+      taskType: 'SEMANTIC_SIMILARITY',
+      outputDimensionality: 3,
+    }],
   });
-  assert.equal(capturedAuthorization, 'Bearer test-only-key');
+  assert.equal(capturedApiKey, 'test-only-key');
 });
 
-test('SiliconFlow provider marks rate limits as retryable without leaking response bodies', async () => {
-  const provider = new SiliconFlowEmbeddingProvider({
-    endpoint: 'http://siliconflow.local/v1/embeddings',
+test('Gemini provider marks rate limits as retryable without leaking response bodies', async () => {
+  const provider = new GeminiEmbeddingProvider({
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta',
     apiKey: 'test-only-key',
-    model: 'BAAI/bge-large-en-v1.5',
+    model: 'gemini-embedding-001',
     dimensions: 3,
     timeoutMs: 1_000,
   }, async () => new Response('secret provider detail', { status: 429 }));
@@ -74,20 +83,20 @@ test('SiliconFlow provider marks rate limits as retryable without leaking respon
   });
 });
 
-test('SiliconFlow provider marks account and request errors as non-retryable', async () => {
-  const provider = new SiliconFlowEmbeddingProvider({
-    endpoint: 'http://siliconflow.local/v1/embeddings',
+test('Gemini provider marks authentication and request errors as non-retryable', async () => {
+  const provider = new GeminiEmbeddingProvider({
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta',
     apiKey: 'test-only-key',
-    model: 'Qwen/Qwen3-Embedding-0.6B',
+    model: 'gemini-embedding-001',
     dimensions: 3,
     timeoutMs: 1_000,
-  }, async () => new Response('account detail that must not leak', { status: 402 }));
+  }, async () => new Response('credential detail that must not leak', { status: 403 }));
 
   await assert.rejects(provider.embed(['hello']), (error: unknown) => {
     assert.ok(error instanceof EmbeddingProviderError);
     assert.equal(error.retryable, false);
-    assert.equal(error.status, 402);
-    assert.doesNotMatch(error.message, /account detail/);
+    assert.equal(error.status, 403);
+    assert.doesNotMatch(error.message, /credential detail/);
     return true;
   });
 });

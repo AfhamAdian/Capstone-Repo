@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { ChevronRight, Search, Plus, Zap, MessageSquare, Bookmark, Star, RefreshCw } from "lucide-react";
 import { motion } from "motion/react";
 import type { SyncRiskKey } from "../api";
-import type { Project, Action, Survey } from "../types";
+import type { Project, Survey } from "../types";
 import { hColor, toDisplaySubscores, type DisplaySubscores } from "../format";
 import { Ring, TrendIcon } from "../components/ScoreVisuals";
 import { useDashboardSync } from "../hooks/useDashboardSync";
@@ -25,8 +25,8 @@ function SyncBtn({project,onSyncComplete}:{
   );
 }
 
-export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
-  projects:Project[];actions:Action[];surveys:Survey[];
+export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
+  projects:Project[];surveys:Survey[];pendingReviewCount:number;
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
@@ -37,8 +37,6 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
-  const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
-
   const visible=useMemo(()=>{
     let list=tab==="tracked"?projects.filter(p=>trackedIds.has(p.id)):projects;
     if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase())||(p.owner??"").toLowerCase().includes(q.toLowerCase()));
@@ -75,8 +73,8 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
               className="flex items-center gap-2 border border-border bg-card text-[15px] font-semibold px-4 py-2.5 text-foreground hover:border-primary hover:text-primary transition-colors"
               style={{fontFamily:"var(--font-display)"}}>
               <Zap size={14}/> All Actions
-              {pendingRatings.length>0&&(
-                <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingRatings.length}</span>
+              {pendingReviewCount>0&&(
+                <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingReviewCount}</span>
               )}
             </button>
             <button onClick={onViewSurveys}

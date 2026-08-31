@@ -88,16 +88,15 @@ export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingC
       )}
       <div className="ml-auto flex items-center gap-1">
         {/* Rating reminder icon */}
-        {pendingCount>0&&(
-          <button onClick={onRatingOpen}
-            className="relative p-2 text-amber-500 hover:text-amber-400 transition-colors"
-            title={`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`}>
-            <Star size={17} className="fill-amber-400 text-amber-400"/>
-            <span className="absolute top-1 right-0.5 min-w-[16px] h-4 bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5 leading-none">
-              {pendingCount}
-            </span>
-          </button>
-        )}
+        <button onClick={onRatingOpen}
+          className={`relative p-2 transition-colors ${pendingCount>0?"text-amber-500 hover:text-amber-400":"text-muted-foreground hover:text-foreground"}`}
+          aria-label={pendingCount>0?`${pendingCount} unrated action${pendingCount===1?"":"s"} owned by you`:"Open effectiveness reviews"}
+          title={pendingCount>0?`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`:"Effectiveness reviews"}>
+          <Star size={17} className={pendingCount>0?"fill-amber-400 text-amber-400":""}/>
+          {pendingCount>0&&<span className="absolute top-1 right-0.5 min-w-[16px] h-4 bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5 leading-none">
+            {pendingCount}
+          </span>}
+        </button>
         <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">
           <Bell size={17}/>
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"/>

@@ -44,6 +44,11 @@ export interface Action {
   timestamp: string;
   effectiveness: number | null;
   loggedBy: string;
+  companyId: number | null;
+  loggedByUserId: number | null;
+  nextReviewAt: string | null;
+  effectivenessRatedByUserId: number | null;
+  effectivenessRatedAt: string | null;
   similarity?: number;
 }
 

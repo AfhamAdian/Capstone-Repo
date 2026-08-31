@@ -393,6 +393,11 @@ export interface ApiAction {
   timestamp: string;
   effectiveness: number | null;
   loggedBy: string;
+  companyId: number | null;
+  loggedByUserId: number | null;
+  nextReviewAt: string | null;
+  effectivenessRatedByUserId: number | null;
+  effectivenessRatedAt: string | null;
   similarity?: number;
 }
 
@@ -407,6 +412,12 @@ interface ActionRow {
   effectiveness: number | null;
   logged_by: string;
   created_at: string;
+  company_id: number | null;
+  logged_by_user_id: number | null;
+  next_review_at: string | null;
+  effectiveness_rated_by_user_id: number | null;
+  effectiveness_rated_at: string | null;
+  updated_at: string;
   similarity?: number;
 }
 
@@ -420,6 +431,11 @@ function rowToAction(row: ActionRow): ApiAction {
     timestamp: row.action_date,
     effectiveness: row.effectiveness,
     loggedBy: row.logged_by,
+    companyId: row.company_id,
+    loggedByUserId: row.logged_by_user_id,
+    nextReviewAt: row.next_review_at,
+    effectivenessRatedByUserId: row.effectiveness_rated_by_user_id,
+    effectivenessRatedAt: row.effectiveness_rated_at,
     similarity: row.similarity,
   };
 }
@@ -429,9 +445,35 @@ async function parseError(response: Response, fallback: string): Promise<Error> 
   return new Error(err.message || `${fallback} (${response.status})`);
 }
 
-export async function listActions(): Promise<ApiAction[]> {
-  const rows = await apiRequest<ActionRow[]>("/actions");
+export interface ListActionsOptions {
+  projectId?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listActions(options: ListActionsOptions = {}): Promise<ApiAction[]> {
+  const params = new URLSearchParams();
+  if (options.projectId) params.set("projectId", options.projectId);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.size ? `?${params.toString()}` : "";
+  const rows = await apiRequest<ActionRow[]>(`/actions${query}`);
   return rows.map(rowToAction);
+}
+
+/** Loads the complete project action history from the database in bounded pages. */
+export async function listAllProjectActions(projectId: string): Promise<ApiAction[]> {
+  const pageSize = 200;
+  const actions: ApiAction[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await listActions({ projectId, limit: pageSize, offset });
+    actions.push(...page);
+    if (page.length < pageSize) return actions;
+  }
 }
 
 export interface CreateActionInput {
@@ -439,7 +481,6 @@ export interface CreateActionInput {
   problem: string;
   reason: string;
   actionTaken: string;
-  loggedBy: string;
   timestamp?: string;
 }
 
@@ -489,4 +530,54 @@ export async function rateAction(id: string, effectiveness: number): Promise<Api
     body: JSON.stringify({ effectiveness }),
   });
   return rowToAction(row);
+}
+
+export async function updateAction(id: string, input: CreateActionInput): Promise<ApiAction> {
+  const row = await apiRequest<ActionRow>(`/actions/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
+  return rowToAction(row);
+}
+
+export async function deleteAction(id: string): Promise<void> {
+  await apiRequest(`/actions/${id}`, { method: "DELETE" });
+}
+
+export async function deferActionReview(id: string, weeks: 1 | 2 | 4): Promise<ApiAction> {
+  const row = await apiRequest<ActionRow>(`/actions/${id}/review-schedule`, {
+    method: "PUT",
+    body: JSON.stringify({ weeks }),
+  });
+  return rowToAction(row);
+}
+
+interface ActionReviewQueueRow {
+  window_start: string;
+  window_end: string;
+  ready_count: number;
+  from_last_week: ActionRow[];
+  earlier: ActionRow[];
+  waiting_for_outcome: ActionRow[];
+}
+
+export interface ActionReviewQueue {
+  windowStart: string;
+  windowEnd: string;
+  readyCount: number;
+  fromLastWeek: ApiAction[];
+  earlier: ApiAction[];
+  waitingForOutcome: ApiAction[];
+}
+
+export async function listActionEffectivenessReviews(): Promise<ActionReviewQueue> {
+  const queue = await apiRequest<ActionReviewQueueRow>("/actions/effectiveness-review");
+  return {
+    windowStart: queue.window_start,
+    windowEnd: queue.window_end,
+    readyCount: queue.ready_count,
+    fromLastWeek: queue.from_last_week.map(rowToAction),
+    earlier: queue.earlier.map(rowToAction),
+    waitingForOutcome: queue.waiting_for_outcome.map(rowToAction),
+  };
 }

@@ -1,4 +1,4 @@
-import { SiliconFlowEmbeddingProvider } from '@libs/embeddings/index.js';
+import { GeminiEmbeddingProvider } from '@libs/embeddings/index.js';
 import { logger } from '@libs/logger.js';
 import { matchActionsByEmbedding } from '../database/action-embeddings.js';
 import {
@@ -18,24 +18,22 @@ export interface ActionSearchResult {
 const RRF_K = 60;
 const log = logger.child({ component: 'action-search-service' });
 
-function configuredProvider(): SiliconFlowEmbeddingProvider | null {
+function configuredProvider(): GeminiEmbeddingProvider | null {
   if (
     !env.isSemanticSearchConfigured
-    || !env.siliconFlowEmbeddingsUrl
-    || !env.siliconFlowApiKey
-    || !env.siliconFlowEmbeddingModel
-    || env.siliconFlowEmbeddingDimensions <= 0
+    || !env.geminiEmbeddingsUrl
+    || !env.geminiApiKey
+    || !env.geminiEmbeddingModel
+    || env.geminiEmbeddingDimensions <= 0
   ) {
     return null;
   }
 
-  return new SiliconFlowEmbeddingProvider({
-    endpoint: env.siliconFlowEmbeddingsUrl,
-    apiKey: env.siliconFlowApiKey,
-    authHeader: env.siliconFlowAuthHeader,
-    authScheme: env.siliconFlowAuthScheme,
-    model: env.siliconFlowEmbeddingModel,
-    dimensions: env.siliconFlowEmbeddingDimensions,
+  return new GeminiEmbeddingProvider({
+    endpoint: env.geminiEmbeddingsUrl,
+    apiKey: env.geminiApiKey,
+    model: env.geminiEmbeddingModel,
+    dimensions: env.geminiEmbeddingDimensions,
     timeoutMs: env.actionEmbeddingTimeoutMs,
   });
 }
@@ -77,10 +75,17 @@ export function fuseActionSearchResults(
 export async function searchActions(input: {
   query: string;
   limit: number;
+  companyId: number;
+  ownerUserId?: number;
   projectId?: string;
 }): Promise<ActionSearchResult> {
   const candidateLimit = Math.min(Math.max(input.limit * 4, 20), 100);
-  const lexicalPromise = searchActionsLexically(input.query, candidateLimit, input.projectId);
+  const lexicalPromise = searchActionsLexically(
+    input.query,
+    candidateLimit,
+    { companyId: input.companyId, ownerUserId: input.ownerUserId },
+    input.projectId,
+  );
   const provider = configuredProvider();
 
   if (!provider) {
@@ -90,13 +95,15 @@ export async function searchActions(input: {
   try {
     const startedAt = Date.now();
     const [queryEmbedding] = await provider.embed([input.query]);
-    if (!queryEmbedding) throw new Error('SiliconFlow returned no query embedding');
+    if (!queryEmbedding) throw new Error('Gemini returned no query embedding');
 
     const semanticRows = await matchActionsByEmbedding({
       embedding: queryEmbedding,
       embeddingVersion: env.actionEmbeddingVersion,
       threshold: env.actionSearchMinSimilarity,
       limit: candidateLimit,
+      companyId: input.companyId,
+      ownerUserId: input.ownerUserId,
       projectId: input.projectId,
     });
 

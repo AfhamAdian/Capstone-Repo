@@ -1,14 +1,13 @@
 import { assertSupabaseClient } from '../config/supabase.js';
-import type { ActionRow, ActionSearchRow } from './actions.js';
+import { ACTION_COLUMNS, type ActionRow, type ActionSearchRow } from './actions.js';
 
-const ACTION_COLUMNS = 'id,project_ids,problem,reason,action_taken,action_date,effectiveness,logged_by,created_at';
 
 export type ActionEmbeddingStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
 export interface ActionEmbeddingRow {
   action_id: string;
   embedding_version: string;
-  provider: 'siliconflow';
+  provider: 'gemini' | 'siliconflow';
   model: string;
   dimensions: number;
   content_hash: string;
@@ -36,7 +35,7 @@ export async function upsertPendingActionEmbedding(input: PendingActionEmbedding
     .upsert({
       action_id: input.actionId,
       embedding_version: input.embeddingVersion,
-      provider: 'siliconflow',
+      provider: 'gemini',
       model: input.model,
       dimensions: input.dimensions,
       content_hash: input.contentHash,
@@ -98,7 +97,7 @@ export async function completeActionEmbedding(input: {
   const { error } = await client
     .from('action_embeddings')
     .update({
-      provider: 'siliconflow',
+      provider: 'gemini',
       model: input.model,
       dimensions: input.dimensions,
       content_hash: input.contentHash,
@@ -142,12 +141,16 @@ export async function matchActionsByEmbedding(input: {
   embeddingVersion: string;
   threshold: number;
   limit: number;
+  companyId: number;
+  ownerUserId?: number;
   projectId?: string;
 }): Promise<ActionSearchRow[]> {
   const client = assertSupabaseClient();
-  const { data, error } = await client.rpc('match_actions', {
+  const { data, error } = await client.rpc('match_company_actions', {
     query_embedding: JSON.stringify(input.embedding),
     target_embedding_version: input.embeddingVersion,
+    filter_company_id: input.companyId,
+    filter_logged_by_user_id: input.ownerUserId ?? null,
     match_threshold: input.threshold,
     match_count: input.limit,
     filter_project_id: input.projectId ?? null,

@@ -11,5 +11,14 @@ CREATE TABLE public.actions (
   effectiveness integer CHECK (effectiveness >= 1 AND effectiveness <= 5),
   logged_by text NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT actions_pkey PRIMARY KEY (id)
+  company_id integer,
+  logged_by_user_id integer,
+  next_review_at timestamp with time zone,
+  effectiveness_rated_by_user_id integer,
+  effectiveness_rated_at timestamp with time zone,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT actions_pkey PRIMARY KEY (id),
+  CONSTRAINT actions_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.company(id),
+  CONSTRAINT actions_logged_by_user_id_fkey FOREIGN KEY (logged_by_user_id) REFERENCES public."User"(id),
+  CONSTRAINT actions_effectiveness_rated_by_user_id_fkey FOREIGN KEY (effectiveness_rated_by_user_id) REFERENCES public."User"(id)
 );

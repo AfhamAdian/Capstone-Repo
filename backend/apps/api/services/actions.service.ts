@@ -3,7 +3,14 @@ import { logger } from '@libs/logger.js';
 import { ActionEmbeddingQueue } from '@libs/queue/index.js';
 import { env } from '../config/env.js';
 import { upsertPendingActionEmbedding } from '../database/action-embeddings.js';
-import { insertAction, type ActionRow, type InsertActionInput } from '../database/actions.js';
+import {
+  insertAction,
+  updateActionRecord,
+  type ActionRow,
+  type ActionScope,
+  type InsertActionInput,
+  type UpdateActionInput,
+} from '../database/actions.js';
 
 const log = logger.child({ component: 'actions-service' });
 let embeddingQueue: ActionEmbeddingQueue | null | undefined;
@@ -21,8 +28,8 @@ function getEmbeddingQueue(): ActionEmbeddingQueue | null {
 export async function prepareAndQueueActionEmbedding(action: ActionRow): Promise<boolean> {
   if (
     !env.isSemanticSearchConfigured
-    || !env.siliconFlowEmbeddingModel
-    || env.siliconFlowEmbeddingDimensions <= 0
+    || !env.geminiEmbeddingModel
+    || env.geminiEmbeddingDimensions <= 0
   ) {
     return false;
   }
@@ -37,8 +44,8 @@ export async function prepareAndQueueActionEmbedding(action: ActionRow): Promise
     await upsertPendingActionEmbedding({
       actionId: action.id,
       embeddingVersion: env.actionEmbeddingVersion,
-      model: env.siliconFlowEmbeddingModel,
-      dimensions: env.siliconFlowEmbeddingDimensions,
+      model: env.geminiEmbeddingModel,
+      dimensions: env.geminiEmbeddingDimensions,
       contentHash: hashEmbeddingText(content),
     });
   } catch (error) {
@@ -70,5 +77,15 @@ export async function prepareAndQueueActionEmbedding(action: ActionRow): Promise
 export async function createAction(input: InsertActionInput): Promise<ActionRow> {
   const action = await insertAction(input);
   await prepareAndQueueActionEmbedding(action);
+  return action;
+}
+
+export async function updateAction(
+  id: string,
+  scope: ActionScope,
+  input: UpdateActionInput,
+): Promise<ActionRow | null> {
+  const action = await updateActionRecord(id, scope, input);
+  if (action) await prepareAndQueueActionEmbedding(action);
   return action;
 }
