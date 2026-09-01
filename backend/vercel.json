@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://your-backend.example.com/api/:path*"
+      "destination": "https://capstone-repo-1-xdjl.onrender.com/api/:path*"
     },
     {
       "source": "/(.*)",
