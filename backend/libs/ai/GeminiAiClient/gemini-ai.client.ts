@@ -93,11 +93,13 @@ function parseAnalysis(value: unknown): AnalyzeSurveyResponsesOutput {
   }
   return {
     scores: {
-      delivery: boundedScore(scores.delivery, 'delivery score'),
-      codeQuality: boundedScore(scores.codeQuality, 'code quality score'),
-      cicd: boundedScore(scores.cicd, 'CI/CD score'),
+      security: boundedScore(scores.security, 'security score'),
+      reliability: boundedScore(scores.reliability, 'reliability score'),
+      maintainability: boundedScore(scores.maintainability, 'maintainability score'),
+      cicdDeploymentHealth: boundedScore(scores.cicdDeploymentHealth, 'CI/CD & deployment health score'),
       teamHealth: boundedScore(scores.teamHealth, 'team health score'),
-      blockers: boundedScore(scores.blockers, 'blockers score'),
+      engineeringProcess: boundedScore(scores.engineeringProcess, 'engineering process score'),
+      planningExecution: boundedScore(scores.planningExecution, 'planning & execution score'),
     },
     themes: row.themes.map((theme) => (theme as string).trim()).filter(Boolean).slice(0, 5),
     aiInsight: row.aiInsight.trim(),

@@ -4,8 +4,9 @@
  * implementation (Gemini today) can be swapped via client-factory.ts.
  */
 
-/** The 5 rubric buckets that scoring/blending is fixed to. */
-export type SurveyQuestionCategory = 'delivery' | 'codeQuality' | 'cicd' | 'teamHealth' | 'blockers';
+/** The 7 rubric buckets that scoring is fixed to — mirrors the risk-engine's own categories (riskscore table). */
+export type SurveyQuestionCategory =
+  | 'security' | 'reliability' | 'maintainability' | 'cicdDeploymentHealth' | 'teamHealth' | 'engineeringProcess' | 'planningExecution';
 export type SurveyQuestionType = 'text' | 'scale';
 
 /**
@@ -35,25 +36,46 @@ export interface SurveyIncidentSignals {
   commitsPerWeek: number | null;
 }
 
+/** How a score moved since the previous sync's risk score. `delta` is current - previous (higher score = healthier). */
+export type HealthTrendLabel = 'steady' | 'gradual_increase' | 'gradual_decrease' | 'sharp_increase' | 'sharp_decrease' | 'unknown';
+
+export interface CategoryTrend {
+  delta: number | null;
+  label: HealthTrendLabel;
+}
+
 export interface SurveyHealthContext {
   capturedAt: string;
   overallScore: number | null;
   scores: {
-    delivery: number | null;
-    codeQuality: number | null;
-    cicd: number | null;
+    security: number | null;
+    reliability: number | null;
+    maintainability: number | null;
+    cicdDeploymentHealth: number | null;
     teamHealth: number | null;
-    blockers: number | null;
+    engineeringProcess: number | null;
+    planningExecution: number | null;
   };
-  trendDelta: number | null;
   metricsSnapshotId: number | null;
-  source: 'project_health_score' | 'unavailable';
+  source: 'risk_score' | 'unavailable';
   /** Last-cycle delivery/CI facts. Optional so older stored surveys still parse. */
   incidents?: SurveyIncidentSignals | null;
+  /** Movement vs the previous sync's risk score. Optional - omitted when there's no prior snapshot to compare against. */
+  trend?: {
+    previousCapturedAt: string | null;
+    overall: CategoryTrend;
+    security: CategoryTrend;
+    reliability: CategoryTrend;
+    maintainability: CategoryTrend;
+    cicdDeploymentHealth: CategoryTrend;
+    teamHealth: CategoryTrend;
+    engineeringProcess: CategoryTrend;
+    planningExecution: CategoryTrend;
+  };
 }
 
 export interface GeneratedSurveyQuestion {
-  /** One of the five rubric keys: delivery, codeQuality, cicd, teamHealth, blockers. */
+  /** One of the seven rubric keys: security, reliability, maintainability, cicdDeploymentHealth, teamHealth, engineeringProcess, planningExecution. */
   category: string;
   questionText: string;
   questionType: SurveyQuestionType;
@@ -63,7 +85,7 @@ export interface GenerateSurveyQuestionsInput {
   trigger: string;
   customGuidance?: string;
   projectName: string;
-  /** Valid category keys (data-driven via custom categories). Defaults to the five built-ins when omitted. */
+  /** Valid category keys (data-driven via custom categories). Defaults to the seven built-ins when omitted. */
   categories?: string[];
   healthContext?: SurveyHealthContext;
 }
@@ -101,11 +123,13 @@ export interface RawSurveyResponseForAnalysis {
 }
 
 export interface SurveyCategoryScores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface AnalyzeSurveyResponsesInput {

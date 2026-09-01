@@ -1,7 +1,7 @@
 import { useState, useEffect, type MouseEvent } from "react";
 import {
   Check, Link2, X, RefreshCw, AlertTriangle, Sparkles, Send, Plus, ChevronRight,
-  Activity, CheckSquare, Zap, Users,
+  Activity, CheckSquare, Zap, Users, Shield, Workflow, Target,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -543,11 +543,13 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
 }
 
 const RUBRIC_ROWS=[
-  {cat:"Delivery",icon:<Activity size={14}/>,color:"text-blue-600 dark:text-blue-400",what:"Sprint velocity, ticket closure rate, story point completion",how:"Survey sentiment + metric trend (velocity, tickets closed)"},
-  {cat:"Code Quality",icon:<CheckSquare size={14}/>,color:"text-emerald-600 dark:text-emerald-400",what:"Bug counts, PR quality, test coverage, tech debt perception",how:"Blocker count + PR cycle time + team feedback"},
-  {cat:"CI/CD",icon:<Zap size={14}/>,color:"text-violet-600 dark:text-violet-400",what:"Build reliability, deployment frequency, pipeline failures",how:"Deployment frequency metric + survey confidence scores"},
-  {cat:"Team Health",icon:<Users size={14}/>,color:"text-amber-600 dark:text-amber-400",what:"Morale, communication quality, work-life balance, psychological safety",how:"Survey-only: aggregated from team responses on wellbeing"},
-  {cat:"Blockers",icon:<AlertTriangle size={14}/>,color:"text-red-600 dark:text-red-400",what:"Open blockers, cross-team dependencies, unresolved waiting items",how:"Open blockers metric + survey answers on impediments"},
+  {cat:"Security",icon:<Shield size={14}/>,color:"text-red-600 dark:text-red-400",what:"Dependency & secret vulnerabilities, dependency update lag, SonarQube security rating & hotspots",how:"AI-scored from survey answers tagged Security"},
+  {cat:"Reliability",icon:<Activity size={14}/>,color:"text-blue-600 dark:text-blue-400",what:"Issue reopen/revert rate, flaky tests, test failure rate & coverage, SonarQube reliability rating",how:"AI-scored from survey answers tagged Reliability"},
+  {cat:"Maintainability",icon:<CheckSquare size={14}/>,color:"text-emerald-600 dark:text-emerald-400",what:"SonarQube maintainability rating, code smells, cyclomatic complexity",how:"AI-scored from survey answers tagged Maintainability"},
+  {cat:"CI/CD & Deployment Health",icon:<Zap size={14}/>,color:"text-violet-600 dark:text-violet-400",what:"Deployment frequency, pipeline success rate, pipeline failures",how:"AI-scored from survey answers tagged CI/CD & Deployment Health"},
+  {cat:"Team Health",icon:<Users size={14}/>,color:"text-amber-600 dark:text-amber-400",what:"Bus factor, code ownership concentration, review network density, active contributors",how:"AI-scored from survey answers tagged Team Health"},
+  {cat:"Engineering Process",icon:<Workflow size={14}/>,color:"text-cyan-600 dark:text-cyan-400",what:"Review quality, commit message quality, stale tickets, flow bottlenecks",how:"AI-scored from survey answers tagged Engineering Process"},
+  {cat:"Planning & Execution",icon:<Target size={14}/>,color:"text-orange-600 dark:text-orange-400",what:"Sprint planning accuracy, delivery throughput & focus",how:"AI-scored from survey answers tagged Planning & Execution"},
 ];
 
 export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
@@ -565,13 +567,13 @@ export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
         </div>
         <div className="p-6">
           <div className="border border-border divide-y divide-border">
-            <div className="grid grid-cols-[140px_1fr_1fr] gap-0 px-4 py-3 bg-muted">
+            <div className="grid grid-cols-[190px_1fr_1fr] gap-0 px-4 py-3 bg-muted">
               {["Category","What we measure","How it's scored"].map(h=>(
                 <div key={h} className="text-sm font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
             {RUBRIC_ROWS.map(r=>(
-              <div key={r.cat} className="grid grid-cols-[140px_1fr_1fr] gap-0 px-4 py-4 items-start hover:bg-muted/30 transition-colors">
+              <div key={r.cat} className="grid grid-cols-[190px_1fr_1fr] gap-0 px-4 py-4 items-start hover:bg-muted/30 transition-colors">
                 <div className={`flex items-center gap-2 font-semibold text-[15px] ${r.color}`}>
                   {r.icon}{r.cat}
                 </div>
@@ -583,9 +585,10 @@ export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
           <div className="mt-5 bg-muted/40 border border-border px-5 py-4">
             <div className="text-sm font-bold text-foreground mb-2">Scoring method</div>
             <div className="text-[14px] text-muted-foreground leading-relaxed">
-              Each category score is calculated from a weighted combination of metric data (60%) and survey response sentiment (40%).
-              The overall health score is a weighted average of all five category scores:
-              Delivery 25% · Code Quality 20% · CI/CD 20% · Team Health 20% · Blockers 15%.
+              These 7 categories mirror the automated risk engine's own scoring dimensions. Each survey question is
+              tagged to one category; after the survey closes, AI scores every category 0–100 from the anonymous
+              answers alone. This survey score is stored on the survey and kept independent of the automated
+              risk-engine score of the same name — the two are never blended.
             </div>
           </div>
         </div>

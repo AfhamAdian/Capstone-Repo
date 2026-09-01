@@ -30,7 +30,7 @@ import {
   type SurveyRow,
 } from '../../api/database/survey.js';
 import { getProjectName } from '../../api/database/project.js';
-import { captureSurveyHealthContext } from '../../api/database/project-health-score.js';
+import { captureSurveyHealthContext } from '../../api/database/survey-health-context.js';
 import { generateQualityQuestions } from '../../api/services/survey-question-generation.service.js';
 import { dispatchAnonymousSurveyBroadcast } from '../../api/services/survey-dispatch.service.js';
 import { periodMonthString } from '../../api/utils/period-month.js';

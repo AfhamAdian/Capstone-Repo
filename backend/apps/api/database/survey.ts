@@ -2,7 +2,9 @@ import { assertSupabaseClient } from '../config/supabase.js';
 import type { GeneratedSurveyQuestion, SurveyHealthContext, SurveyQuestionCategory } from '@libs/ai/index.js';
 import { formatSupabaseError, insertRow, updateMatching } from './supabase-write.js';
 
-export const RUBRIC_CATEGORIES = ['delivery', 'codeQuality', 'cicd', 'teamHealth', 'blockers'] as const;
+export const RUBRIC_CATEGORIES = [
+  'security', 'reliability', 'maintainability', 'cicdDeploymentHealth', 'teamHealth', 'engineeringProcess', 'planningExecution',
+] as const;
 export type RubricCategory = (typeof RUBRIC_CATEGORIES)[number];
 
 export type SurveyStatus = 'draft' | 'active' | 'paused' | 'closed' | 'completed' | 'cancelled' | 'failed';
@@ -26,11 +28,13 @@ export interface SurveyInsight {
   aiInsight: string | null;
   themes: string[];
   scores: {
-    delivery: number | null;
-    codeQuality: number | null;
-    cicd: number | null;
+    security: number | null;
+    reliability: number | null;
+    maintainability: number | null;
+    cicdDeploymentHealth: number | null;
     teamHealth: number | null;
-    blockers: number | null;
+    engineeringProcess: number | null;
+    planningExecution: number | null;
   };
   aiModel: string | null;
   generatedAt: string | null;
@@ -619,5 +623,5 @@ export async function expireDueSurveys(now: Date): Promise<number[]> {
 }
 
 export function categoryForAnalysis(category: string): SurveyQuestionCategory {
-  return isRubricCategory(category) ? category : 'blockers';
+  return isRubricCategory(category) ? category : 'engineeringProcess';
 }

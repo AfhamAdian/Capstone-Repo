@@ -15,10 +15,10 @@ import type {
 export class StubAiClient implements AiClient {
   async generateSurveyQuestions(_input: GenerateSurveyQuestionsInput): Promise<GeneratedSurveyQuestion[]> {
     return [
-      { category: 'delivery', questionText: 'How confident are you in hitting this sprint\'s commitments?', questionType: 'scale' },
+      { category: 'planningExecution', questionText: 'How confident are you in hitting this sprint\'s commitments?', questionType: 'scale' },
       { category: 'teamHealth', questionText: 'What is currently making it hardest to get work done?', questionType: 'text' },
-      { category: 'blockers', questionText: 'How often are you blocked waiting on someone else this week?', questionType: 'scale' },
-      { category: 'codeQuality', questionText: 'Any part of the codebase you\'re avoiding touching? Why?', questionType: 'text' },
+      { category: 'engineeringProcess', questionText: 'How often are you blocked waiting on someone else this week?', questionType: 'scale' },
+      { category: 'maintainability', questionText: 'Any part of the codebase you\'re avoiding touching? Why?', questionType: 'text' },
     ];
   }
 
@@ -36,7 +36,7 @@ export class StubAiClient implements AiClient {
 
   async analyzeSurveyResponses(_input: AnalyzeSurveyResponsesInput): Promise<AnalyzeSurveyResponsesOutput> {
     return {
-      scores: { delivery: 50, codeQuality: 50, cicd: 50, teamHealth: 50, blockers: 50 },
+      scores: { security: 50, reliability: 50, maintainability: 50, cicdDeploymentHealth: 50, teamHealth: 50, engineeringProcess: 50, planningExecution: 50 },
       themes: ['stub-ai-client: no real analysis performed'],
       aiInsight: 'AI analysis is not configured (GEMINI_API_KEY missing) - this is placeholder output.',
     };

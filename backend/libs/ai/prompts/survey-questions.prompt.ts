@@ -1,6 +1,8 @@
-import type { GenerateSurveyQuestionsInput, SurveyHealthContext, SurveyIncidentSignals } from '../types.js';
+import type { CategoryTrend, GenerateSurveyQuestionsInput, SurveyHealthContext, SurveyIncidentSignals } from '../types.js';
 
-const DEFAULT_CATEGORIES = ['delivery', 'codeQuality', 'cicd', 'teamHealth', 'blockers'];
+const DEFAULT_CATEGORIES = [
+  'security', 'reliability', 'maintainability', 'cicdDeploymentHealth', 'teamHealth', 'engineeringProcess', 'planningExecution',
+];
 
 function asPercent(value: number): number {
   const raw = value <= 1 ? value * 100 : value;
@@ -63,6 +65,22 @@ export function formatSurveyIncidents(incidents?: SurveyIncidentSignals | null):
   return lines;
 }
 
+const TREND_PHRASES: Record<CategoryTrend['label'], string> = {
+  steady: 'steady',
+  gradual_increase: 'gradually improving',
+  gradual_decrease: 'gradually declining',
+  sharp_increase: 'sharp improvement',
+  sharp_decrease: 'sharp drop',
+  unknown: '',
+};
+
+/** e.g. " (up 18.4 pts since last sync — sharp improvement)". Empty string when there's nothing to compare against. */
+function trendSuffix(trend?: CategoryTrend): string {
+  if (!trend || trend.delta === null || trend.label === 'unknown') return '';
+  const direction = trend.delta > 0 ? 'up' : trend.delta < 0 ? 'down' : 'unchanged';
+  return ` (${direction} ${Math.abs(trend.delta).toFixed(1)} pts since last sync — ${TREND_PHRASES[trend.label]})`;
+}
+
 export function formatSurveyHealthContext(context?: SurveyHealthContext): string {
   if (!context || context.source === 'unavailable') {
     const incidents = formatSurveyIncidents(context?.incidents);
@@ -77,14 +95,16 @@ export function formatSurveyHealthContext(context?: SurveyHealthContext): string
     incidents.length > 0
       ? `\nRecent incidents from the last sync (ask about these situations, not generic mood):\n${incidents.map((line) => `- ${line}`).join('\n')}`
       : '';
+  const trend = context.trend;
   return `Project health context captured at ${context.capturedAt}:
-- Overall: ${score(context.overallScore)}
-- Delivery: ${score(context.scores.delivery)}
-- Code quality: ${score(context.scores.codeQuality)}
-- CI/CD: ${score(context.scores.cicd)}
-- Team health: ${score(context.scores.teamHealth)}
-- Blockers: ${score(context.scores.blockers)}
-- Overall trend delta: ${score(context.trendDelta)}${incidentBlock}`;
+- Overall: ${score(context.overallScore)}${trendSuffix(trend?.overall)}
+- Security: ${score(context.scores.security)}${trendSuffix(trend?.security)}
+- Reliability: ${score(context.scores.reliability)}${trendSuffix(trend?.reliability)}
+- Maintainability: ${score(context.scores.maintainability)}${trendSuffix(trend?.maintainability)}
+- CI/CD & deployment health: ${score(context.scores.cicdDeploymentHealth)}${trendSuffix(trend?.cicdDeploymentHealth)}
+- Team health: ${score(context.scores.teamHealth)}${trendSuffix(trend?.teamHealth)}
+- Engineering process: ${score(context.scores.engineeringProcess)}${trendSuffix(trend?.engineeringProcess)}
+- Planning & execution: ${score(context.scores.planningExecution)}${trendSuffix(trend?.planningExecution)}${incidentBlock}`;
 }
 
 export function buildSurveyQuestionsPrompt(input: GenerateSurveyQuestionsInput): string {

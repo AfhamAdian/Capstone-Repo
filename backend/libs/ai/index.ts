@@ -8,6 +8,8 @@ export type {
   SurveyQuestionType,
   SurveyHealthContext,
   SurveyIncidentSignals,
+  HealthTrendLabel,
+  CategoryTrend,
   GeneratedSurveyQuestion,
   GenerateSurveyQuestionsInput,
   QuestionScore,

@@ -53,10 +53,9 @@ describe('formatSurveyHealthContext', () => {
     const context: SurveyHealthContext = {
       capturedAt: '2026-08-18T00:00:00.000Z',
       overallScore: 22,
-      scores: { delivery: 25, codeQuality: 20, cicd: 15, teamHealth: 28, blockers: 20 },
-      trendDelta: -3.9,
+      scores: { security: 25, reliability: 20, maintainability: 15, cicdDeploymentHealth: 18, teamHealth: 28, engineeringProcess: 22, planningExecution: 20 },
       metricsSnapshotId: 12,
-      source: 'project_health_score',
+      source: 'risk_score',
       incidents,
     };
     const text = formatSurveyHealthContext(context);

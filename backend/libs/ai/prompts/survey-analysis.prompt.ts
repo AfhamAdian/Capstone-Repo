@@ -19,7 +19,7 @@ Based on these responses:
 
 Respond with ONLY JSON, no markdown fences, no commentary, matching this shape:
 {
-  "scores": {"delivery": number, "codeQuality": number, "cicd": number, "teamHealth": number, "blockers": number},
+  "scores": {"security": number, "reliability": number, "maintainability": number, "cicdDeploymentHealth": number, "teamHealth": number, "engineeringProcess": number, "planningExecution": number},
   "themes": string[],
   "aiInsight": string
 }`;

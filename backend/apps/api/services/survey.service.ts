@@ -29,7 +29,7 @@ import {
   type SurveyRow,
 } from '../database/survey.js';
 import { getProjectName, getPendingSurvey as getPendingSurveyFromDb } from '../database/project.js';
-import { captureSurveyHealthContext } from '../database/project-health-score.js';
+import { captureSurveyHealthContext } from '../database/survey-health-context.js';
 import { generateQualityQuestions } from './survey-question-generation.service.js';
 import { publicSurveyUrlFor } from './survey-dispatch.service.js';
 import { broadcastSurveyLink } from '@libs/notifications/index.js';
@@ -87,11 +87,13 @@ interface SurveyServiceDependencies {
 }
 
 export interface SurveyScores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface SurveyListItem {
@@ -543,11 +545,13 @@ export class SurveyService {
       questions: survey.questions,
       scores: insight?.scores
         ? {
-            delivery: insight.scores.delivery ?? 0,
-            codeQuality: insight.scores.codeQuality ?? 0,
-            cicd: insight.scores.cicd ?? 0,
+            security: insight.scores.security ?? 0,
+            reliability: insight.scores.reliability ?? 0,
+            maintainability: insight.scores.maintainability ?? 0,
+            cicdDeploymentHealth: insight.scores.cicdDeploymentHealth ?? 0,
             teamHealth: insight.scores.teamHealth ?? 0,
-            blockers: insight.scores.blockers ?? 0,
+            engineeringProcess: insight.scores.engineeringProcess ?? 0,
+            planningExecution: insight.scores.planningExecution ?? 0,
           }
         : null,
       themes: insight?.themes ?? [],

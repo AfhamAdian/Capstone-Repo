@@ -16,7 +16,11 @@ function fakeAiClient(overrides: Partial<AiClient> = {}): AiClient {
   return {
     generateSurveyQuestions: async () => [],
     scoreSurveyQuestions: async () => [],
-    analyzeSurveyResponses: async () => ({ scores: { delivery: 0, codeQuality: 0, cicd: 0, teamHealth: 0, blockers: 0 }, themes: [], aiInsight: '' }),
+    analyzeSurveyResponses: async () => ({
+      scores: { security: 0, reliability: 0, maintainability: 0, cicdDeploymentHealth: 0, teamHealth: 0, engineeringProcess: 0, planningExecution: 0 },
+      themes: [],
+      aiInsight: '',
+    }),
     ...overrides,
   };
 }
@@ -108,10 +112,9 @@ describe('generateQualityQuestions', () => {
     const healthContext = {
       capturedAt: '2026-08-11T00:00:00.000Z',
       overallScore: 42,
-      scores: { delivery: 30, codeQuality: 50, cicd: 40, teamHealth: 60, blockers: 25 },
-      trendDelta: -8,
+      scores: { security: 30, reliability: 50, maintainability: 40, cicdDeploymentHealth: 45, teamHealth: 60, engineeringProcess: 35, planningExecution: 25 },
       metricsSnapshotId: 12,
-      source: 'project_health_score' as const,
+      source: 'risk_score' as const,
     };
     let generationContext: unknown;
     let scoringContext: unknown;

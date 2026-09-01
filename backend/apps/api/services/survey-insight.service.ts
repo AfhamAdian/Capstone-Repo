@@ -1,7 +1,8 @@
 /**
  * Shared survey analysis: Gemini scores, themes, and narrative written onto
- * survey.insight, then blended into projecthealthscore. Used by the close
- * endpoint (inline) and the insight worker (deadline / retry).
+ * survey.insight. Kept independent of the risk engine - never blended into
+ * projecthealthscore. Used by the close endpoint (inline) and the insight
+ * worker (deadline / retry).
  */
 
 import { getAiClient } from '@libs/ai/index.js';
@@ -16,7 +17,6 @@ import {
   categoryForAnalysis,
 } from '../database/survey.js';
 import { getProjectName } from '../database/project.js';
-import { blendAndSaveProjectHealthScore } from './health-score-blend.service.js';
 
 const log = logger.child({ component: 'survey-insight-service' });
 
@@ -64,7 +64,6 @@ export async function analyzeAndSaveSurveyInsight(surveyId: number): Promise<voi
     generatedAt: new Date().toISOString(),
   });
 
-  await blendAndSaveProjectHealthScore(survey.project_id, surveyId);
   await updateSurveyStatus(surveyId, 'completed', {
     completedAt: new Date(),
     analysisError: counts.responseCount < env.surveyMinAnonymousResponses
@@ -72,5 +71,5 @@ export async function analyzeAndSaveSurveyInsight(surveyId: number): Promise<voi
       : null,
   });
 
-  log.info({ surveyId, responseCount: counts.responseCount }, 'survey insight generated and health score blended');
+  log.info({ surveyId, responseCount: counts.responseCount }, 'survey insight generated');
 }
