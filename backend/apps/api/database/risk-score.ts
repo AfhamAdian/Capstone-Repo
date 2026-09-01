@@ -13,13 +13,13 @@ export async function saveRiskScore(result: RiskResult, projectSnapshotId: numbe
     .insert([
       {
         project_snapshot_id: projectSnapshotId,
-        cicd_reliability_score: result.type === RiskTypeEnum.CICD_RELIABILITY ? result.score : null,
-        code_qaulity_score: result.type === RiskTypeEnum.CODE_QUALITY ? result.score : null,
-        delivery_score: result.type === RiskTypeEnum.DELIVERY ? result.score : null,
-        engineering_process_score: result.type === RiskTypeEnum.ENGINEERING_PROCESS ? result.score : null,
-        security_risk_score: result.type === RiskTypeEnum.SECURITY_RISK ? result.score : null,
+        security_score: result.type === RiskTypeEnum.SECURITY ? result.score : null,
+        reliability_score: result.type === RiskTypeEnum.RELIABILITY ? result.score : null,
+        maintainability_score: result.type === RiskTypeEnum.MAINTAINABILITY ? result.score : null,
+        cicd_deployment_health_score: result.type === RiskTypeEnum.CICD_DEPLOYMENT_HEALTH ? result.score : null,
         team_health_score: result.type === RiskTypeEnum.TEAM_HEALTH ? result.score : null,
-        blockers_score: result.type === RiskTypeEnum.BLOCKERS ? result.score : null,
+        engineering_process_score: result.type === RiskTypeEnum.ENGINEERING_PROCESS ? result.score : null,
+        planning_execution_score: result.type === RiskTypeEnum.PLANNING_EXECUTION ? result.score : null,
       },
     ]);
 
@@ -29,11 +29,15 @@ export async function saveRiskScore(result: RiskResult, projectSnapshotId: numbe
 }
 
 /**
- * Save all risk scores at once (upsert) linked with a project snapshot
+ * Save all risk scores at once (upsert) linked with a project snapshot.
+ * `overallScore` is the single combined health score (see
+ * apps/api/services/risk-calculation.service.ts for how it's derived) -
+ * pass null when nothing could be computed (e.g. no tool had data yet).
  */
 export async function saveAllRiskScores(
   projectSnapshotId: number,
-  scores: Record<RiskType, number | null>
+  scores: Record<RiskType, number | null>,
+  overallScore: number | null
 ): Promise<void> {
   const client = assertSupabaseClient();
 
@@ -42,13 +46,14 @@ export async function saveAllRiskScores(
     .insert([
       {
         project_snapshot_id: projectSnapshotId,
-        cicd_reliability_score: scores[RiskTypeEnum.CICD_RELIABILITY] ?? null,
-        code_qaulity_score: scores[RiskTypeEnum.CODE_QUALITY] ?? null,
-        delivery_score: scores[RiskTypeEnum.DELIVERY] ?? null,
-        engineering_process_score: scores[RiskTypeEnum.ENGINEERING_PROCESS] ?? null,
-        security_risk_score: scores[RiskTypeEnum.SECURITY_RISK] ?? null,
+        security_score: scores[RiskTypeEnum.SECURITY] ?? null,
+        reliability_score: scores[RiskTypeEnum.RELIABILITY] ?? null,
+        maintainability_score: scores[RiskTypeEnum.MAINTAINABILITY] ?? null,
+        cicd_deployment_health_score: scores[RiskTypeEnum.CICD_DEPLOYMENT_HEALTH] ?? null,
         team_health_score: scores[RiskTypeEnum.TEAM_HEALTH] ?? null,
-        blockers_score: scores[RiskTypeEnum.BLOCKERS] ?? null,
+        engineering_process_score: scores[RiskTypeEnum.ENGINEERING_PROCESS] ?? null,
+        planning_execution_score: scores[RiskTypeEnum.PLANNING_EXECUTION] ?? null,
+        overall_score: overallScore,
       },
     ]);
 
@@ -59,13 +64,14 @@ export async function saveAllRiskScores(
 
 export interface LatestRiskScoreRow {
   project_snapshot_id: number;
-  cicd_reliability_score: number | null;
-  code_qaulity_score: number | null;
-  delivery_score: number | null;
-  engineering_process_score: number | null;
-  security_risk_score: number | null;
+  security_score: number | null;
+  reliability_score: number | null;
+  maintainability_score: number | null;
+  cicd_deployment_health_score: number | null;
   team_health_score: number | null;
-  blockers_score: number | null;
+  engineering_process_score: number | null;
+  planning_execution_score: number | null;
+  overall_score: number | null;
   created_at: string;
 }
 

@@ -1,32 +1,42 @@
 import { useState } from "react";
 import { Link } from "react-router";
 import {
-  Star, ArrowRight, Check, Rocket, ShieldCheck, GitBranch, Users, AlertTriangle, X,
+  Star, ArrowRight, Rocket, ShieldCheck, GitBranch, Users, AlertTriangle,
 } from "lucide-react";
 import {
   ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
   AreaChart, Area, Tooltip as ReTooltip,
 } from "recharts";
-import { motion, AnimatePresence } from "motion/react";
-import type { SyncRiskKey } from "../api";
+import { AnimatePresence } from "motion/react";
+import type { ActionReviewQueue, SyncRiskKey } from "../api";
 import type { HealthCategoryKey } from "../api-project";
 import type { Project, Action, Survey } from "../types";
-import { scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate } from "../format";
+import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, type DisplaySubscores } from "../format";
 import { Ring, Spark, TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { ScoreProvenancePanel } from "../components/ScoreProvenancePanel";
 
-export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Project;actions:Action[];surveys:Survey[];onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;}) {
+export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
-  const [reviewOpen,setReviewOpen]=useState(false);
   const [provenanceFocus,setProvenanceFocus]=useState<"overall"|HealthCategoryKey|null>(null);
   const openProvenance=(focus:"overall"|HealthCategoryKey)=>{
     if(!project.backendProjectId) return;
     setProvenanceFocus(focus);
   };
-  const radarData=(Object.keys(SUBSCORE_LABELS) as (keyof typeof project.subscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(project.subscores[k])}));
-  const pending=actions.filter(a=>a.projectIds.includes(project.id)&&a.effectiveness===null);
+  // "Why this score" provenance is still keyed to the old 5-category survey-blend model
+  // (untouched, see future-work.md #7) - only codeQuality/teamHealth still line up with it.
+  const OPENABLE_CATEGORIES=new Set<keyof DisplaySubscores>(["codeQuality","teamHealth"]);
+  const display=toDisplaySubscores(project.subscores);
+  const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
+    codeQuality: computeCodeQualitySeries(project.subscoreSeries),
+    cicdDeploymentHealth: project.subscoreSeries.cicdDeploymentHealth??[],
+    teamHealth: project.subscoreSeries.teamHealth??[],
+    engineeringProcess: project.subscoreSeries.engineeringProcess??[],
+    planningExecution: project.subscoreSeries.planningExecution??[],
+  };
+  const radarData=(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>({subject:SUBSCORE_LABELS[k],value:scoreInt(display[k])}));
+  const pending=[...(reviewQueue?.fromLastWeek??[]),...(reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,project));
   const completed=surveys.filter(s=>s.projectId===project.id&&surveyHasResults(s));
   const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
   const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
@@ -40,7 +50,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
           </div>
         )}
         {pending.length>0&&(
-          <button onClick={()=>setReviewOpen(true)}
+          <button onClick={onRatingOpen}
             className="w-full flex items-center justify-between bg-amber-50 dark:bg-amber-950/30 border border-amber-300/50 px-5 py-4 hover:bg-amber-100/50 dark:hover:bg-amber-950/50 transition-colors">
             <span className="text-base font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-2.5">
               <Star size={16}/>{pending.length} action{pending.length>1?"s":""} pending your effectiveness review
@@ -72,15 +82,38 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
             <Spark data={project.sparkline} color={hColor(project.score)} w={210} h={48}/>
             {/* Always-visible breakdown */}
             <div className="mt-5 pt-5 border-t border-border space-y-3">
-              {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>(
-                <button type="button" key={k} onClick={()=>openProvenance(k)} className="flex items-center justify-between w-full text-left hover:bg-muted/40 -mx-1 px-1 py-0.5">
-                  <span className="text-[15px] text-foreground/80">{SUBSCORE_LABELS[k]}</span>
-                  <div className="flex items-center gap-3">
-                    <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${Math.min(100, Math.max(0, scoreInt(project.subscores[k])))}%`,backgroundColor:hColor(project.subscores[k])}}/></div>
-                    <span className={`text-[15px] font-bold tabular-nums w-8 text-right ${hClass(project.subscores[k])}`} style={{fontFamily:"var(--font-mono)"}}>{scoreInt(project.subscores[k])}</span>
+              {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
+                const row=(
+                  <div className="flex items-center justify-between w-full text-left -mx-1 px-1 py-0.5">
+                    <span className="text-[15px] text-foreground/80">{SUBSCORE_LABELS[k]}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-2 bg-muted"><div className="h-full" style={{width:`${Math.min(100, Math.max(0, scoreInt(display[k])))}%`,backgroundColor:hColor(display[k])}}/></div>
+                      <span className={`text-[15px] font-bold tabular-nums w-8 text-right ${hClass(display[k])}`} style={{fontFamily:"var(--font-mono)"}}>{scoreInt(display[k])}</span>
+                    </div>
                   </div>
-                </button>
-              ))}
+                );
+                if(k==="codeQuality"){
+                  return (
+                    <div key={k} className="group relative hover:bg-muted/40">
+                      {row}
+                      <div className="pointer-events-none absolute right-0 top-full z-10 mt-1 hidden w-52 border border-border bg-popover p-3 text-xs shadow-lg group-hover:block">
+                        <div className="mb-1.5 font-semibold text-foreground/80">Code Quality breakdown</div>
+                        {(["security","reliability","maintainability"] as const).map(sub=>(
+                          <div key={sub} className="flex items-center justify-between py-0.5">
+                            <span className="capitalize text-muted-foreground">{sub}</span>
+                            <span className="font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(project.subscores[sub])}}>{scoreInt(project.subscores[sub])}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return (
+                  <button type="button" key={k} disabled={!OPENABLE_CATEGORIES.has(k)} onClick={()=>OPENABLE_CATEGORIES.has(k)&&openProvenance(k as HealthCategoryKey)} className="block w-full hover:bg-muted/40 disabled:cursor-default">
+                    {row}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="bg-card border border-border p-6">
@@ -101,9 +134,9 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
         <div>
           <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Health Score Breakdown — 90-day trend</div>
           <div className="grid grid-cols-5 gap-3">
-            {(Object.keys(project.subscores) as (keyof typeof project.subscores)[]).map(k=>{
-              const val = scoreInt(project.subscores[k]);
-              const series = project.subscoreSeries[k] ?? [];
+            {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
+              const val = scoreInt(display[k]);
+              const series = displaySeries[k];
               const strokeColor = hColor(val);
               const gradId = `ss-${project.id}-${k}`;
               const last = scoreInt(series[series.length-1]?.v ?? val);
@@ -112,20 +145,33 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
               const trendGood = delta >= 0; // higher = better for all subscores
               const minV = scoreInt(series.length?Math.min(...series.map(d=>d.v)):val);
               const maxV = scoreInt(series.length?Math.max(...series.map(d=>d.v)):val);
-              const SUBSCORE_ICONS: Record<string, React.ReactNode> = {
-                delivery: <Rocket size={13}/>,
+              const SUBSCORE_ICONS: Record<keyof DisplaySubscores, React.ReactNode> = {
                 codeQuality: <ShieldCheck size={13}/>,
-                cicd: <GitBranch size={13}/>,
+                cicdDeploymentHealth: <GitBranch size={13}/>,
                 teamHealth: <Users size={13}/>,
-                blockers: <AlertTriangle size={13}/>,
+                engineeringProcess: <Rocket size={13}/>,
+                planningExecution: <AlertTriangle size={13}/>,
               };
+              const openable=OPENABLE_CATEGORIES.has(k);
               return (
-                <button type="button" key={k} onClick={()=>openProvenance(k)} className="bg-card border border-border p-4 flex flex-col text-left hover:border-primary/50 transition-colors">
+                <button type="button" key={k} disabled={!openable} onClick={()=>openable&&openProvenance(k as HealthCategoryKey)}
+                  className={`group relative bg-card border border-border p-4 flex flex-col text-left transition-colors disabled:cursor-default ${openable?"hover:border-primary/50":""}`}>
                   {/* label + icon */}
                   <div className="flex items-center gap-1.5 mb-3">
                     <span style={{color:strokeColor}}>{SUBSCORE_ICONS[k]}</span>
                     <span className="text-xs font-semibold text-foreground leading-tight" style={{fontFamily:"var(--font-display)"}}>{SUBSCORE_LABELS[k]}</span>
                   </div>
+                  {k==="codeQuality"&&(
+                    <div className="pointer-events-none absolute left-2 top-full z-10 mt-1 hidden w-52 border border-border bg-popover p-3 text-xs shadow-lg group-hover:block">
+                      <div className="mb-1.5 font-semibold text-foreground/80">Code Quality breakdown</div>
+                      {(["security","reliability","maintainability"] as const).map(sub=>(
+                        <div key={sub} className="flex items-center justify-between py-0.5">
+                          <span className="capitalize text-muted-foreground">{sub}</span>
+                          <span className="font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(project.subscores[sub])}}>{scoreInt(project.subscores[sub])}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   {/* big score */}
                   <div className="flex items-baseline gap-1.5 mb-1">
                     <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:strokeColor}}>{val}</span>
@@ -228,7 +274,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
               </Link>
             </div>
             <div className="divide-y divide-border">
-              {actions.filter(a=>a.projectIds.includes(project.id)).slice(0,4).map(a=>(
+              {actions.filter(a=>actionIncludesProject(a,project)).slice(0,4).map(a=>(
                 <div key={a.id} className="px-5 py-3 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-[14px] font-medium text-foreground leading-snug truncate">{a.problem}</div>
@@ -241,7 +287,7 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
                   </div>
                 </div>
               ))}
-              {actions.filter(a=>a.projectIds.includes(project.id)).length===0&&(
+              {actions.filter(a=>actionIncludesProject(a,project)).length===0&&(
                 <div className="px-5 py-6 text-sm text-muted-foreground text-center">No actions logged yet.</div>
               )}
             </div>
@@ -298,39 +344,6 @@ export function Dashboard({project,actions,surveys,onSyncComplete}:{project:Proj
           />
         )}
       </AnimatePresence>
-      <AnimatePresence>
-        {reviewOpen&&(
-          <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 bg-black/50 z-50 flex items-end justify-center" onClick={()=>setReviewOpen(false)}>
-            <motion.div initial={{y:32,opacity:0}} animate={{y:0,opacity:1}} exit={{y:32,opacity:0}} onClick={e=>e.stopPropagation()} className="w-full max-w-lg bg-card border border-border mb-8 mx-4 shadow-2xl">
-              <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-                <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Effectiveness Review</div>
-                <button onClick={()=>setReviewOpen(false)} className="text-muted-foreground hover:text-foreground"><X size={18}/></button>
-              </div>
-              <div className="p-5 space-y-4">{pending.map(a=><EffRow key={a.id} action={a}/>)}</div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-function EffRow({action}:{action:Action}) {
-  const [r,setR]=useState(0), [done,setDone]=useState(false);
-  return (
-    <div className={`border border-border p-4 transition-opacity ${done?"opacity-40":""}`}>
-      <div className="text-[15px] font-semibold text-foreground mb-1">{action.problem}</div>
-      <div className="text-sm text-muted-foreground mb-4">{action.actionTaken}</div>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          {Array.from({length:5}).map((_,i)=>(
-            <button key={i} onMouseEnter={()=>!done&&setR(i+1)} onClick={()=>{setR(i+1);setTimeout(()=>setDone(true),300)}} className="transition-transform hover:scale-110">
-              <Star size={22} className={i<r?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>
-            </button>
-          ))}
-        </div>
-        {done&&<span className="text-[15px] text-emerald-500 flex items-center gap-1.5"><Check size={14}/>Saved</span>}
-      </div>
     </div>
   );
 }

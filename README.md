@@ -61,9 +61,9 @@ Set the following variables in `backend/.env` to enable Supabase database connec
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 
-Semantic action search uses SiliconFlow's OpenAI-compatible embedding endpoint and
-falls back to PostgreSQL lexical search when it is not configured. Set
-`SILICONFLOW_API_KEY`; endpoint, model, dimension, threshold, and embedding-version
+Semantic action search uses Google's `gemini-embedding-001` and falls back to
+PostgreSQL lexical search when Gemini is not configured or temporarily unavailable.
+Set `GEMINI_API_KEY`; endpoint, model, dimensions, threshold, and embedding-version
 defaults are documented in `backend/.env.example`.
 
 After configuring them, hit `GET /api/v1/health` to verify status under `services.supabase`.

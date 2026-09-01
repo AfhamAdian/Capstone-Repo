@@ -42,19 +42,12 @@ function boundedNumber(value: string | undefined, fallback: number, min: number,
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
 }
 
-// SiliconFlow exposes an OpenAI-compatible embeddings API. SIGNALFLOW_* aliases
-// are retained because that is the name used in the original feature setup.
-const siliconFlowEmbeddingsUrl = process.env.SILICONFLOW_EMBEDDINGS_URL
-  ?? process.env.SIGNALFLOW_EMBEDDINGS_URL
-  ?? 'https://api.siliconflow.com/v1/embeddings';
-const siliconFlowApiKey = process.env.SILICONFLOW_API_KEY ?? process.env.SIGNALFLOW_API_KEY;
-const siliconFlowAuthHeader = process.env.SILICONFLOW_AUTH_HEADER ?? 'Authorization';
-const siliconFlowAuthScheme = process.env.SILICONFLOW_AUTH_SCHEME ?? 'Bearer';
-const siliconFlowEmbeddingModel = process.env.SILICONFLOW_EMBEDDING_MODEL
-  ?? 'Qwen/Qwen3-Embedding-0.6B';
-const siliconFlowEmbeddingDimensions = positiveInteger(process.env.SILICONFLOW_EMBEDDING_DIMENSIONS, 1024);
+const geminiEmbeddingsUrl = process.env.GEMINI_EMBEDDINGS_URL
+  ?? 'https://generativelanguage.googleapis.com/v1beta';
+const geminiEmbeddingModel = process.env.GEMINI_EMBEDDING_MODEL ?? 'gemini-embedding-001';
+const geminiEmbeddingDimensions = positiveInteger(process.env.GEMINI_EMBEDDING_DIMENSIONS, 768);
 const actionEmbeddingVersion = process.env.ACTION_EMBEDDING_VERSION
-  ?? 'siliconflow-qwen3-embedding-0.6b-1024-v1';
+  ?? 'gemini-embedding-001-768-l2-v1';
 const actionSearchMinSimilarity = boundedNumber(
   process.env.ACTION_SEARCH_MIN_SIMILARITY ?? process.env.ACTION_SEARCH_SIMILARITY_THRESHOLD,
   0.7,
@@ -63,6 +56,12 @@ const actionSearchMinSimilarity = boundedNumber(
 );
 const actionSearchMaxResults = positiveInteger(process.env.ACTION_SEARCH_MAX_RESULTS, 50);
 const actionEmbeddingTimeoutMs = positiveInteger(process.env.ACTION_EMBEDDING_TIMEOUT_MS, 10_000);
+const pineconeApiKey = process.env.PINECONE_API_KEY;
+const pineconeRerankUrl = process.env.PINECONE_RERANK_URL ?? 'https://api.pinecone.io/rerank';
+const pineconeRerankModel = process.env.PINECONE_RERANK_MODEL ?? 'bge-reranker-v2-m3';
+const pineconeRerankMinScore = boundedNumber(process.env.PINECONE_RERANK_MIN_SCORE, 0.1, 0, 1);
+const pineconeRerankCandidateLimit = Math.min(100, positiveInteger(process.env.PINECONE_RERANK_CANDIDATE_LIMIT, 100));
+const pineconeRerankTimeoutMs = positiveInteger(process.env.PINECONE_RERANK_TIMEOUT_MS, 10_000);
 
 // Frontend origin allowed to send credentialed (cookie) requests
 const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
@@ -134,17 +133,21 @@ export const env = {
   isSupabaseConfigured: hasBothSupabaseValues && hasValidSupabaseUrl,
   redisUrl,
   databaseUrl,
-  siliconFlowEmbeddingsUrl,
-  siliconFlowApiKey,
-  siliconFlowAuthHeader,
-  siliconFlowAuthScheme,
-  siliconFlowEmbeddingModel,
-  siliconFlowEmbeddingDimensions,
+  geminiEmbeddingsUrl,
+  geminiEmbeddingModel,
+  geminiEmbeddingDimensions,
   actionEmbeddingVersion,
   actionSearchMinSimilarity,
   actionSearchMaxResults,
   actionEmbeddingTimeoutMs,
-  isSemanticSearchConfigured: Boolean(siliconFlowApiKey),
+  pineconeApiKey,
+  pineconeRerankUrl,
+  pineconeRerankModel,
+  pineconeRerankMinScore,
+  pineconeRerankCandidateLimit,
+  pineconeRerankTimeoutMs,
+  isActionRerankConfigured: Boolean(pineconeApiKey),
+  isSemanticSearchConfigured: Boolean(geminiApiKey),
   frontendOrigin,
   smtpUser,
   smtpPass,

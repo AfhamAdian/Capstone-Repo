@@ -4,8 +4,6 @@
 import type { SessionData } from '@libs/auth/session-store.js';
 import type { SupportedTool, ToolCategory } from '@libs/sync/types.js';
 import {
-  createProject as dbCreateProject,
-  deleteProject,
   getProjectById,
   isProjectMember,
   listProjectsByCompany,
@@ -19,18 +17,19 @@ import {
   addIntegration,
   listIntegrations,
   listIntegrationsForProjects,
-  type ToolIntegrationRecord,
+  updateIntegrationConfig,
 } from '../database/project-tool-integration.js';
-import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
+import { deleteProjectMember, listProjectMembers } from '../database/projectmember.js';
 import { findUserByEmail, findUsersByIds } from '../database/user.js';
 import {
   getLatestScoreForProject,
   getLatestScoresForProjects,
+  listScoreHistoryForProject,
   type ProjectRiskScore,
 } from '../database/score.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
-import { listProjectHealthScoreHistory, type ProjectHealthScoreRow } from '../database/project-health-score.js';
+import { getWorkspaceById } from '../database/workspace.js';
 import { listProjectOpsMetricsHistory, type SnapshotOpsMetricsRow } from '../database/project-ops-metrics.js';
 
 const log = logger.child({ component: 'project-service' });
@@ -52,14 +51,15 @@ const CATEGORY_TOOLS: Record<ToolCategory, Set<string>> = {
   cicd: new Set(['jenkins', 'circleci', 'travisci', 'github-actions']),
   codeQuality: new Set(['sonarqube', 'codeclimate', 'codacy']),
 };
-const VCS_PROVIDERS = CATEGORY_TOOLS.vcs;
-const TOOL_CATEGORIES = new Set<ToolCategory>(['vcs', 'projectManagement', 'cicd', 'codeQuality']);
-
-function assertToolInCategory(category: ToolCategory, toolName: string): void {
-  if (!CATEGORY_TOOLS[category]?.has(toolName)) {
-    throw new ProjectError(`${toolName} is not a valid ${category} tool`, 400);
-  }
+// Reverse lookup: tool name -> its category.
+const TOOL_CATEGORY: Record<string, ToolCategory> = {};
+for (const [category, tools] of Object.entries(CATEGORY_TOOLS)) {
+  for (const tool of tools) TOOL_CATEGORY[tool] = category as ToolCategory;
 }
+
+// Tools whose token is stored in projecttoolintegration.config. GitHub/GitLab/CI use the workspace PAT instead.
+const CONFIG_TOKEN_TOOLS = new Set(['jira', 'sonarqube']);
+
 // Substrings that mark a config key as secret (matches accessToken, clientSecret, apiKey, …).
 const SECRET_KEY_PATTERNS = ['token', 'secret', 'password', 'passwd', 'apikey'];
 
@@ -74,7 +74,10 @@ const REQUIRED_CONFIG_KEYS: Partial<Record<SupportedTool, string[]>> = {
   gitlab: ['token', 'owner', 'repo'],
   jira: ['token', 'email', 'baseUrl', 'projectKey'],
   sonarqube: ['token', 'projectKey'],
-  'github-actions': ['token', 'owner', 'repo'],
+  // No required keys: getProjectIntegrationsForTools() already falls back to the project's
+  // github integration (token/owner/repo) when github-actions' own config doesn't supply them -
+  // see apps/api/database/project.ts. AddProjectView.tsx may still send them explicitly; that's
+  // fine, just no longer required.
 };
 
 // Reject at create time any tool whose config is missing the keys sync will later need.
@@ -90,27 +93,13 @@ function assertConfigForTool(toolName: SupportedTool, config: Record<string, unk
   }
 }
 
-interface IntegrationInput {
-  category: ToolCategory;
-  toolName: SupportedTool;
-  externalProjectId: string;
-  config: Record<string, unknown>;
-}
-
-export interface CreateProjectInput {
-  name: string;
-  description?: string;
-  vcs: { toolName: string; externalProjectId: string; config?: Record<string, unknown> };
-  integrations?: IntegrationInput[];
-  invites?: string[];
-}
-
 export interface ProjectListItem {
   id: number;
   name: string;
   description: string | null;
   createdAt: string | null;
   vcs: SupportedTool | null;
+  workspaceId: number | null;
   score: ProjectRiskScore | null;
 }
 
@@ -118,12 +107,9 @@ export interface ProjectDetail extends ProjectListItem {
   integrations: Array<{
     category: ToolCategory;
     toolName: SupportedTool;
-    externalProjectId: string;
     config: Record<string, unknown>;
-    isActive: boolean | null;
   }>;
-  members: Array<{ userId: number; name: string | null; email: string | null; role: string }>;
-  pendingInvites?: string[];
+  members: Array<{ userId: number; name: string | null; email: string | null }>;
 }
 
 // Mask secret values so tokens never leave the server.
@@ -135,7 +121,7 @@ function redactConfig(config: Record<string, unknown>): Record<string, unknown> 
   return out;
 }
 
-async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Promise<ProjectDetail> {
+async function toDetail(project: ProjectRecord): Promise<ProjectDetail> {
   const [integrations, members, score] = await Promise.all([
     listIntegrations(project.id),
     listProjectMembers(project.id),
@@ -143,7 +129,7 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
   ]);
   const vcs = integrations.find((i) => i.tool_category === 'vcs')?.tool_name ?? null;
 
-  // Enrich members with name/email so they read like the pending-invite emails, not bare ids.
+  // Enrich members with name/email so they read as people, not bare ids.
   const users = await findUsersByIds(members.map((m) => m.user_id));
   const userById = new Map(users.map((u) => [u.id, u]));
 
@@ -153,19 +139,24 @@ async function toDetail(project: ProjectRecord, pendingInvites?: string[]): Prom
     description: project.description,
     createdAt: project.created_at,
     vcs,
+    workspaceId: project.workspace_id,
     score,
-    integrations: integrations.map((i) => ({
-      category: i.tool_category,
-      toolName: i.tool_name,
-      externalProjectId: i.external_project_id,
-      config: redactConfig(i.config),
-      isActive: i.is_active,
-    })),
+    integrations: integrations.map((i) => {
+      const config = redactConfig(i.config);
+      // A vcs integration with no own token still has one via its workspace PAT — show it as configured.
+      if (i.tool_category === 'vcs' && !config.token && project.workspace_id != null) {
+        config.token = '***';
+      }
+      return {
+        category: i.tool_category,
+        toolName: i.tool_name,
+        config,
+      };
+    }),
     members: members.map((m) => {
       const user = userById.get(m.user_id);
-      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null, role: m.role };
+      return { userId: m.user_id, name: user?.name ?? null, email: user?.email ?? null };
     }),
-    ...(pendingInvites ? { pendingInvites } : {}),
   };
 }
 
@@ -193,105 +184,14 @@ export async function listProjects(auth: Auth, vcsFilter?: string): Promise<Proj
       description: p.description,
       createdAt: p.created_at,
       vcs: vcsByProject.get(p.id) ?? null,
+      workspaceId: p.workspace_id,
       score: scores.get(p.id) ?? null,
     }))
     .filter((p) => !vcsFilter || p.vcs === vcsFilter);
 }
 
-// M2.2 — admin creates a project with its vcs (workspace), optional other tools, and member invites.
-export async function createProject(auth: Auth, input: CreateProjectInput): Promise<ProjectDetail> {
-  if (auth.role !== 'admin') {
-    throw new ProjectError('Only admins can create projects', 403);
-  }
-  if (!input.name?.trim()) {
-    throw new ProjectError('Project name is required', 400);
-  }
-  if (!input.vcs?.toolName || !VCS_PROVIDERS.has(input.vcs.toolName)) {
-    throw new ProjectError('A valid version control tool (github, gitlab, bitbucket) is required', 400);
-  }
-  if (!input.vcs.externalProjectId?.trim()) {
-    throw new ProjectError('Version control project identifier is required', 400);
-  }
-  assertConfigForTool(input.vcs.toolName as SupportedTool, input.vcs.config ?? {});
-
-  // Validate every optional integration up front so a bad one never creates-then-rolls-back a project.
-  for (const integration of input.integrations ?? []) {
-    if (!TOOL_CATEGORIES.has(integration.category) || integration.category === 'vcs') {
-      throw new ProjectError(`Invalid tool category: ${integration.category}`, 400);
-    }
-    if (!integration.toolName || !integration.externalProjectId?.trim()) {
-      throw new ProjectError('Each integration needs a toolName and externalProjectId', 400);
-    }
-    assertToolInCategory(integration.category, integration.toolName);
-    assertConfigForTool(integration.toolName, integration.config ?? {});
-  }
-
-  const project = await dbCreateProject({
-    companyId: auth.companyId,
-    name: input.name,
-    description: input.description ?? null,
-  });
-
-  const pendingInvites: string[] = [];
-
-  try {
-    // Version control — the workspace; always exactly one.
-    await addIntegration({
-      projectId: project.id,
-      category: 'vcs',
-      toolName: input.vcs.toolName as SupportedTool,
-      externalProjectId: input.vcs.externalProjectId,
-      config: input.vcs.config ?? {},
-    });
-
-    // Other-category tools — optional (already validated above).
-    for (const integration of input.integrations ?? []) {
-      await addIntegration({
-        projectId: project.id,
-        category: integration.category,
-        toolName: integration.toolName,
-        externalProjectId: integration.externalProjectId,
-        config: integration.config ?? {},
-      });
-    }
-
-    // Invites: assign existing company members now; unknown emails get an email invite below.
-    // Dedupe emails and track added users so a repeated invitee can't hit the unique constraint.
-    const seenEmails = new Set<string>();
-    const addedUserIds = new Set<number>();
-    for (const rawEmail of input.invites ?? []) {
-      const email = rawEmail?.trim().toLowerCase();
-      if (!email || seenEmails.has(email)) continue;
-      seenEmails.add(email);
-      const user = await findUserByEmail(email);
-      if (user && user.company_id === auth.companyId) {
-        if (!addedUserIds.has(user.id)) {
-          await addProjectMember({ projectId: project.id, userId: user.id });
-          addedUserIds.add(user.id);
-        }
-      } else {
-        pendingInvites.push(email);
-      }
-    }
-  } catch (error) {
-    await deleteProject(project.id);
-    log.error({ err: error, projectId: project.id }, 'project creation failed, rolled back');
-    throw error;
-  }
-
-  // Project committed — email the unknown invitees a registration link (best-effort).
-  if (pendingInvites.length > 0) {
-    await sendProjectInvites({
-      companyId: auth.companyId,
-      projectId: project.id,
-      projectName: project.name,
-      emails: pendingInvites,
-    });
-  }
-
-  log.info({ projectId: project.id, companyId: auth.companyId }, 'project created');
-  return toDetail(project, pendingInvites);
-}
+// Projects are created by importing repos into a workspace — see workspace.service.ts
+// (listWorkspaceRepos / addWorkspaceProjects). There is no standalone project-create endpoint.
 
 // M2.3 — project detail, authorized (company match; non-admins must be assigned).
 export async function getProject(auth: Auth, projectId: number): Promise<ProjectDetail> {
@@ -308,16 +208,160 @@ export async function getProject(auth: Auth, projectId: number): Promise<Project
   return toDetail(project);
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Admin-only: invite someone (by email) to an existing project. Always emails a single-use invite
+// link — the invitee joins by accepting it (new users register, existing users log in and accept).
+// Returns the refreshed project detail.
+export async function inviteMemberToProject(
+  auth: Auth,
+  projectId: number,
+  email: string,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can invite members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (!normalizedEmail || !EMAIL_RE.test(normalizedEmail)) {
+    throw new ProjectError('A valid email address is required', 400);
+  }
+
+  // Reject if that email already belongs to an assigned member of this project.
+  const existingUser = await findUserByEmail(normalizedEmail);
+  if (existingUser) {
+    const members = await listProjectMembers(projectId);
+    if (members.some((m) => m.user_id === existingUser.id)) {
+      throw new ProjectError('That person is already a member of this project', 409);
+    }
+  }
+
+  await sendProjectInvites({
+    companyId: auth.companyId,
+    projectId,
+    projectName: project.name,
+    invites: [{ email: normalizedEmail }],
+  });
+
+  log.info({ projectId, email: normalizedEmail }, 'project member invited');
+  return toDetail(project);
+}
+
+// Admin-only: remove an assigned member from a project.
+export async function removeMemberFromProject(
+  auth: Auth,
+  projectId: number,
+  userId: number,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can remove members', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  await deleteProjectMember(projectId, userId);
+  log.info({ projectId, userId }, 'project member removed');
+  return toDetail(project);
+}
+
+// Admin-only: update an existing tool integration's config (e.g. the connector settings' Save).
+// Only non-empty, non-masked values are persisted, so a blank field keeps the current value.
+export async function updateProjectIntegration(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+  config: Record<string, unknown>,
+): Promise<ProjectDetail> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can update integrations', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+
+  const patch: Record<string, string> = {};
+  for (const [key, value] of Object.entries(config ?? {})) {
+    if (typeof value === 'string' && value.trim() !== '' && value !== '***') {
+      patch[key] = value.trim();
+    }
+  }
+  // GitHub/GitLab/CI tokens live on the workspace, never in config.
+  if (!CONFIG_TOKEN_TOOLS.has(toolName)) {
+    delete patch.token;
+  }
+
+  // Upsert: merge into an existing integration, or create it (e.g. adding SonarQube to a project).
+  const existing = (await listIntegrations(projectId)).find((r) => r.tool_name === toolName);
+  if (existing) {
+    // Editing an already-configured tool with nothing new to save is a no-op mistake worth
+    // rejecting. Creating a brand-new integration with an empty patch is legitimate for a
+    // zero-config tool like github-actions (see REQUIRED_CONFIG_KEYS) - assertConfigForTool
+    // below still catches a genuinely-missing-required-field case on create.
+    if (Object.keys(patch).length === 0) {
+      throw new ProjectError('Nothing to update', 400);
+    }
+    await updateIntegrationConfig(projectId, toolName, patch);
+  } else {
+    const category = TOOL_CATEGORY[toolName];
+    if (!category) throw new ProjectError(`Unknown tool: ${toolName}`, 400);
+    assertConfigForTool(toolName as SupportedTool, patch); // require the fields sync will need
+    await addIntegration({ projectId, category, toolName: toolName as SupportedTool, config: patch });
+  }
+  return getProject(auth, projectId);
+}
+
+// Admin-only: reveal the effective token for a tool — the project's own config token, else its workspace PAT.
+export async function getIntegrationToken(
+  auth: Auth,
+  projectId: number,
+  toolName: string,
+): Promise<string | null> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can view credentials', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  const rows = await listIntegrations(projectId);
+  const configToken = (rows.find((r) => r.tool_name === toolName)?.config as Record<string, unknown>)?.token;
+  if (typeof configToken === 'string' && configToken.trim() !== '') {
+    return configToken;
+  }
+  // vcs tools fall back to the workspace PAT
+  if (project.workspace_id != null) {
+    const ws = await getWorkspaceById(project.workspace_id);
+    return ws?.access_token ?? null;
+  }
+  return null;
+}
+
 // ---- Read-only project + health-score dashboard feed ----
-// Maps project + projecthealthscore + snapshot metric tables to the dashboard shape:
-// health scores and the six ops-metric cards. Unscoped (no auth) — see authorization.service.ts.
+// Maps project + riskscore (7 new health scores) + snapshot metric tables to the dashboard
+// shape: health scores and the six ops-metric cards. Unscoped (no auth) — see
+// authorization.service.ts.
+//
+// Deliberately reads riskscore directly (via score.ts), not the survey-blended
+// projecthealthscore table — that blend is currently broken for its metrics-side input
+// (see future-work.md #7) and is left as-is; this dashboard feed doesn't depend on it.
+// `codeQuality` here is the raw security/reliability/maintainability triplet — merging
+// them into a single displayed "Code Quality" score (with the three shown on hover) is a
+// frontend-only presentation choice, not computed here.
 
 export interface HealthSubscores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface HealthSeriesPoint {
@@ -456,44 +500,52 @@ function buildOpsMetrics(rows: SnapshotOpsMetricsRow[]): { metrics: OpsMetrics |
 
 function buildProjectHealth(
   project: ProjectRow,
-  history: ProjectHealthScoreRow[],
+  history: ProjectRiskScore[],
   opsHistory: SnapshotOpsMetricsRow[],
+  vcs: { owner: string | null; repo: string | null },
 ): ProjectHealth {
   const latest = history[history.length - 1] ?? null;
   const previous = history.length > 1 ? history[history.length - 2] : null;
 
-  const team = project.owner && project.repo ? `${project.owner}/${project.repo}` : (project.owner ?? '');
+  // owner/repo come from the vcs integration config (the project row's own columns are legacy/unused).
+  const team = vcs.owner && vcs.repo ? `${vcs.owner}/${vcs.repo}` : (vcs.owner ?? '');
 
   const round = (value: number | null | undefined): number => Math.round(value ?? 0);
+  const label = (h: ProjectRiskScore): string => formatLabel(h.snapshotTime ?? '');
+  const date = (h: ProjectRiskScore): string => isoDate(h.snapshotTime ?? '');
 
   const subscores: HealthSubscores | null = latest
     ? {
-        delivery: round(latest.delivery_score),
-        codeQuality: round(latest.code_quality_score),
-        cicd: round(latest.cicd_score),
-        teamHealth: round(latest.team_health_score),
-        blockers: round(latest.blockers_score),
+        security: round(latest.subscores.security),
+        reliability: round(latest.subscores.reliability),
+        maintainability: round(latest.subscores.maintainability),
+        cicdDeploymentHealth: round(latest.subscores.cicdDeploymentHealth),
+        teamHealth: round(latest.subscores.teamHealth),
+        engineeringProcess: round(latest.subscores.engineeringProcess),
+        planningExecution: round(latest.subscores.planningExecution),
       }
     : null;
 
-  const score = latest?.overall_score ?? null;
-  const scoreTrend = latest && previous && latest.overall_score !== null && previous.overall_score !== null
-    ? Math.round((latest.overall_score - previous.overall_score) * 10) / 10
+  const score = latest?.overall ?? null;
+  const scoreTrend = latest && previous && latest.overall !== null && previous.overall !== null
+    ? Math.round((latest.overall - previous.overall) * 10) / 10
     : 0;
 
-  const sparkline = history.map((h) => ({ v: Math.round(h.overall_score ?? 0) }));
+  const sparkline = history.map((h) => ({ v: round(h.overall) }));
   const timeSeries = history.map((h) => ({
-    date: isoDate(h.computed_at),
-    label: formatLabel(h.computed_at),
-    score: Math.round(h.overall_score ?? 0),
+    date: date(h),
+    label: label(h),
+    score: round(h.overall),
   }));
 
   const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]> = {
-    delivery: history.map((h) => ({ v: Math.round(h.delivery_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    codeQuality: history.map((h) => ({ v: Math.round(h.code_quality_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    cicd: history.map((h) => ({ v: Math.round(h.cicd_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    teamHealth: history.map((h) => ({ v: Math.round(h.team_health_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
-    blockers: history.map((h) => ({ v: Math.round(h.blockers_score ?? 0), label: formatLabel(h.computed_at), date: isoDate(h.computed_at) })),
+    security: history.map((h) => ({ v: round(h.subscores.security), label: label(h), date: date(h) })),
+    reliability: history.map((h) => ({ v: round(h.subscores.reliability), label: label(h), date: date(h) })),
+    maintainability: history.map((h) => ({ v: round(h.subscores.maintainability), label: label(h), date: date(h) })),
+    cicdDeploymentHealth: history.map((h) => ({ v: round(h.subscores.cicdDeploymentHealth), label: label(h), date: date(h) })),
+    teamHealth: history.map((h) => ({ v: round(h.subscores.teamHealth), label: label(h), date: date(h) })),
+    engineeringProcess: history.map((h) => ({ v: round(h.subscores.engineeringProcess), label: label(h), date: date(h) })),
+    planningExecution: history.map((h) => ({ v: round(h.subscores.planningExecution), label: label(h), date: date(h) })),
   };
 
   const ops = buildOpsMetrics(opsHistory);
@@ -501,8 +553,8 @@ function buildProjectHealth(
   return {
     id: project.id,
     name: project.name,
-    owner: project.owner,
-    repo: project.repo,
+    owner: vcs.owner,
+    repo: vcs.repo,
     team,
     description: project.description ?? '',
     score: score !== null ? Math.round(score) : null,
@@ -515,9 +567,19 @@ function buildProjectHealth(
     metricSeries: ops.metricSeries,
     pendingSurvey: project.pendingSurvey,
     pendingSurveyTrigger: project.pendingSurveyTrigger,
-    lastUpdated: latest?.computed_at ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
+    lastUpdated: latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
     hasData: latest !== null,
     hasMetrics: ops.hasMetrics,
+  };
+}
+
+// owner/repo for the dashboard come from the project's vcs integration config (project.owner/repo are legacy).
+async function getVcsOwnerRepo(projectId: number): Promise<{ owner: string | null; repo: string | null }> {
+  const integrations = await listIntegrations(projectId);
+  const cfg = (integrations.find((i) => i.tool_category === 'vcs')?.config ?? {}) as Record<string, unknown>;
+  return {
+    owner: typeof cfg.owner === 'string' ? cfg.owner : null,
+    repo: typeof cfg.repo === 'string' ? cfg.repo : null,
   };
 }
 
@@ -531,11 +593,12 @@ export async function listProjectsWithHealth(auth: Auth): Promise<ProjectHealth[
   const projects = (await dbListAllProjects(auth.companyId)).filter((p) => allowedIds.has(p.id));
   return Promise.all(
     projects.map(async (project) => {
-      const [history, opsHistory] = await Promise.all([
-        listProjectHealthScoreHistory(project.id),
+      const [history, opsHistory, vcs] = await Promise.all([
+        listScoreHistoryForProject(project.id),
         listProjectOpsMetricsHistory(project.id),
+        getVcsOwnerRepo(project.id),
       ]);
-      return buildProjectHealth(project, history, opsHistory);
+      return buildProjectHealth(project, history, opsHistory, vcs);
     }),
   );
 }
@@ -544,9 +607,10 @@ export async function getProjectHealth(auth: Auth, projectId: number): Promise<P
   const project = await dbGetProjectRow(projectId);
   // Don't leak other companies' projects — treat cross-company as not found.
   if (!project || project.companyId !== auth.companyId) return null;
-  const [history, opsHistory] = await Promise.all([
-    listProjectHealthScoreHistory(projectId),
+  const [history, opsHistory, vcs] = await Promise.all([
+    listScoreHistoryForProject(projectId),
     listProjectOpsMetricsHistory(projectId),
+    getVcsOwnerRepo(projectId),
   ]);
-  return buildProjectHealth(project, history, opsHistory);
+  return buildProjectHealth(project, history, opsHistory, vcs);
 }

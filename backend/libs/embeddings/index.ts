@@ -9,6 +9,6 @@ export {
   type ActionEmbeddingSource,
 } from './embedding-text.js';
 export {
-  SiliconFlowEmbeddingProvider,
-  type SiliconFlowEmbeddingConfig,
-} from './siliconflow-embedding.provider.js';
+  GeminiEmbeddingProvider,
+  type GeminiEmbeddingConfig,
+} from './gemini-embedding.provider.js';

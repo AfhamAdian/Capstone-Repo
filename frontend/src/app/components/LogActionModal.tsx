@@ -1,30 +1,62 @@
-import { useState, useRef, useEffect, useMemo, type MouseEvent } from "react";
-import { X, ChevronDown, Check, Search, Send, AlertCircle, Star } from "lucide-react";
+import { useState, useRef, useEffect, type MouseEvent } from "react";
+import { X, ChevronDown, Check, Search, Send, AlertCircle, Star, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project, Action } from "../types";
-import { hClass } from "../format";
+import { searchActions, type ActionSearchMode } from "../api";
+import { actionSearchModeLabel, actionSimilarityLabel, hClass } from "../format";
 
-export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];actions:Action[];
+export function LogActionModal({onClose,preId,projects,actions,initialAction,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];actions:Action[];initialAction?:Action|null;
   onSubmit:(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>Promise<void>;
 }) {
-  const [problemAndCause,setProblemAndCause]=useState("");
-  const [reason,setReason]=useState("");
-  const [actionTaken,setActionTaken]=useState("");
-  const [date,setDate]=useState(()=>new Date().toISOString().slice(0,10));
-  const [sel,setSel]=useState<string[]>(preId?[preId]:[]);
+  const projectValue=(project:Project)=>project.backendProjectId??project.id;
+  const preselected=preId?projects.find(project=>project.id===preId||project.backendProjectId===preId):null;
+  const [problemAndCause,setProblemAndCause]=useState(initialAction?.problem??"");
+  const [reason,setReason]=useState(initialAction?.reason??"");
+  const [actionTaken,setActionTaken]=useState(initialAction?.actionTaken??"");
+  const [date,setDate]=useState(()=>initialAction?.timestamp??new Date().toISOString().slice(0,10));
+  const [sel,setSel]=useState<string[]>(()=>initialAction?.projectIds??(preselected?[projectValue(preselected)]:[]));
   const [dropOpen,setDropOpen]=useState(false);
   const [submitted,setSubmitted]=useState(false);
   const [submitting,setSubmitting]=useState(false);
   const [error,setError]=useState<string|null>(null);
   const [searchTriggered,setSearchTriggered]=useState(false);
+  const [similar,setSimilar]=useState<Action[]>([]);
+  const [searching,setSearching]=useState(false);
+  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
+  const [searchError,setSearchError]=useState<string|null>(null);
+  const searchController=useRef<AbortController|null>(null);
   const dRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{const h=(e:MouseEvent)=>{if(dRef.current&&!dRef.current.contains(e.target as Node))setDropOpen(false);};document.addEventListener("mousedown",h);return()=>document.removeEventListener("mousedown",h);},[]);
-  const similar=useMemo(()=>{
-    if(problemAndCause.length<4)return[];
-    const words=problemAndCause.toLowerCase().split(/\s+/).filter(w=>w.length>3);
-    return actions.map(a=>({action:a,score:words.filter(w=>a.problem.toLowerCase().includes(w)||a.reason.toLowerCase().includes(w)).length})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,5);
-  },[problemAndCause,actions]);
-  const toggle=(id:string)=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+  useEffect(()=>()=>searchController.current?.abort(),[]);
+  const clearSimilar=()=>{
+    searchController.current?.abort();
+    searchController.current=null;
+    setSearchTriggered(false);setSimilar([]);setSearching(false);setSearchMode(null);setSearchError(null);
+  };
+  const findSimilar=async()=>{
+    const query=problemAndCause.trim();
+    if(query.length<3||searching)return;
+    searchController.current?.abort();
+    const controller=new AbortController();
+    searchController.current=controller;
+    setSearchTriggered(true);setSearching(true);setSearchMode(null);setSearchError(null);setSimilar([]);
+    try{
+      const result=await searchActions(query,5,{
+        deep:true,
+        projectId:sel.length===1?sel[0]:undefined,
+        excludeActionId:initialAction?.id,
+        signal:controller.signal,
+      });
+      if(controller.signal.aborted)return;
+      setSimilar(result.actions);
+      setSearchMode(result.mode);
+    }catch(err){
+      if(!controller.signal.aborted)setSearchError(err instanceof Error?err.message:"Similar-action search is unavailable");
+    }finally{
+      if(searchController.current===controller){searchController.current=null;setSearching(false);}
+    }
+  };
+  const toggle=(id:string)=>{setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);clearSimilar();};
   const canSubmit=sel.length>0&&problemAndCause.trim().length>0&&reason.trim().length>0&&actionTaken.trim().length>0;
   const submit=async()=>{
     if(!canSubmit||submitting)return;
@@ -43,15 +75,15 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
         {/* ── LEFT: form ── */}
         <div className="flex-1 flex flex-col min-w-0">
           <div className="flex items-center justify-between px-6 py-5 border-b border-border">
-            <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Log Management Action</div>
+            <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>{initialAction?"Edit Management Action":"Log Management Action"}</div>
             <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
           </div>
 
           {submitted?(
             <div className="flex-1 flex flex-col items-center justify-center gap-4 p-8">
               <div className="w-14 h-14 bg-emerald-500 flex items-center justify-center"><Check size={26} className="text-white"/></div>
-              <div className="text-2xl font-bold" style={{fontFamily:"var(--font-display)"}}>Action logged</div>
-              <div className="text-base text-muted-foreground">Added to timeline and library.</div>
+              <div className="text-2xl font-bold" style={{fontFamily:"var(--font-display)"}}>{initialAction?"Action updated":"Action logged"}</div>
+              <div className="text-base text-muted-foreground">{initialAction?"The action and its search index are up to date.":"Added to timeline and library."}</div>
             </div>
           ):(
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
@@ -63,7 +95,7 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
                   <button onClick={()=>setDropOpen(!dropOpen)}
                     className={`w-full flex items-center justify-between bg-input-background border px-4 py-3 text-[15px] text-left transition-colors ${dropOpen?"border-primary":"border-border hover:border-primary/50"}`}>
                     <span className={sel.length>0?"text-foreground font-medium":"text-muted-foreground"}>
-                      {sel.length>0?projects.filter(p=>sel.includes(p.id)).map(p=>p.name).join(", "):"Select one or more projects…"}
+                      {sel.length>0?projects.filter(p=>sel.includes(projectValue(p))).map(p=>p.name).join(", "):"Select one or more projects…"}
                     </span>
                     <ChevronDown size={15} className={`text-muted-foreground shrink-0 ml-2 transition-transform ${dropOpen?"rotate-180":""}`}/>
                   </button>
@@ -73,13 +105,13 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
                         className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border shadow-xl z-10 max-h-64 overflow-y-auto">
                         <div className="px-3 py-2 border-b border-border text-xs font-semibold text-muted-foreground bg-muted">Select all that apply</div>
                         {projects.map(p=>(
-                          <button key={p.id} onClick={()=>toggle(p.id)}
-                            className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted transition-colors border-b border-border/50 last:border-b-0 ${sel.includes(p.id)?"bg-primary/5":""}`}>
-                            <div className={`w-5 h-5 border-2 shrink-0 flex items-center justify-center transition-colors ${sel.includes(p.id)?"border-primary bg-primary":"border-border"}`}>
-                              {sel.includes(p.id)&&<Check size={11} className="text-white"/>}
+                          <button key={p.id} onClick={()=>toggle(projectValue(p))}
+                            className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted transition-colors border-b border-border/50 last:border-b-0 ${sel.includes(projectValue(p))?"bg-primary/5":""}`}>
+                            <div className={`w-5 h-5 border-2 shrink-0 flex items-center justify-center transition-colors ${sel.includes(projectValue(p))?"border-primary bg-primary":"border-border"}`}>
+                              {sel.includes(projectValue(p))&&<Check size={11} className="text-white"/>}
                             </div>
                             <div className="flex-1 text-left">
-                              <div className={`text-[15px] font-semibold ${sel.includes(p.id)?"text-primary":"text-foreground"}`}>{p.name}</div>
+                              <div className={`text-[15px] font-semibold ${sel.includes(projectValue(p))?"text-primary":"text-foreground"}`}>{p.name}</div>
                               <div className="text-sm text-muted-foreground">{p.team}</div>
                             </div>
                             <span className={`text-base font-bold tabular-nums ${hClass(p.score)}`} style={{fontFamily:"var(--font-mono)"}}>{p.score}</span>
@@ -98,15 +130,16 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
                     Problem
                   </label>
                   <button
-                    onClick={()=>setSearchTriggered(true)}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors"
-                    title="Search for similar past problems">
-                    <Search size={11}/> Find Similar
+                    onClick={()=>void findSimilar()}
+                    disabled={problemAndCause.trim().length<3||searching}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Deep-search past problems with Pinecone reranking">
+                    {searching?<RefreshCw size={11} className="animate-spin"/>:<Search size={11}/>} {searching?"Searching…":"Find Similar"}
                   </button>
                 </div>
                 <textarea
                   value={problemAndCause}
-                  onChange={e=>{setProblemAndCause(e.target.value);setSearchTriggered(false);}}
+                  onChange={e=>{setProblemAndCause(e.target.value);clearSimilar();}}
                   rows={4}
                   placeholder="What happened? Be specific."
                   className="w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors leading-relaxed"
@@ -147,7 +180,7 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
                 disabled={!canSubmit||submitting}
                 className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{fontFamily:"var(--font-display)"}}>
-                <Send size={14}/> {submitting?"Logging…":"Log Action"}
+                <Send size={14}/> {submitting?(initialAction?"Saving…":"Logging…"):(initialAction?"Save changes":"Log Action")}
               </button>
               </div>
             </div>
@@ -159,24 +192,37 @@ export function LogActionModal({onClose,preId,projects,actions,onSubmit}:{onClos
           <div className="px-5 py-4 border-b border-border">
             <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Similar Past Problems</div>
             <div className="text-sm text-muted-foreground mt-0.5">
-              {similar.length>0?`${similar.length} match${similar.length>1?"es":""} found`:"Type above to search"}
+              {searching?"Searching action history…":searchError?"Search unavailable":searchTriggered
+                ?`${similar.length} match${similar.length!==1?"es":""} · ${actionSearchModeLabel(searchMode)}`
+                :"Click Find Similar to search"}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
-            {similar.length===0?(
+            {searching?(
               <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
-                {problemAndCause.length<4
-                  ?"Start describing the problem to find related past actions."
+                <RefreshCw size={18} className="animate-spin mx-auto mb-3 text-primary"/>Comparing with past actions…
+              </div>
+            ):searchError?(
+              <div className="text-sm text-amber-700 dark:text-amber-300 text-center pt-8 leading-relaxed px-2">
+                <AlertCircle size={18} className="mx-auto mb-3"/>{searchError}
+              </div>
+            ):similar.length===0?(
+              <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
+                {!searchTriggered
+                  ?problemAndCause.trim().length<3
+                    ?"Enter at least 3 characters, then click Find Similar."
+                    :"Click Find Similar when you are ready to compare this problem."
                   :"No similar problems found in the library."}
               </div>
             ):(
               <div className="space-y-3">
-                {similar.map(({action},idx)=>(
+                {similar.map((action,idx)=>(
                   <div key={action.id} className="border border-border bg-card p-3.5">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="text-[13px] font-semibold text-foreground leading-snug">{action.problem}</div>
                       <span className="text-xs text-muted-foreground shrink-0 mt-0.5 font-mono">#{idx+1}</span>
                     </div>
+                    {actionSimilarityLabel(action.similarity)&&<div className="text-xs font-semibold text-primary mb-2">{actionSimilarityLabel(action.similarity)}</div>}
                     <div className="text-xs text-muted-foreground mb-2.5 leading-relaxed">{action.actionTaken}</div>
                     <div className="flex items-center justify-between">
                       <div className="flex gap-0.5">

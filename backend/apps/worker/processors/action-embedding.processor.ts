@@ -1,6 +1,6 @@
 import {
   EmbeddingProviderError,
-  SiliconFlowEmbeddingProvider,
+  GeminiEmbeddingProvider,
   buildActionEmbeddingText,
   hashEmbeddingText,
 } from '@libs/embeddings/index.js';
@@ -13,30 +13,28 @@ import {
   completeActionEmbedding,
   failActionEmbedding,
 } from '../../api/database/action-embeddings.js';
-import { getActionById } from '../../api/database/actions.js';
+import { getActionByIdInternal } from '../../api/database/actions.js';
 
 const log = logger.child({ component: 'action-embedding-processor' });
-let provider: SiliconFlowEmbeddingProvider | undefined;
+let provider: GeminiEmbeddingProvider | undefined;
 
-function getProvider(): SiliconFlowEmbeddingProvider {
+function getProvider(): GeminiEmbeddingProvider {
   if (provider) return provider;
   if (
     !env.isSemanticSearchConfigured
-    || !env.siliconFlowEmbeddingsUrl
-    || !env.siliconFlowApiKey
-    || !env.siliconFlowEmbeddingModel
-    || env.siliconFlowEmbeddingDimensions <= 0
+    || !env.geminiEmbeddingsUrl
+    || !env.geminiApiKey
+    || !env.geminiEmbeddingModel
+    || env.geminiEmbeddingDimensions <= 0
   ) {
-    throw new Error('SiliconFlow embeddings are not configured');
+    throw new Error('Gemini embeddings are not configured');
   }
 
-  provider = new SiliconFlowEmbeddingProvider({
-    endpoint: env.siliconFlowEmbeddingsUrl,
-    apiKey: env.siliconFlowApiKey,
-    authHeader: env.siliconFlowAuthHeader,
-    authScheme: env.siliconFlowAuthScheme,
-    model: env.siliconFlowEmbeddingModel,
-    dimensions: env.siliconFlowEmbeddingDimensions,
+  provider = new GeminiEmbeddingProvider({
+    endpoint: env.geminiEmbeddingsUrl,
+    apiKey: env.geminiApiKey,
+    model: env.geminiEmbeddingModel,
+    dimensions: env.geminiEmbeddingDimensions,
     timeoutMs: env.actionEmbeddingTimeoutMs,
   });
   return provider;
@@ -55,7 +53,7 @@ export async function processActionEmbeddingJob(jobData: ActionEmbeddingJobData)
       throw new Error(`Embedding version ${jobData.embeddingVersion} is not active`);
     }
 
-    const action = await getActionById(jobData.actionId);
+    const action = await getActionByIdInternal(jobData.actionId);
     if (!action) {
       jobLog.info('action no longer exists; skipping embedding');
       return;
@@ -70,7 +68,7 @@ export async function processActionEmbeddingJob(jobData: ActionEmbeddingJobData)
     const embeddingProvider = getProvider();
     const startedAt = Date.now();
     const [embedding] = await embeddingProvider.embed([content]);
-    if (!embedding) throw new Error('SiliconFlow returned no action embedding');
+    if (!embedding) throw new Error('Gemini returned no action embedding');
 
     await completeActionEmbedding({
       actionId: action.id,

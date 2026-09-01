@@ -22,9 +22,10 @@ interface JiraIssue {
     issuetype: { name: string };
     priority: { name: string } | null;
     assignee: { displayName: string } | null;
-    customfield_10016?: number; // Story points (common custom field)
     duedate: string | null;
     summary: string;
+    parent?: { id: string; key: string }; // Epic linkage on team-managed projects
+    [key: string]: unknown; // instance-specific custom fields (story points, Epic Link) keyed dynamically
   };
   changelog?: {
     histories: Array<{
@@ -51,10 +52,13 @@ const RATE_LIMIT_PAUSE_MS = 1000;
 const PAGE_SIZE = 100;
 const STALE_DAYS_THRESHOLD = 14;
 const BLOCKED_STATUS_KEYWORDS = ['blocked', 'impediment', 'waiting'];
+const DEFAULT_STORY_POINTS_FIELD_KEY = 'customfield_10016';
+const DEFAULT_EPIC_LINK_FIELD_KEY = 'customfield_10014';
 
 export class JiraConnector implements IPmConnector, IConnector {
   private credentials: { token: string; email: string; baseUrl: string };
   private project: { projectKey: string; boardId?: string };
+  private options: { storyPointsFieldKey: string; epicLinkFieldKey: string };
 
   constructor(input: CreatePmConnectorInput) {
     if (!input.credentials.token) {
@@ -79,16 +83,33 @@ export class JiraConnector implements IPmConnector, IConnector {
       projectKey: input.project.projectKey,
       boardId: input.project.boardId,
     };
+
+    this.options = {
+      storyPointsFieldKey: input.options?.storyPointsFieldKey ?? DEFAULT_STORY_POINTS_FIELD_KEY,
+      epicLinkFieldKey: input.options?.epicLinkFieldKey ?? DEFAULT_EPIC_LINK_FIELD_KEY,
+    };
+  }
+
+  private getStoryPoints(issue: JiraIssue): number {
+    const raw = issue.fields[this.options.storyPointsFieldKey];
+    return typeof raw === 'number' ? raw : 0;
+  }
+
+  private getEpicKey(issue: JiraIssue): string | null {
+    if (issue.fields.parent?.key) return issue.fields.parent.key; // team-managed
+    const raw = issue.fields[this.options.epicLinkFieldKey];
+    return typeof raw === 'string' ? raw : null; // company-managed
   }
 
   async getData(): Promise<ConnectorOutput> {
     const now = new Date();
 
     // Fetch all required data
-    const [issues, sprints, projectInfo] = await Promise.all([
+    const [issues, sprints, projectInfo, epics] = await Promise.all([
       this.fetchIssues(),
       this.fetchSprints(),
       this.fetchProjectInfo(),
+      this.fetchEpics(),
     ]);
 
     // Calculate metrics
@@ -99,6 +120,8 @@ export class JiraConnector implements IPmConnector, IConnector {
     const scopeCreepRate = this.calculateScopeCreepRate(sprints, issues);
     const blockedMetrics = this.calculateBlockedMetrics(issues);
     const overdueItemsCount = this.calculateOverdueItems(issues);
+    const storyPointSayDoRatio = this.calculateStoryPointSayDoRatio(sprints, issues);
+    const epicCompletionRatePercent = this.calculateEpicCompletionRate(epics, issues);
 
     const leadTime = this.calculateLeadTimeMetrics(issues, sprints);
     const spillover = this.calculateSpilloverMetrics(sprints, issues);
@@ -122,6 +145,8 @@ export class JiraConnector implements IPmConnector, IConnector {
         blockedItemsCount: blockedMetrics.count,
         blockedItemsAvgAgeDays: blockedMetrics.avgAgeDays,
         overdueItemsCount,
+        storyPointSayDoRatio,
+        epicCompletionRatePercent,
         leadTime,
         spillover,
         blockedWork,
@@ -167,6 +192,23 @@ export class JiraConnector implements IPmConnector, IConnector {
     };
   }
 
+  private issueFields(): string {
+    return [
+      'created',
+      'updated',
+      'resolutiondate',
+      'status',
+      'issuetype',
+      'priority',
+      'assignee',
+      'duedate',
+      'summary',
+      'parent',
+      this.options.storyPointsFieldKey,
+      this.options.epicLinkFieldKey,
+    ].join(',');
+  }
+
   private async fetchIssues(): Promise<JiraIssue[]> {
     const issues: JiraIssue[] = [];
     let startAt = 0;
@@ -177,7 +219,7 @@ export class JiraConnector implements IPmConnector, IConnector {
 
     while (true) {
       const jql = `project = ${this.project.projectKey} AND updated >= "${since}" ORDER BY created DESC`;
-      const url = `${this.credentials.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&expand=changelog&fields=created,updated,resolutiondate,status,issuetype,priority,assignee,customfield_10016,duedate,summary`;
+      const url = `${this.credentials.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&expand=changelog&fields=${this.issueFields()}`;
 
       const data = await this.fetchWithAuth(url);
       issues.push(...data.issues);
@@ -190,6 +232,33 @@ export class JiraConnector implements IPmConnector, IConnector {
     }
 
     return issues;
+  }
+
+  /**
+   * Epics are fetched separately, with no recency filter — unlike fetchIssues(), which only
+   * looks at the last 90 days. Epics are coarse-grained (far fewer than regular issues) and can
+   * span much longer than 90 days without being "updated", so bounding this fetch the same way
+   * risks missing an epic whose children are recent but the epic itself is old.
+   */
+  private async fetchEpics(): Promise<JiraIssue[]> {
+    const epics: JiraIssue[] = [];
+    let startAt = 0;
+    const maxResults = PAGE_SIZE;
+
+    while (true) {
+      const jql = `project = ${this.project.projectKey} AND issuetype = Epic ORDER BY created DESC`;
+      const url = `${this.credentials.baseUrl}/rest/api/3/search/jql?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${maxResults}&fields=status,summary`;
+
+      const data = await this.fetchWithAuth(url);
+      epics.push(...data.issues);
+
+      if (data.issues.length < maxResults) break;
+      startAt += maxResults;
+
+      await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_PAUSE_MS));
+    }
+
+    return epics;
   }
 
   private async fetchSprints(): Promise<JiraSprint[]> {
@@ -237,6 +306,48 @@ export class JiraConnector implements IPmConnector, IConnector {
     }
 
     return totalCommitted > 0 ? Math.round((totalCompleted / totalCommitted) * 100) : null;
+  }
+
+  private calculateStoryPointSayDoRatio(sprints: JiraSprint[], issues: JiraIssue[]): number | null {
+    if (sprints.length === 0) return null;
+
+    const recentSprints = sprints.slice(-3); // Last 3 sprints
+    let totalCommittedPoints = 0;
+    let totalCompletedPoints = 0;
+
+    for (const sprint of recentSprints) {
+      const sprintIssues = this.getIssuesInSprint(sprint, issues);
+
+      for (const issue of sprintIssues) {
+        const points = this.getStoryPoints(issue);
+        totalCommittedPoints += points;
+        if (issue.fields.status.statusCategory.key === 'done') {
+          totalCompletedPoints += points;
+        }
+      }
+    }
+
+    return totalCommittedPoints > 0 ? Math.round((totalCompletedPoints / totalCommittedPoints) * 100) : null;
+  }
+
+  private calculateEpicCompletionRate(epics: JiraIssue[], issues: JiraIssue[]): number | null {
+    if (epics.length === 0) return null;
+
+    const perEpicCompletionPercents: number[] = [];
+
+    for (const epic of epics) {
+      const children = issues.filter((issue) => this.getEpicKey(issue) === epic.key);
+      if (children.length === 0) continue;
+
+      const done = children.filter((issue) => issue.fields.status.statusCategory.key === 'done');
+      perEpicCompletionPercents.push((done.length / children.length) * 100);
+    }
+
+    if (perEpicCompletionPercents.length === 0) return null;
+
+    const avg =
+      perEpicCompletionPercents.reduce((sum, percent) => sum + percent, 0) / perEpicCompletionPercents.length;
+    return Math.round(avg);
   }
 
   private calculateIssueCycleTime(issues: JiraIssue[]): number | null {
@@ -419,13 +530,13 @@ export class JiraConnector implements IPmConnector, IConnector {
   ): {
     spilloverRatio: number | null;
     consecutiveSpilloverCount: number;
-    carryoverAvgAgeDays: number | null;
+    carryoverAvgSprintsSurvived: number | null;
   } {
     if (sprints.length < 2) {
       return {
         spilloverRatio: null,
         consecutiveSpilloverCount: 0,
-        carryoverAvgAgeDays: null,
+        carryoverAvgSprintsSurvived: null,
       };
     }
 
@@ -433,7 +544,6 @@ export class JiraConnector implements IPmConnector, IConnector {
     let totalSpillover = 0;
     let totalIssues = 0;
     let consecutiveCount = 0;
-    const carryoverAges: number[] = [];
 
     for (let i = 0; i < recentSprints.length - 1; i++) {
       const currentSprint = recentSprints[i];
@@ -450,31 +560,58 @@ export class JiraConnector implements IPmConnector, IConnector {
 
       totalSpillover += incomplete.length;
       totalIssues += currentIssues.length;
-
-      // Calculate carryover age
-      incomplete.forEach((issue) => {
-        const created = new Date(issue.fields.created).getTime();
-        const now = Date.now();
-        carryoverAges.push((now - created) / (24 * 60 * 60 * 1000));
-      });
     }
 
     const spilloverRatio = totalIssues > 0 ? Math.round((totalSpillover / totalIssues) * 100) : null;
-    const carryoverAvgAgeDays =
-      carryoverAges.length > 0
-        ? Math.round((carryoverAges.reduce((sum, age) => sum + age, 0) / carryoverAges.length) * 10) / 10
-        : null;
+    const carryoverAvgSprintsSurvived = this.calculateCarryoverSprintsSurvived(sprints, issues);
 
     return {
       spilloverRatio,
       consecutiveSpilloverCount: consecutiveCount,
-      carryoverAvgAgeDays,
+      carryoverAvgSprintsSurvived,
     };
+  }
+
+  /**
+   * For tickets still incomplete as of the most recent closed sprint (the "currently carried
+   * over" population), counts how many consecutive sprints — walking backward through the full
+   * retained closed-sprint history, not just the last 3 — each has appeared in without being
+   * marked Done. Averaged across that population.
+   *
+   * Note: sprint membership is determined by getIssuesInSprint()'s date-range heuristic
+   * (created/updated overlapping the sprint's date window), not Jira's actual Sprint field —
+   * see future-work.md for the known limitation this inherits.
+   */
+  private calculateCarryoverSprintsSurvived(sprints: JiraSprint[], issues: JiraIssue[]): number | null {
+    if (sprints.length < 2) return null;
+
+    const lastSprint = sprints[sprints.length - 1];
+    if (!lastSprint) return null;
+
+    const lastSprintIssues = this.getIssuesInSprint(lastSprint, issues);
+    const stillIncomplete = lastSprintIssues.filter((issue) => issue.fields.status.statusCategory.key !== 'done');
+
+    if (stillIncomplete.length === 0) return null;
+
+    const survivalCounts = stillIncomplete.map((issue) => {
+      let streak = 0;
+      for (let idx = sprints.length - 1; idx >= 0; idx--) {
+        const sprint = sprints[idx];
+        if (!sprint) break;
+        const sprintIssues = this.getIssuesInSprint(sprint, issues);
+        const inSprint = sprintIssues.some((si) => si.key === issue.key);
+        if (!inSprint) break;
+        streak++;
+      }
+      return streak;
+    });
+
+    const avg = survivalCounts.reduce((sum, count) => sum + count, 0) / survivalCounts.length;
+    return Math.round(avg * 10) / 10;
   }
 
   private calculateBlockedWorkMetrics(issues: JiraIssue[]): {
     blockedTicketPercent: number | null;
-    avgBlockedDurationDays: number | null;
     maxBlockedDurationDays: number | null;
     blockedReentryCount: number;
   } {
@@ -485,7 +622,6 @@ export class JiraConnector implements IPmConnector, IConnector {
     if (blockedIssues.length === 0) {
       return {
         blockedTicketPercent: 0,
-        avgBlockedDurationDays: null,
         maxBlockedDurationDays: null,
         blockedReentryCount: 0,
       };
@@ -499,7 +635,6 @@ export class JiraConnector implements IPmConnector, IConnector {
       return (now - updated) / (24 * 60 * 60 * 1000);
     });
 
-    const avgDuration = durations.reduce((sum, dur) => sum + dur, 0) / durations.length;
     const maxDuration = Math.max(...durations);
 
     // Count re-entry (issues that were blocked, unblocked, then blocked again)
@@ -523,7 +658,6 @@ export class JiraConnector implements IPmConnector, IConnector {
 
     return {
       blockedTicketPercent: blockedPercent,
-      avgBlockedDurationDays: Math.round(avgDuration * 10) / 10,
       maxBlockedDurationDays: Math.round(maxDuration * 10) / 10,
       blockedReentryCount: reentryCount,
     };
@@ -534,20 +668,17 @@ export class JiraConnector implements IPmConnector, IConnector {
     issues: JiraIssue[],
   ): {
     midSprintAdditions: number;
-    scopeChurnRatio: number | null;
     priorityChangeCount: number;
   } {
     if (sprints.length === 0) {
       return {
         midSprintAdditions: 0,
-        scopeChurnRatio: null,
         priorityChangeCount: 0,
       };
     }
 
     const recentSprints = sprints.slice(-3);
     let totalAdded = 0;
-    let totalCommitted = 0;
     let priorityChanges = 0;
 
     for (const sprint of recentSprints) {
@@ -562,7 +693,6 @@ export class JiraConnector implements IPmConnector, IConnector {
       });
 
       totalAdded += addedMidSprint.length;
-      totalCommitted += sprintIssues.length;
 
       // Count priority changes
       sprintIssues.forEach((issue) => {
@@ -581,11 +711,8 @@ export class JiraConnector implements IPmConnector, IConnector {
       });
     }
 
-    const scopeChurnRatio = totalCommitted > 0 ? Math.round((totalAdded / totalCommitted) * 100) : null;
-
     return {
       midSprintAdditions: totalAdded,
-      scopeChurnRatio,
       priorityChangeCount: priorityChanges,
     };
   }

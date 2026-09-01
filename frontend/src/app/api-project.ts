@@ -1,11 +1,16 @@
 import { API_BASE_URL } from "./api";
 
+// Raw scores from the 7-score health engine (backend/libs/risk-engines). "Code Quality" is
+// merged from security/reliability/maintainability on the frontend only - see
+// format.ts's computeCodeQualityScore.
 export interface HealthSubscores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface HealthSeriesPoint {

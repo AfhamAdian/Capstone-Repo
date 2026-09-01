@@ -6,7 +6,7 @@ function PulseBar({className}:{className:string}) {
 
 export function ProjectPageSkeleton() {
   const nav=[{icon:<BarChart2 size={16}/>,label:"Dashboard",active:true},{icon:<Zap size={16}/>,label:"Actions"},{icon:<MessageSquare size={16}/>,label:"Surveys"},{icon:<Settings size={16}/>,label:"Settings"}];
-  const cats=["Delivery","Code Quality","CI/CD","Team Health","Blockers"];
+  const cats=["Code Quality","CI/CD","Team Health","Engineering Process","Planning & Execution"];
   const metrics=["Commits","Tickets Closed","Sprint Velocity","Open Blockers","Deployments / wk","PR Cycle Time"];
   return (
     <div className="flex flex-1 min-h-0">

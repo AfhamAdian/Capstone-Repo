@@ -15,8 +15,9 @@ import {
   updatePassword,
   type PublicUser,
 } from '../database/user.js';
-import { addProjectMember } from '../database/projectmember.js';
-import { sendPasswordResetEmail } from './email.service.js';
+import { addProjectMember, listProjectMembers } from '../database/projectmember.js';
+import { sendPasswordResetEmail, sendWelcomeEmail, sendVerificationCodeEmail } from './email.service.js';
+import { emailVerificationStore } from '@libs/auth/email-verification-store.js';
 import { env } from '../config/env.js';
 import { logger } from '@libs/logger.js';
 
@@ -67,9 +68,39 @@ export async function register(input: RegisterInput): Promise<AuthResult> {
   return input.inviteToken ? registerInvitedMember(input) : registerAdmin(input);
 }
 
+// Emails a 6-digit verification code for a self-signup email. Rejects if the email is already taken.
+export async function sendEmailVerificationCode(email: string): Promise<void> {
+  const trimmed = email?.trim();
+  if (!trimmed || !/^\S+@\S+\.\S+$/.test(trimmed)) {
+    throw new AuthError('A valid email is required', 400);
+  }
+  if (await findUserByEmail(trimmed)) {
+    throw new AuthError('An account with this email already exists', 409);
+  }
+  const code = await emailVerificationStore.issueCode(trimmed);
+  await sendVerificationCodeEmail(trimmed, code);
+  log.info({ email: trimmed }, 'email verification code sent');
+}
+
+// Confirms a submitted code, marking the email verified for a short window so registration can proceed.
+export async function verifyEmailCode(email: string, code: string): Promise<void> {
+  if (!email?.trim() || !code?.trim()) {
+    throw new AuthError('Email and code are required', 400);
+  }
+  const ok = await emailVerificationStore.verifyCode(email, code);
+  if (!ok) {
+    throw new AuthError('Invalid or expired verification code', 400);
+  }
+}
+
 // Creates the company then its first (admin) user; rolls the company back if the user insert fails.
 async function registerAdmin(input: RegisterInput): Promise<AuthResult> {
   assertValidRegisterInput(input);
+
+  // Self-signup requires a verified email (the code flow above sets this flag).
+  if (!(await emailVerificationStore.isVerified(input.email))) {
+    throw new AuthError('Please verify your email address first', 400);
+  }
 
   const existing = await findUserByEmail(input.email);
   if (existing) {
@@ -94,6 +125,12 @@ async function registerAdmin(input: RegisterInput): Promise<AuthResult> {
       email: user.email,
       role: user.role,
     });
+
+    await emailVerificationStore.consumeVerified(input.email); // one verified flag = one account
+
+    // Best-effort welcome email — never block or fail registration on a mail hiccup.
+    void sendWelcomeEmail(user.email, input.name).catch((err) =>
+      log.warn({ err, userId: user.id }, 'welcome email failed (non-blocking)'));
 
     log.info({ userId: user.id, companyId }, 'registered new user and company');
     return { user: toPublicUser(user), sessionId };
@@ -148,17 +185,49 @@ async function registerInvitedMember(input: RegisterInput): Promise<AuthResult> 
     role: user.role,
   });
 
+  // Best-effort welcome email — never block or fail registration on a mail hiccup.
+  void sendWelcomeEmail(user.email, input.name).catch((err) =>
+    log.warn({ err, userId: user.id }, 'welcome email failed (non-blocking)'));
+
   log.info({ userId: user.id, projectId: invite.projectId }, 'registered invited member');
   return { user: toPublicUser(user), sessionId };
 }
 
 // Returns the invite's email/project for prefilling the registration form (non-consuming).
+// `hasAccount` lets the client send an existing user straight to login instead of the register form.
 export async function getInvite(
   token: string,
-): Promise<{ email: string; projectId: number } | null> {
+): Promise<{ email: string; projectId: number; hasAccount: boolean } | null> {
   if (!token) return null;
   const invite = await inviteTokenStore.get(token);
-  return invite ? { email: invite.email, projectId: invite.projectId } : null;
+  if (!invite) return null;
+  const existing = await findUserByEmail(invite.email);
+  return { email: invite.email, projectId: invite.projectId, hasAccount: Boolean(existing) };
+}
+
+// Accept a project invite as an already-logged-in user: adds them to the invited project and burns
+// the token. The invite must be addressed to this account (same email + company). Idempotent — an
+// already-assigned member just succeeds.
+export async function acceptProjectInvite(
+  auth: { userId: number; companyId: number; email: string },
+  token: string,
+): Promise<{ projectId: number }> {
+  const invite = await inviteTokenStore.get(token);
+  if (!invite) {
+    throw new AuthError('Invalid or expired invitation', 400);
+  }
+  if (invite.email.toLowerCase() !== auth.email.toLowerCase() || invite.companyId !== auth.companyId) {
+    throw new AuthError('This invitation is for a different account', 403);
+  }
+
+  const members = await listProjectMembers(invite.projectId);
+  if (!members.some((m) => m.user_id === auth.userId)) {
+    await addProjectMember({ projectId: invite.projectId, userId: auth.userId });
+  }
+  await inviteTokenStore.consume(token); // burn it now that it's been honored
+
+  log.info({ userId: auth.userId, projectId: invite.projectId }, 'accepted project invite');
+  return { projectId: invite.projectId };
 }
 
 // Same error for unknown email and wrong password so accounts cannot be enumerated.

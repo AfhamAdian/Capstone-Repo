@@ -15,7 +15,15 @@ export interface BackendProject {
   scoreTrend: number;
   sparkline: { v: number }[];
   timeSeries: { date: string; label: string; score: number }[];
-  subscores: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
+  subscores: {
+    security: number;
+    reliability: number;
+    maintainability: number;
+    cicdDeploymentHealth: number;
+    teamHealth: number;
+    engineeringProcess: number;
+    planningExecution: number;
+  };
   subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
   metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
@@ -26,7 +34,15 @@ export interface BackendProject {
   hasMetrics: boolean;
 }
 
-const EMPTY_SUBSCORES = { delivery: 0, codeQuality: 0, cicd: 0, teamHealth: 0, blockers: 0 };
+const EMPTY_SUBSCORES = {
+  security: 0,
+  reliability: 0,
+  maintainability: 0,
+  cicdDeploymentHealth: 0,
+  teamHealth: 0,
+  engineeringProcess: 0,
+  planningExecution: 0,
+};
 const EMPTY_METRICS = { commits: 0, ticketsClosed: 0, sprintVelocity: 0, openBlockers: 0, deployments: 0, prCycleTime: 0 };
 const EMPTY_METRIC_SERIES = {
   commits: [],
@@ -37,11 +53,13 @@ const EMPTY_METRIC_SERIES = {
   prCycleTime: [],
 };
 const EMPTY_SUBSCORE_SERIES = {
-  delivery: [],
-  codeQuality: [],
-  cicd: [],
+  security: [],
+  reliability: [],
+  maintainability: [],
+  cicdDeploymentHealth: [],
   teamHealth: [],
-  blockers: [],
+  engineeringProcess: [],
+  planningExecution: [],
 };
 
 export function projectSlug(name: string, id: number): string {
@@ -113,11 +131,13 @@ export function mapHealthToProject(health: ProjectHealth, slug: string): Backend
     timeSeries: health.hasData ? health.timeSeries : [],
     subscores: health.hasData && health.subscores
       ? {
-          delivery: Math.round(health.subscores.delivery),
-          codeQuality: Math.round(health.subscores.codeQuality),
-          cicd: Math.round(health.subscores.cicd),
+          security: Math.round(health.subscores.security),
+          reliability: Math.round(health.subscores.reliability),
+          maintainability: Math.round(health.subscores.maintainability),
+          cicdDeploymentHealth: Math.round(health.subscores.cicdDeploymentHealth),
           teamHealth: Math.round(health.subscores.teamHealth),
-          blockers: Math.round(health.subscores.blockers),
+          engineeringProcess: Math.round(health.subscores.engineeringProcess),
+          planningExecution: Math.round(health.subscores.planningExecution),
         }
       : EMPTY_SUBSCORES,
     subscoreSeries: health.hasData ? health.subscoreSeries : EMPTY_SUBSCORE_SERIES,

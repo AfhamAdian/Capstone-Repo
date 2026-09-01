@@ -4,7 +4,7 @@ import { BarChart2, Zap, MessageSquare, Settings, ChevronDown, Plus, Star } from
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 
-export function Sidebar({project,onLogAction}:{project:Project;onLogAction:()=>void;}) {
+export function Sidebar({project,onLogAction,pendingReviewCount,onRatingOpen}:{project:Project;onLogAction:()=>void;pendingReviewCount:number;onRatingOpen:()=>void;}) {
   const location = useLocation();
   const actionsActive = /\/actions(\/|$)/.test(location.pathname);
   const [actOpen,setActOpen]=useState(actionsActive);
@@ -47,9 +47,9 @@ export function Sidebar({project,onLogAction}:{project:Project;onLogAction:()=>v
         <button onClick={onLogAction} className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-2.5 hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
           <Plus size={14}/> Log Action
         </button>
-        {project.pendingReview>0&&(
-          <button className="w-full text-sm text-amber-500 text-center hover:text-amber-400 transition-colors flex items-center justify-center gap-1.5 py-1">
-            <Star size={12}/>{project.pendingReview} action{project.pendingReview>1?"s":""} need review
+        {pendingReviewCount>0&&(
+          <button onClick={onRatingOpen} className="w-full text-sm text-amber-500 text-center hover:text-amber-400 transition-colors flex items-center justify-center gap-1.5 py-1">
+            <Star size={12}/>{pendingReviewCount} action{pendingReviewCount>1?"s":""} need review
           </button>
         )}
       </div>

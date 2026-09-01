@@ -14,8 +14,14 @@ export interface CodeQualityProject {
   organization?: string; // SonarCloud organization key
 }
 
+export interface CodeQualityConnectorOptions {
+  qualityGatePassRateLookbackDays?: number; // window for the alert_status history call
+  hotspotWorstOffendersLimit?: number; // top N files returned by hotspot file breakdown
+}
+
 export interface CreateCodeQualityConnectorInput {
   provider: CodeQualityProvider;
   credentials: CodeQualityCredentials;
   project: CodeQualityProject;
+  options?: CodeQualityConnectorOptions;
 }

@@ -19,6 +19,8 @@ export interface JiraMetricsResponse {
     blockedItemsCount: number;
     blockedItemsAvgAgeDays: number | null;
     overdueItemsCount: number;
+    storyPointSayDoRatio: number | null; // Percentage — completed vs. committed story points
+    epicCompletionRatePercent: number | null; // Percentage — avg child-issue completion across epics
 
     // Lead Time Metrics
     leadTime: {
@@ -33,13 +35,12 @@ export interface JiraMetricsResponse {
     spillover: {
       spilloverRatio: number | null; // Percentage
       consecutiveSpilloverCount: number;
-      carryoverAvgAgeDays: number | null;
+      carryoverAvgSprintsSurvived: number | null; // Avg consecutive sprints a currently carried-over ticket has persisted
     };
 
     // Blocked Work
     blockedWork: {
       blockedTicketPercent: number | null;
-      avgBlockedDurationDays: number | null;
       maxBlockedDurationDays: number | null;
       blockedReentryCount: number;
     };
@@ -47,7 +48,6 @@ export interface JiraMetricsResponse {
     // Scope Churn
     scopeChurn: {
       midSprintAdditions: number;
-      scopeChurnRatio: number | null; // Percentage
       priorityChangeCount: number;
     };
 

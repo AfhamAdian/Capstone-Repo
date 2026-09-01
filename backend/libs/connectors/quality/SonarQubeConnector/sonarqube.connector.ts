@@ -2,16 +2,20 @@
  * SonarQube (Code Quality) Connector Implementation
  *
  * Fetches project-level quality metrics from SonarQube / SonarCloud:
- * - one `measures/component` call for the 17 metric values
- * - one `qualitygates/project_status` call for the gate status
+ * - one `measures/component` call for the batched metric values
+ * - one `measures/search_history` call for quality gate pass rate over time
+ * - one `hotspots/search` call (paginated) for worst-offender files by unresolved hotspot count
  */
 
 import { ICodeQualityConnector } from '../connector.interface.js';
 import { CreateCodeQualityConnectorInput } from '../types.js';
-import { QualityGateStatus, SonarQubeMetricsResponse } from '../sonarqube-metrics.types.js';
+import { SonarQubeMetricsResponse } from '../sonarqube-metrics.types.js';
 import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
 
 const DEFAULT_BASE_URL = 'https://sonarcloud.io';
+const DEFAULT_QUALITY_GATE_PASS_RATE_LOOKBACK_DAYS = 90;
+const DEFAULT_HOTSPOT_WORST_OFFENDERS_LIMIT = 5;
+const PAGE_SIZE = 500; // SonarQube API page size cap for hotspots/search; also within measures/search_history's limit
 
 /**
  * Metric keys requested in a single measures/component call.
@@ -19,17 +23,20 @@ const DEFAULT_BASE_URL = 'https://sonarcloud.io';
  */
 const METRIC_KEYS = [
   // Maintainability
-  'sqale_debt_ratio',
-  'sqale_index',
   'sqale_rating',
   'code_smells',
   'duplicated_lines_density',
+  // Complexity
+  'complexity',
+  'cognitive_complexity',
   // Reliability
-  'bugs',
   'reliability_rating',
+  'reliability_remediation_effort',
   // Security
-  'vulnerabilities',
   'security_rating',
+  'security_hotspots',
+  'security_review_rating',
+  'security_remediation_effort',
   // Coverage
   'coverage',
   // Size
@@ -51,9 +58,23 @@ interface SonarMeasure {
   periods?: Array<{ value?: string }>;
 }
 
+/** Shape of a single history entry returned by measures/search_history. */
+interface SonarMeasureHistoryEntry {
+  value?: string;
+}
+
+/** Shape of a single hotspot returned by the SonarQube API. */
+interface SonarHotspot {
+  component?: string;
+}
+
 export class SonarQubeConnector implements ICodeQualityConnector, IConnector {
   private readonly credentials: { token: string; baseUrl: string };
   private readonly project: { projectKey: string; organization?: string };
+  private readonly options: {
+    qualityGatePassRateLookbackDays: number;
+    hotspotWorstOffendersLimit: number;
+  };
 
   constructor(input: CreateCodeQualityConnectorInput) {
     if (!input.credentials.token) {
@@ -74,15 +95,22 @@ export class SonarQubeConnector implements ICodeQualityConnector, IConnector {
       projectKey: input.project.projectKey,
       organization: input.project.organization,
     };
+
+    this.options = {
+      qualityGatePassRateLookbackDays:
+        input.options?.qualityGatePassRateLookbackDays ?? DEFAULT_QUALITY_GATE_PASS_RATE_LOOKBACK_DAYS,
+      hotspotWorstOffendersLimit:
+        input.options?.hotspotWorstOffendersLimit ?? DEFAULT_HOTSPOT_WORST_OFFENDERS_LIMIT,
+    };
   }
 
   async getData(): Promise<ConnectorOutput> {
     const now = new Date();
 
-    const [measures, qualityGateStatus, vulnerabilitySeverities] = await Promise.all([
+    const [measures, qualityGatePassRatePercent, hotspotFilesWorstOffenders] = await Promise.all([
       this.fetchMeasures(),
-      this.fetchQualityGateStatus(),
-      this.fetchVulnerabilitySeverities(),
+      this.fetchQualityGatePassRate(),
+      this.fetchWorstOffenderHotspotFiles(),
     ]);
 
     const num = (key: string): number | null => this.toNumber(measures.get(key));
@@ -95,32 +123,33 @@ export class SonarQubeConnector implements ICodeQualityConnector, IConnector {
       },
       metrics: {
         // Maintainability
-        technicalDebtRatio: num('sqale_debt_ratio'),
-        technicalDebtMinutes: num('sqale_index'),
         maintainabilityRating: num('sqale_rating'),
         codeSmells: num('code_smells'),
-        duplicatedLinesDensity: num('duplicated_lines_density'),
-        // Reliability
-        bugs: num('bugs'),
-        reliabilityRating: num('reliability_rating'),
-        // Security
-        vulnerabilities: num('vulnerabilities'),
-        securityRating: num('security_rating'),
-        criticalVulnerabilities: vulnerabilitySeverities.critical,
-        highVulnerabilities: vulnerabilitySeverities.high,
-        // Coverage
-        coverage: num('coverage'),
-        // Size
-        linesOfCode: num('ncloc'),
-        // Overall gate
-        qualityGateStatus,
-        // New code
-        newBugs: num('new_bugs'),
-        newVulnerabilities: num('new_vulnerabilities'),
         newCodeSmells: num('new_code_smells'),
-        newCoverage: num('new_coverage'),
+        duplicatedLinesDensity: num('duplicated_lines_density'),
         newDuplicatedLinesDensity: num('new_duplicated_lines_density'),
         newTechnicalDebt: num('new_technical_debt'),
+        // Complexity
+        cyclomaticComplexity: num('complexity'),
+        cognitiveComplexity: num('cognitive_complexity'),
+        // Reliability
+        reliabilityRating: num('reliability_rating'),
+        reliabilityRemediationEffort: num('reliability_remediation_effort'),
+        newBugs: num('new_bugs'),
+        // Security
+        securityRating: num('security_rating'),
+        securityHotspots: num('security_hotspots'),
+        securityReviewRating: num('security_review_rating'),
+        securityRemediationEffort: num('security_remediation_effort'),
+        newVulnerabilities: num('new_vulnerabilities'),
+        hotspotFilesWorstOffenders,
+        // Coverage
+        coverage: num('coverage'),
+        newCoverage: num('new_coverage'),
+        // Size
+        linesOfCode: num('ncloc'),
+        // Overall gate (trend)
+        qualityGatePassRatePercent,
       },
     };
 
@@ -172,47 +201,89 @@ export class SonarQubeConnector implements ICodeQualityConnector, IConnector {
     return valuesByMetric;
   }
 
-  private async fetchQualityGateStatus(): Promise<QualityGateStatus | null> {
-    const url =
-      `${this.credentials.baseUrl}/api/qualitygates/project_status` +
-      `?projectKey=${encodeURIComponent(this.project.projectKey)}`;
+  /**
+   * Fetch quality gate status (`alert_status`) history over the configured
+   * lookback window and compute the percentage of analyses that passed.
+   */
+  private async fetchQualityGatePassRate(): Promise<number | null> {
+    const from = this.daysAgoDateString(this.options.qualityGatePassRateLookbackDays);
 
-    const data = await this.fetchWithAuth(url);
-    const status = data?.projectStatus?.status;
+    const values = await this.fetchAllPages<string>(
+      (page) =>
+        `${this.credentials.baseUrl}/api/measures/search_history` +
+        `?component=${encodeURIComponent(this.project.projectKey)}` +
+        `&metrics=alert_status&from=${from}&p=${page}&ps=${PAGE_SIZE}`,
+      (data) => {
+        const history: SonarMeasureHistoryEntry[] = data?.measures?.[0]?.history ?? [];
+        return history
+          .map((entry) => entry.value)
+          .filter((value): value is string => value !== undefined);
+      },
+      (data) => data?.paging?.total ?? 0,
+    );
 
-    return status === 'OK' || status === 'ERROR' ? status : null;
+    if (values.length === 0) return null;
+
+    const passed = values.filter((value) => value === 'OK').length;
+    return Math.round((passed / values.length) * 100);
   }
 
   /**
-   * Fetch open-vulnerability counts split by severity, via a single issues
-   * search using the `severities` facet. Critical = BLOCKER + CRITICAL, High = MAJOR.
-   * Note: SonarQube's Clean Code taxonomy is migrating severities; on newer
-   * instances the facet may be empty, in which case counts are null.
+   * Fetch unresolved (TO_REVIEW) security hotspots and group them by file to
+   * surface the worst-offender files, capped at `hotspotWorstOffendersLimit`.
    */
-  private async fetchVulnerabilitySeverities(): Promise<{ critical: number | null; high: number | null }> {
-    const url =
-      `${this.credentials.baseUrl}/api/issues/search` +
-      `?componentKeys=${encodeURIComponent(this.project.projectKey)}` +
-      `&types=VULNERABILITY&resolved=false&facets=severities&ps=1`;
+  private async fetchWorstOffenderHotspotFiles(): Promise<Array<{ file: string; hotspotCount: number }>> {
+    const hotspots = await this.fetchAllPages<SonarHotspot>(
+      (page) =>
+        `${this.credentials.baseUrl}/api/hotspots/search` +
+        `?projectKey=${encodeURIComponent(this.project.projectKey)}` +
+        `&status=TO_REVIEW&p=${page}&ps=${PAGE_SIZE}`,
+      (data) => data?.hotspots ?? [],
+      (data) => data?.paging?.total ?? 0,
+    );
 
-    const data = await this.fetchWithAuth(url);
-    const facet = data?.facets?.find((f: { property?: string }) => f.property === 'severities');
-
-    if (!facet?.values || facet.values.length === 0) {
-      return { critical: null, high: null };
+    const prefix = `${this.project.projectKey}:`;
+    const countByFile = new Map<string, number>();
+    for (const hotspot of hotspots) {
+      if (!hotspot.component) continue;
+      const file = hotspot.component.startsWith(prefix)
+        ? hotspot.component.slice(prefix.length)
+        : hotspot.component;
+      countByFile.set(file, (countByFile.get(file) ?? 0) + 1);
     }
 
-    const countBySeverity = new Map<string, number>();
-    for (const entry of facet.values as Array<{ val?: string; count?: number }>) {
-      if (entry.val) {
-        countBySeverity.set(entry.val, entry.count ?? 0);
-      }
+    return Array.from(countByFile.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, this.options.hotspotWorstOffendersLimit)
+      .map(([file, hotspotCount]) => ({ file, hotspotCount }));
+  }
+
+  /**
+   * Generic paginator for SonarQube's `paging: { pageIndex, pageSize, total }`
+   * response shape. Calls `buildUrl(page)` until all pages have been fetched,
+   * flattening each page's items via `extractItems`.
+   */
+  private async fetchAllPages<T>(
+    buildUrl: (page: number) => string,
+    extractItems: (data: any) => T[],
+    extractTotal: (data: any) => number,
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let page = 1;
+    let total = Infinity;
+
+    while ((page - 1) * PAGE_SIZE < total) {
+      const data = await this.fetchWithAuth(buildUrl(page));
+      items.push(...extractItems(data));
+      total = extractTotal(data);
+      page += 1;
     }
 
-    const critical = (countBySeverity.get('BLOCKER') ?? 0) + (countBySeverity.get('CRITICAL') ?? 0);
-    const high = countBySeverity.get('MAJOR') ?? 0;
+    return items;
+  }
 
-    return { critical, high };
+  private daysAgoDateString(days: number): string {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   }
 
   private toNumber(raw: string | undefined): number | null {
