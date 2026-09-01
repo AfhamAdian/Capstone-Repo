@@ -9,7 +9,6 @@ import { createConnector, mapWithConcurrency } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 import { persistConnectorMetrics } from '../../api/database/metrics.js';
 import { calculateAndSaveRiskScores } from '../../api/services/risk-calculation.service.js';
-import { blendAndSaveProjectHealthScore } from '../../api/services/health-score-blend.service.js';
 import { evaluateSurveyTrigger } from '../../api/services/survey-trigger.service.js';
 import { logger } from '@libs/logger.js';
 
@@ -240,9 +239,6 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
         log.info({ snapshotId, elapsedMs: Date.now() - riskStartedAt }, 'risk scores calculated successfully');
 
-        // Refresh the blended (60% metrics + 40% survey) health score alongside the pure-metrics riskscore.
-        // blendAndSaveProjectHealthScore already swallows its own errors - non-fatal by design (survey feature is supplementary).
-        await blendAndSaveProjectHealthScore(numericProjectId);
         await evaluateSurveyTrigger(numericProjectId, riskScores);
       } catch (riskError) {
         const message = riskError instanceof Error ? riskError.message : 'Unknown error';
