@@ -61,9 +61,9 @@ PINECONE_RERANK_MIN_SCORE=0.10
 PINECONE_RERANK_CANDIDATE_LIMIT=100
 ```
 
-Start the API, then use **Find Similar** in Log Action or **Deep Search** in the
-project Action Library. Only these buttons call Pinecone. All search-as-you-type
-fields use local typo-tolerant keyword matching.
+Start the API, then use **Deep Search** in Log Action or **Deep Search** in the
+project Action Library. Only these buttons call Pinecone. Typing Problem in Log
+Action and all other search-as-you-type fields use local typo-tolerant keyword matching.
 
 The deep endpoint is explicit:
 

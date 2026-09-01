@@ -14,6 +14,7 @@ import {
   AppLayout, ProjectShell, PortfolioEntry, GlobalActionsRoute, GlobalSurveysRoute,
   DashboardRoute, ActionsTimelineRoute, ActionsLibraryRoute, SurveysRoute, SettingsRoute,
 } from "./AppLayout";
+import { SyncProgressOverlay } from "./components/SyncProgressOverlay";
 
 // ─── Auth gates — each one just decides "redirect" vs "render the matched child routes" ──
 
@@ -99,7 +100,9 @@ function AddProjectRoute() {
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <SyncProgressOverlay/>
+      <Routes>
       <Route path="/survey/:token" element={<PublicSurveyRoute/>}/>
 
       <Route element={<AuthLoadingGate/>}>
@@ -134,6 +137,7 @@ export default function App() {
           <Route path="*" element={<Navigate to={paths.portfolio} replace/>}/>
         </Route>
       </Route>
-    </Routes>
+      </Routes>
+    </>
   );
 }

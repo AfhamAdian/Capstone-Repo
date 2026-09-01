@@ -28,3 +28,5 @@ export {
   createConnector,
   getSupportedTools,
 } from './connector-registry.js';
+
+export { mapWithConcurrency } from './map-with-concurrency.js';

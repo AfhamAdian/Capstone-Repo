@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, type MouseEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type MouseEvent } from "react";
 import { X, ChevronDown, Check, Search, Send, AlertCircle, Star, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project, Action } from "../types";
 import { searchActions, type ActionSearchMode } from "../api";
-import { actionSearchModeLabel, actionSimilarityLabel, hClass } from "../format";
+import { actionMatchesKeywordSearch, actionSearchModeLabel, actionSimilarityLabel, hClass } from "../format";
 
 export function LogActionModal({onClose,preId,projects,actions,initialAction,onSubmit}:{onClose:()=>void;preId?:string;projects:Project[];actions:Action[];initialAction?:Action|null;
   onSubmit:(input:{projectIds:string[];problem:string;reason:string;actionTaken:string;timestamp:string})=>Promise<void>;
@@ -33,6 +33,16 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
     searchController.current=null;
     setSearchTriggered(false);setSimilar([]);setSearching(false);setSearchMode(null);setSearchError(null);
   };
+  const keywordSimilar=useMemo(()=>{
+    const query=problemAndCause.trim();
+    if(query.length<3)return [];
+    return actions
+      .filter(action=>action.id!==initialAction?.id)
+      .filter(action=>sel.length!==1||action.projectIds.includes(sel[0]!))
+      .filter(action=>actionMatchesKeywordSearch(action,query))
+      .slice(0,5);
+  },[actions,initialAction?.id,problemAndCause,sel]);
+  const visibleSimilar=searchTriggered?similar:keywordSimilar;
   const findSimilar=async()=>{
     const query=problemAndCause.trim();
     if(query.length<3||searching)return;
@@ -132,9 +142,9 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
                   <button
                     onClick={()=>void findSimilar()}
                     disabled={problemAndCause.trim().length<3||searching}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
                     title="Deep-search past problems with Pinecone reranking">
-                    {searching?<RefreshCw size={11} className="animate-spin"/>:<Search size={11}/>} {searching?"Searching…":"Find Similar"}
+                    {searching?<RefreshCw size={11} className="animate-spin"/>:<Search size={11}/>} {searching?"Searching…":"Deep Search"}
                   </button>
                 </div>
                 <textarea
@@ -194,7 +204,9 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
             <div className="text-sm text-muted-foreground mt-0.5">
               {searching?"Searching action history…":searchError?"Search unavailable":searchTriggered
                 ?`${similar.length} match${similar.length!==1?"es":""} · ${actionSearchModeLabel(searchMode)}`
-                :"Click Find Similar to search"}
+                :problemAndCause.trim().length>=3
+                  ?`${keywordSimilar.length} local keyword match${keywordSimilar.length!==1?"es":""}`
+                  :"Type a problem to search"}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4">
@@ -206,17 +218,17 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
               <div className="text-sm text-amber-700 dark:text-amber-300 text-center pt-8 leading-relaxed px-2">
                 <AlertCircle size={18} className="mx-auto mb-3"/>{searchError}
               </div>
-            ):similar.length===0?(
+            ):visibleSimilar.length===0?(
               <div className="text-sm text-muted-foreground text-center pt-8 leading-relaxed px-2">
-                {!searchTriggered
-                  ?problemAndCause.trim().length<3
-                    ?"Enter at least 3 characters, then click Find Similar."
-                    :"Click Find Similar when you are ready to compare this problem."
-                  :"No similar problems found in the library."}
+                {searchTriggered
+                  ?"No deep similarity results met the configured threshold."
+                  :problemAndCause.trim().length<3
+                    ?"Enter at least 3 characters to see keyword matches."
+                    :"No keyword matches. Click Deep Search for semantic matches."}
               </div>
             ):(
               <div className="space-y-3">
-                {similar.map((action,idx)=>(
+                {visibleSimilar.map((action,idx)=>(
                   <div key={action.id} className="border border-border bg-card p-3.5">
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="text-[13px] font-semibold text-foreground leading-snug">{action.problem}</div>

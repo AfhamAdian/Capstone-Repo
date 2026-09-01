@@ -229,34 +229,38 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
 }> {
   const client = assertSupabaseClient();
 
-  const { data: vcRow } = await client
-    .from('versioncontrolmetrics')
-    .select('metrics')
-    .eq('snapshot_id', projectSnapshotId)
-    .maybeSingle();
-
-  const { data: pmRow } = await client
-    .from('projectmanagementmetrics')
-    .select('metrics')
-    .eq('snapshot_id', projectSnapshotId)
-    .maybeSingle();
-
-  const { data: cqRow } = await client
-    .from('codequalitymetrics')
-    .select('metrics')
-    .eq('snapshot_id', projectSnapshotId)
-    .maybeSingle();
-
-  const { data: codeOwnershipData } = await client
-    .from('codeownershipconcentration')
-    .select('top_contributor_percent')
-    .eq('snapshot_id', projectSnapshotId);
-
-  const { data: cicdRow } = await client
-    .from('cicdmetrics')
-    .select('metrics')
-    .eq('snapshot_id', projectSnapshotId)
-    .maybeSingle();
+  const [
+    { data: vcRow },
+    { data: pmRow },
+    { data: cqRow },
+    { data: codeOwnershipData },
+    { data: cicdRow },
+  ] = await Promise.all([
+    client
+      .from('versioncontrolmetrics')
+      .select('metrics')
+      .eq('snapshot_id', projectSnapshotId)
+      .maybeSingle(),
+    client
+      .from('projectmanagementmetrics')
+      .select('metrics')
+      .eq('snapshot_id', projectSnapshotId)
+      .maybeSingle(),
+    client
+      .from('codequalitymetrics')
+      .select('metrics')
+      .eq('snapshot_id', projectSnapshotId)
+      .maybeSingle(),
+    client
+      .from('codeownershipconcentration')
+      .select('top_contributor_percent')
+      .eq('snapshot_id', projectSnapshotId),
+    client
+      .from('cicdmetrics')
+      .select('metrics')
+      .eq('snapshot_id', projectSnapshotId)
+      .maybeSingle(),
+  ]);
 
   let codeOwnershipConcentrationPercent: number | undefined;
   if (codeOwnershipData && codeOwnershipData.length > 0) {
