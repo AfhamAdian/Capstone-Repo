@@ -1,6 +1,9 @@
-// Relative by default so requests go through the Vite proxy (same-origin -> cookies work).
-export const API_BASE_URL: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
+// Production requests must stay on the frontend origin so Vercel can proxy them to
+// Render. This keeps the httpOnly session cookie first-party and avoids browsers
+// blocking it as a cross-site cookie. Development may still override the API URL.
+export const API_BASE_URL: string = import.meta.env.PROD
+  ? "/api/v1"
+  : (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "/api/v1";
 
 // credentials:"include" makes the browser send/receive the session cookie.
 // Carries the HTTP status so callers can branch on it (e.g. 409 = account already exists) without
