@@ -33,6 +33,7 @@ export function useDashboardSync(project: SyncProject, onSyncComplete: SyncCompl
 
   const status: SyncUiStatus = snapshot?.status ?? "idle";
   return {
+    snapshot,
     status,
     statusDetail: snapshot?.statusDetail ?? null,
     active: isSyncActive(status),

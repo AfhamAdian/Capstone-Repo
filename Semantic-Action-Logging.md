@@ -20,7 +20,7 @@ The end-to-end code path is implemented:
 - Ordinary searches use local typo-tolerant keyword matching (or the lexical API mode).
 - Explicit deep search sends at most 100 scoped action documents to Pinecone's
   `bge-reranker-v2-m3`, filters by `PINECONE_RERANK_MIN_SCORE`, and returns scores.
-- Deep search is triggered only by **Find Similar** in Log Action and **Deep Search**
+- Deep search is triggered only by **Deep Search** in Log Action and **Deep Search**
   in the project Action Library.
 - If Pinecone is unavailable, deep search reports an error; it does not mislabel
   keyword fallback results as similarity results.
@@ -271,8 +271,9 @@ optional `similarity` number; stored vectors are never returned.
 
 Search behavior by surface:
 
-- Log Action modal: explicit **Find Similar** click invokes Pinecone reranking,
-  returns five results, excludes the edited action, and optionally scopes to one project.
+- Log Action modal: typing Problem shows up to five local typo-tolerant keyword
+  matches. Explicit **Deep Search** replaces them with Pinecone reranking results,
+  excludes the edited action, and optionally scopes to one project.
 - Global Actions view: typing performs local typo-tolerant keyword matching only.
 - Project Actions Library: typing performs local typo-tolerant keyword matching;
   **Deep Search** explicitly invokes Pinecone reranking within the active project.
@@ -715,7 +716,7 @@ To obtain reranked results:
 1. Set `PINECONE_API_KEY` in the ignored `backend/.env`.
 2. Start the API. Redis, the embedding worker, and a vector backfill are not required
    for reranking because the API sends bounded action text directly to Pinecone.
-3. Click **Find Similar** in Log Action or **Deep Search** in Action Library.
+3. Click **Deep Search** in Log Action or **Deep Search** in Action Library.
 4. Evaluate realistic queries and tune `PINECONE_RERANK_MIN_SCORE`.
 
 If Pinecone is unconfigured or reaches a quota/provider error, action logging and

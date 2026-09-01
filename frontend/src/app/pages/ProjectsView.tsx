@@ -1,13 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Activity, Plus, RefreshCw, LogOut, GitBranch } from "lucide-react";
 import {
   listProjects,
-  getProject,
-  startSync,
   type ProjectListItem,
-  type SyncTool,
 } from "../api";
 import { useWorkspace } from "../context/WorkspaceContext";
+import { useDashboardSync } from "../hooks/useDashboardSync";
+
+function ProjectSync({ projectId, onComplete }: { projectId: number; onComplete: () => void }) {
+  const project = { id: String(projectId), backendProjectId: String(projectId) };
+  const handleComplete = useCallback(() => onComplete(), [onComplete]);
+  const { active, start } = useDashboardSync(project, handleComplete);
+
+  return (
+    <button
+      onClick={start}
+      disabled={active}
+      className="flex items-center gap-1 border border-border text-sm px-3 py-2 hover:border-primary transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <RefreshCw size={13} className={active ? "animate-spin" : ""} />
+      {active ? "Syncing…" : "Sync"}
+    </button>
+  );
+}
 
 export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
   const { user, logout } = useWorkspace();
@@ -15,36 +30,17 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [syncStatus, setSyncStatus] = useState<Record<number, string>>({});
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     setError("");
     listProjects()
       .then(setProjects)
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load projects"))
       .finally(() => setLoading(false));
-  };
+  }, []);
 
-  useEffect(load, []);
-
-  // Kick off a sync using the project's configured tools (progress shows on the dashboard).
-  const handleSync = async (id: number) => {
-    setSyncStatus((s) => ({ ...s, [id]: "Starting…" }));
-    try {
-      const detail = await getProject(id);
-      const tools = detail.integrations.map((i) => i.toolName as SyncTool);
-      if (tools.length === 0) {
-        setSyncStatus((s) => ({ ...s, [id]: "No tools configured" }));
-        return;
-      }
-      const sessionId = crypto.randomUUID();
-      const res = await startSync(String(id), tools, sessionId);
-      setSyncStatus((s) => ({ ...s, [id]: `Sync queued (${res.jobId.slice(0, 12)}…)` }));
-    } catch (e) {
-      setSyncStatus((s) => ({ ...s, [id]: e instanceof Error ? e.message : "Sync failed" }));
-    }
-  };
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -116,22 +112,14 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
                     )}
                   </div>
                   {p.description && <p className="text-sm text-muted-foreground mt-1 truncate">{p.description}</p>}
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {syncStatus[p.id] ?? "Not synced yet — no health score available"}
-                  </p>
+                  <p className="text-xs text-muted-foreground mt-2">Sync connected tools to refresh this project's health data.</p>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right">
                     <div className="text-2xl font-bold text-muted-foreground">—</div>
                     <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Score</div>
                   </div>
-                  <button
-                    onClick={() => handleSync(p.id)}
-                    className="flex items-center gap-1 border border-border text-sm px-3 py-2 hover:border-primary transition-colors"
-                  >
-                    <RefreshCw size={13} />
-                    Sync
-                  </button>
+                  <ProjectSync projectId={p.id} onComplete={load} />
                 </div>
               </div>
             </div>

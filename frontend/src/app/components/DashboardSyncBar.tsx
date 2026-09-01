@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import type { SyncRiskKey } from "../api";
 import { useDashboardSync } from "../hooks/useDashboardSync";
 
@@ -15,7 +15,7 @@ export function DashboardSyncBar({
   onSyncComplete: (projectId: string, riskScore?: number, riskScores?: Partial<Record<SyncRiskKey, number | null>>) => void;
 }) {
   const backendProjectId = project.backendProjectId;
-  const { status, statusDetail, active, start } = useDashboardSync(project, onSyncComplete);
+  const { active, start } = useDashboardSync(project, onSyncComplete);
 
   return (
     <div className="mb-2">
@@ -39,23 +39,6 @@ export function DashboardSyncBar({
         <div className="mt-2 px-4 py-2.5 text-sm border border-border bg-muted/40 text-muted-foreground flex items-center gap-2">
           <AlertTriangle size={14} className="shrink-0" />
           <span>This project isn't linked to a backend project, so it can't be synced yet.</span>
-        </div>
-      )}
-      {backendProjectId && statusDetail && (
-        <div
-          className={`mt-2 px-4 py-2.5 text-sm border flex items-center gap-2 ${
-            status === "failed"
-              ? "border-red-500/30 bg-red-500/5 text-red-500"
-              : status === "success"
-                ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-500"
-                : status === "partial"
-                  ? "border-amber-500/30 bg-amber-500/5 text-amber-500"
-                  : "border-border bg-muted/40 text-muted-foreground"
-          }`}
-        >
-          {status === "failed" && <AlertTriangle size={14} className="shrink-0" />}
-          {status === "success" && <Check size={14} className="shrink-0" />}
-          <span>{statusDetail}</span>
         </div>
       )}
     </div>
