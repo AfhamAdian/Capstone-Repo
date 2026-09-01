@@ -25,11 +25,11 @@ function SyncBtn({project,onSyncComplete}:{
   );
 }
 
-export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
+export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
   projects:Project[];surveys:Survey[];pendingReviewCount:number;
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
-  trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
+  onToggleTracked:(id:string)=>void;
   loading?:boolean;
   onAddProject?:()=>void;isAdmin?:boolean;
   workspaceName?:string;onBackToWorkspaces?:()=>void;
@@ -38,10 +38,10 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
   const visible=useMemo(()=>{
-    let list=tab==="tracked"?projects.filter(p=>trackedIds.has(p.id)):projects;
+    let list=tab==="tracked"?projects.filter(p=>p.tracked):projects;
     if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase())||(p.owner??"").toLowerCase().includes(q.toLowerCase()));
     return [...list].sort((a,b)=>a.score-b.score);
-  },[projects,tab,q,trackedIds]);
+  },[projects,tab,q]);
 
   const cols="minmax(200px,2fr) 64px 80px 64px 82px 68px 76px 60px 90px";
   return (
@@ -143,10 +143,11 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
                   <div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={e=>{e.stopPropagation();onToggleTracked(p.id);}}
-                        title={trackedIds.has(p.id)?"Untrack project":"Track project"}
-                        className={`shrink-0 p-0.5 transition-colors ${trackedIds.has(p.id)?"text-primary hover:text-primary/70":"text-muted-foreground/40 hover:text-primary"}`}>
-                        <Bookmark size={14} className={trackedIds.has(p.id)?"fill-primary":""} strokeWidth={2}/>
+                        onClick={e=>{e.stopPropagation();if(isAdmin)onToggleTracked(p.id);}}
+                        disabled={!isAdmin}
+                        title={!isAdmin?(p.tracked?"Tracked":"Not tracked"):p.tracked?"Untrack project":"Track project"}
+                        className={`shrink-0 p-0.5 transition-colors ${p.tracked?"text-primary hover:text-primary/70":"text-muted-foreground/40 hover:text-primary"} ${!isAdmin?"cursor-default hover:text-inherit":""}`}>
+                        <Bookmark size={14} className={p.tracked?"fill-primary":""} strokeWidth={2}/>
                       </button>
                       <span className="text-[15px] font-bold group-hover:text-primary transition-colors" style={{fontFamily:"var(--font-display)"}}>{p.name}</span>
                     </div>

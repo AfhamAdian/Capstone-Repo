@@ -124,7 +124,7 @@ export function mapHealthToProject(health: ProjectHealth, slug: string): Backend
     team: health.team || (health.owner && health.repo ? `${health.owner}/${health.repo}` : health.owner || ""),
     description: health.description || "",
     status: "active",
-    tracked: true,
+    tracked: health.isTracked,
     score: health.hasData && health.score !== null ? Math.round(health.score) : 0,
     scoreTrend: health.hasData ? Math.round(health.scoreTrend * 10) / 10 : 0,
     sparkline: health.hasData ? health.sparkline : [],

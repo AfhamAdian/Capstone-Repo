@@ -4,7 +4,7 @@ import { AlertTriangle, MessageSquare } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
-import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
+import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, setProjectTracked, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
 import { SurveyFlow } from "./components/SurveyFlow";
@@ -30,7 +30,6 @@ interface AppContext {
   reviewQueue: ActionReviewQueue | null;
   currentUserId: number | null;
   surveys: Survey[];
-  trackedIds: Set<string>;
   toggleTracked: (id: string) => void;
   onLogAction: () => void;
   onRatingOpen: () => void;
@@ -86,15 +85,16 @@ export function AppLayout() {
       membersCount:0,
     });
   },[urlWorkspaceId,activeWorkspace,setActiveWorkspace,backendWorkspaces]);
-  const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
-  useEffect(()=>{
-    if(projects.length===0) return;
-    setTrackedIds(prev=>{
-      if(prev.size>0) return prev;
-      return new Set(projects.map(p=>p.id));
+  // Tracked is a persisted per-project flag; toggle optimistically and revert if the API call fails.
+  const toggleTracked=useCallback((id:string)=>{
+    const proj=projects.find(p=>p.id===id);
+    if(!proj?.backendProjectId) return;
+    const next=!proj.tracked;
+    setProjects(prev=>prev.map(p=>p.id===id?{...p,tracked:next}:p));
+    void setProjectTracked(Number(proj.backendProjectId),next).catch(()=>{
+      setProjects(prev=>prev.map(p=>p.id===id?{...p,tracked:!next}:p));
     });
-  },[projects]);
-  const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  },[projects,setProjects]);
   useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const {surveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
   const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
@@ -160,7 +160,7 @@ export function AppLayout() {
         onViewActions={()=>navigate(paths.globalActions)}
         onViewSurveys={()=>navigate(paths.globalSurveys)}
         onRatingOpen={()=>setRatingOpen(true)}
-        trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onToggleTracked={toggleTracked}
         onSyncComplete={updateProjectRisk}
       />
     );
@@ -177,7 +177,7 @@ export function AppLayout() {
     );
   } else {
     const context: AppContext = {
-      projects, actions, reviewQueue, currentUserId:user?.id??null, surveys, trackedIds, toggleTracked,
+      projects, actions, reviewQueue, currentUserId:user?.id??null, surveys, toggleTracked,
       onLogAction: ()=>setLogOpen(true),
       onRatingOpen: ()=>setRatingOpen(true),
       onRateAction: handleRateAction,
@@ -228,7 +228,7 @@ export function PortfolioEntry() {
   const {workspaceId:urlWorkspaceId}=useParams();
   const {activeWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {projects,reviewQueue,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
+  const {projects,reviewQueue,surveys,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
   if(!isValidWorkspaceId(urlWorkspaceId)){
     return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   }
@@ -242,7 +242,7 @@ export function PortfolioEntry() {
       onViewActions={()=>navigate(paths.globalActions)}
       onViewSurveys={()=>navigate(paths.globalSurveys)}
       onRatingOpen={onRatingOpen}
-      trackedIds={trackedIds} onToggleTracked={toggleTracked}
+      onToggleTracked={toggleTracked}
       onAddProject={()=>navigate(paths.addProject(wsId))} isAdmin={isAdmin}
       workspaceName={workspaceName} onBackToWorkspaces={()=>navigate(paths.workspaces)}
       onSyncComplete={onSyncComplete}

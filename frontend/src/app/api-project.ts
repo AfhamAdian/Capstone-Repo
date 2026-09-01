@@ -55,6 +55,8 @@ export interface ProjectHealth {
   hasData: boolean;
   /** False if no snapshot metric rows exist yet - keep the mock ops cards until then. */
   hasMetrics: boolean;
+  /** Whether the project is tracked in the portfolio (All vs Tracked filter). */
+  isTracked: boolean;
 }
 
 export type HealthCategoryKey = "delivery" | "codeQuality" | "cicd" | "teamHealth" | "blockers";

@@ -155,6 +155,14 @@ export async function getProject(id: number): Promise<ProjectDetail> {
   return project;
 }
 
+// Admin-only: toggle whether a project is tracked in the portfolio.
+export async function setProjectTracked(projectId: number, tracked: boolean): Promise<void> {
+  await apiRequest(`/projects/${projectId}/tracked`, {
+    method: "PATCH",
+    body: JSON.stringify({ tracked }),
+  });
+}
+
 // Admin-only: reveal the effective token for a connector (config token, else the workspace PAT).
 export async function getIntegrationToken(projectId: number, toolName: string): Promise<string | null> {
   const { token } = await apiRequest<{ token: string | null }>(`/projects/${projectId}/integrations/${toolName}/token`);

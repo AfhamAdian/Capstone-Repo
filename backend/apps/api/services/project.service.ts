@@ -10,6 +10,7 @@ import {
   listProjectsForMember,
   listProjects as dbListAllProjects,
   getProject as dbGetProjectRow,
+  setProjectTracked as dbSetProjectTracked,
   type ProjectRecord,
   type ProjectRow,
 } from '../database/project.js';
@@ -251,6 +252,18 @@ export async function inviteMemberToProject(
   return toDetail(project);
 }
 
+// Admin-only: toggle whether a project is tracked in the portfolio (company-wide flag).
+export async function setProjectTracked(auth: Auth, projectId: number, tracked: boolean): Promise<void> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can change tracking', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  await dbSetProjectTracked(projectId, tracked);
+}
+
 // Admin-only: remove an assigned member from a project.
 export async function removeMemberFromProject(
   auth: Auth,
@@ -406,6 +419,8 @@ export interface ProjectHealth {
   hasData: boolean;
   /** True once at least one snapshot metric value exists for the ops cards. */
   hasMetrics: boolean;
+  /** Whether the project is tracked in the portfolio (All vs Tracked filter). */
+  isTracked: boolean;
 }
 
 function formatLabel(iso: string): string {
@@ -570,6 +585,7 @@ function buildProjectHealth(
     lastUpdated: latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
     hasData: latest !== null,
     hasMetrics: ops.hasMetrics,
+    isTracked: project.isTracked,
   };
 }
 

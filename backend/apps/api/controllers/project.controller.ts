@@ -12,6 +12,7 @@ import {
   getIntegrationToken,
   inviteMemberToProject,
   removeMemberFromProject,
+  setProjectTracked,
 } from '../services/project.service.js';
 import { getProjectHealthProvenance } from '../services/health-provenance.service.js';
 
@@ -82,6 +83,26 @@ export async function inviteMemberHandler(request: Request, response: Response):
     const { email } = request.body ?? {};
     const project = await inviteMemberToProject(request.auth!, projectId, email);
     response.status(200).json({ project });
+  } catch (error) {
+    handleProjectError(error, response);
+  }
+}
+
+// PATCH /api/v1/projects/:projectId/tracked — toggle the tracked flag (admin only).
+export async function setTrackedHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const projectId = Number(request.params.projectId);
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      response.status(400).json({ message: 'Invalid project id' });
+      return;
+    }
+    const { tracked } = request.body ?? {};
+    if (typeof tracked !== 'boolean') {
+      response.status(400).json({ message: 'tracked (boolean) is required' });
+      return;
+    }
+    await setProjectTracked(request.auth!, projectId, tracked);
+    response.status(200).json({ tracked });
   } catch (error) {
     handleProjectError(error, response);
   }

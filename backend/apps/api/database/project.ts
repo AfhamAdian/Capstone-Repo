@@ -57,9 +57,10 @@ export interface ProjectRecord {
   description: string | null;
   created_at: string | null;
   workspace_id: number | null;
+  is_tracked: boolean;
 }
 
-const PROJECT_COLUMNS = 'id, company_id, name, description, created_at, workspace_id';
+const PROJECT_COLUMNS = 'id, company_id, name, description, created_at, workspace_id, is_tracked';
 
 export async function createProject(input: {
   companyId: number;
@@ -152,6 +153,15 @@ export async function listProjectsForMember(
     throw new Error(`Failed to list member projects: ${error.message}`);
   }
   return (data as ProjectRecord[]) ?? [];
+}
+
+// Toggle whether a project is tracked in the portfolio.
+export async function setProjectTracked(id: number, tracked: boolean): Promise<void> {
+  const client = assertSupabaseClient();
+  const { error } = await client.from('project').update({ is_tracked: tracked }).eq('id', id);
+  if (error) {
+    throw new Error(`Failed to update tracked flag: ${error.message}`);
+  }
 }
 
 // Compensating delete for the create flow (no transactions) — clears child rows first.
@@ -283,11 +293,12 @@ export interface ProjectRow {
   createdAt: string | null;
   pendingSurvey: boolean;
   pendingSurveyTrigger: string | null;
+  isTracked: boolean;
 }
 
 /** Every project, for the dashboard's project list. No auth/company scoping yet (see authorization.service.ts's known gaps). */
 // owner/repo intentionally omitted — they're legacy columns; the dashboard reads owner/repo from the vcs integration config.
-const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, created_at, pending_survey, pending_survey_trigger';
+const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, created_at, pending_survey, pending_survey_trigger, is_tracked';
 
 function toProjectRow(p: Record<string, unknown>): ProjectRow {
   return {
@@ -298,6 +309,7 @@ function toProjectRow(p: Record<string, unknown>): ProjectRow {
     createdAt: (p.created_at as string) ?? null,
     pendingSurvey: Boolean(p.pending_survey),
     pendingSurveyTrigger: (p.pending_survey_trigger as string) ?? null,
+    isTracked: p.is_tracked !== false, // default true if column somehow missing
   };
 }
 
