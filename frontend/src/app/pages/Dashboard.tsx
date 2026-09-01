@@ -9,24 +9,14 @@ import {
 } from "recharts";
 import { AnimatePresence } from "motion/react";
 import type { ActionReviewQueue, SyncRiskKey } from "../api";
-import type { HealthCategoryKey } from "../api-project";
 import type { Project, Action, Survey } from "../types";
 import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyHasResults, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, type DisplaySubscores } from "../format";
 import { Ring, Spark, TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
-import { ScoreProvenancePanel } from "../components/ScoreProvenancePanel";
 
 export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
-  const [provenanceFocus,setProvenanceFocus]=useState<"overall"|HealthCategoryKey|null>(null);
-  const openProvenance=(focus:"overall"|HealthCategoryKey)=>{
-    if(!project.backendProjectId) return;
-    setProvenanceFocus(focus);
-  };
-  // "Why this score" provenance is still keyed to the old 5-category survey-blend model
-  // (untouched, see future-work.md #7) - only codeQuality/teamHealth still line up with it.
-  const OPENABLE_CATEGORIES=new Set<keyof DisplaySubscores>(["codeQuality","teamHealth"]);
   const display=toDisplaySubscores(project.subscores);
   const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
     codeQuality: computeCodeQualitySeries(project.subscoreSeries),
@@ -64,13 +54,8 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
           <div className="bg-card border border-border p-6">
             <div className="flex items-center justify-between mb-4">
               <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Health Score</div>
-              {project.backendProjectId&&(
-                <button type="button" onClick={()=>openProvenance("overall")} className="text-xs font-semibold text-primary hover:underline">
-                  Why this score
-                </button>
-              )}
             </div>
-            <button type="button" onClick={()=>openProvenance("overall")} className="flex items-end gap-4 mb-5 text-left" title="Inspect how this score was blended">
+            <div className="flex items-end gap-4 mb-5">
               <span className="text-8xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{scoreInt(project.score)}</span>
               <div className="mb-2 flex flex-col gap-1.5">
                 <TrendIcon t={project.scoreTrend} sz={18}/>
@@ -78,7 +63,7 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
                   {trendLabel(project.scoreTrend)}
                 </span>
               </div>
-            </button>
+            </div>
             <Spark data={project.sparkline} color={hColor(project.score)} w={210} h={48}/>
             {/* Always-visible breakdown */}
             <div className="mt-5 pt-5 border-t border-border space-y-3">
@@ -109,9 +94,9 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
                   );
                 }
                 return (
-                  <button type="button" key={k} disabled={!OPENABLE_CATEGORIES.has(k)} onClick={()=>OPENABLE_CATEGORIES.has(k)&&openProvenance(k as HealthCategoryKey)} className="block w-full hover:bg-muted/40 disabled:cursor-default">
+                  <div key={k} className="block w-full hover:bg-muted/40">
                     {row}
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -152,10 +137,9 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
                 engineeringProcess: <Rocket size={13}/>,
                 planningExecution: <AlertTriangle size={13}/>,
               };
-              const openable=OPENABLE_CATEGORIES.has(k);
               return (
-                <button type="button" key={k} disabled={!openable} onClick={()=>openable&&openProvenance(k as HealthCategoryKey)}
-                  className={`group relative bg-card border border-border p-4 flex flex-col text-left transition-colors disabled:cursor-default ${openable?"hover:border-primary/50":""}`}>
+                <div key={k}
+                  className="group relative bg-card border border-border p-4 flex flex-col transition-colors">
                   {/* label + icon */}
                   <div className="flex items-center gap-1.5 mb-3">
                     <span style={{color:strokeColor}}>{SUBSCORE_ICONS[k]}</span>
@@ -211,7 +195,7 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                </button>
+                </div>
               );
             })}
           </div>
@@ -333,16 +317,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
 
       <AnimatePresence>
         {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
-      </AnimatePresence>
-      <AnimatePresence>
-        {provenanceFocus&&project.backendProjectId&&(
-          <ScoreProvenancePanel
-            key="provenance"
-            projectId={project.backendProjectId}
-            focus={provenanceFocus}
-            onClose={()=>setProvenanceFocus(null)}
-          />
-        )}
       </AnimatePresence>
     </div>
   );
