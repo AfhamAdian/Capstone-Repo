@@ -5,6 +5,9 @@
   "private": true,
   "type": "module",
   "main": "dist/apps/api/server.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch apps/api/server.ts",
     "dev:worker": "tsx watch apps/worker/worker.ts",
