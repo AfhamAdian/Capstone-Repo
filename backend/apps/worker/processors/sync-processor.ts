@@ -3,10 +3,8 @@
  * Handles the actual sync logic - fetching data, storing, calculating risk, etc.
  */
 
-// TODO: PROCESSES SEQUENTIALLY, HAVE TO MAKE IT ASYNC.
-
 import type { SyncJobData } from '@libs/queue/index.js';
-import type { SupportedTool } from '@libs/sync/index.js';
+import type { ConnectorOutput, SupportedTool } from '@libs/sync/index.js';
 import { createConnector } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 import { persistConnectorMetrics } from '../../api/database/metrics.js';
@@ -14,6 +12,13 @@ import { calculateAndSaveRiskScores } from '../../api/services/risk-calculation.
 import { blendAndSaveProjectHealthScore } from '../../api/services/health-score-blend.service.js';
 import { evaluateSurveyTrigger } from '../../api/services/survey-trigger.service.js';
 import { logger } from '@libs/logger.js';
+import { mapWithConcurrency } from '../utils/map-with-concurrency.js';
+
+const TOOL_FETCH_CONCURRENCY = 4;
+
+type ToolFetchResult =
+  | { tool: SupportedTool; output: ConnectorOutput; startedAt: number }
+  | { tool: SupportedTool; error: unknown; startedAt: number };
 
 /**
  * Process a single sync job
@@ -37,104 +42,138 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
   try {
     log.info({ tools }, 'started processing sync job');
 
-    // Process each tool sequentially
-    for (const tool of tools) {
-      const toolLog = log.child({ tool });
-      const toolStartedAt = Date.now();
+    // External APIs are independent, so fetch from up to four tools at once.
+    // Persistence remains sequential below because every tool must write to the
+    // same metrics snapshot.
+    const fetchResults = await mapWithConcurrency(
+      tools,
+      TOOL_FETCH_CONCURRENCY,
+      async (tool): Promise<ToolFetchResult> => {
+        const toolLog = log.child({ tool });
+        const toolStartedAt = Date.now();
 
-      try {
-        // Emit progress event: tool sync started
-        await eventStore.emitProgress({
-          jobId,
-          sessionId,
-          tool,
-          status: 'syncing',
-          timestamp: new Date(),
-        });
+        try {
+          // Emit progress event: tool sync started
+          await eventStore.emitProgress({
+            jobId,
+            sessionId,
+            tool,
+            status: 'syncing',
+            timestamp: new Date(),
+          });
 
-        toolLog.info('tool sync started');
+          toolLog.info('tool sync started');
 
-        let integration = integrations?.[tool];
+          let integration = integrations?.[tool];
 
-        // Reuse github credentials for github-actions if they exist
-        if (!integration && tool === 'github-actions' && integrations?.['github']) {
-          integration = integrations['github'];
-        }
-
-        //FIXME: Better Design for many tools
-        if (!integration) {
-          throw new Error(`Missing integration payload for tool: ${tool}`);
-        }
-
-        if (tool === 'github' || tool === 'github-actions') {
-          if (!integration.credentials?.token) {
-            throw new Error(`Missing ${tool}.credentials.token`);
+          // Reuse github credentials for github-actions if they exist
+          if (!integration && tool === 'github-actions' && integrations?.['github']) {
+            integration = integrations['github'];
           }
-          if (!integration.project?.owner || !integration.project?.repo) {
-            throw new Error(`Missing ${tool}.project.owner or ${tool}.project.repo`);
-          }
-        }
 
-        if (tool === 'jira') {
-          toolLog.info(`integration details: ${JSON.stringify(integration.credentials)}`);
-          if (!integration.credentials?.token) {
-            throw new Error('Missing jira.credentials.token');
+          //FIXME: Better Design for many tools
+          if (!integration) {
+            throw new Error(`Missing integration payload for tool: ${tool}`);
           }
-          if (!integration.credentials?.email) {
-            throw new Error('Missing jira.credentials.email');
-          }
-          if (!integration.credentials?.baseUrl) {
-            throw new Error('Missing jira.credentials.baseUrl');
-          }
-          if (!integration.project?.projectKey && !integration.project?.key) {
-            throw new Error('Missing jira.project.projectKey (or jira.project.key)');
-          }
-        }
 
-        if (tool === 'sonarqube') {
-          if (!integration.credentials?.token) {
-            throw new Error('Missing sonarqube.credentials.token');
+          if (tool === 'github' || tool === 'github-actions') {
+            if (!integration.credentials?.token) {
+              throw new Error(`Missing ${tool}.credentials.token`);
+            }
+            if (!integration.project?.owner || !integration.project?.repo) {
+              throw new Error(`Missing ${tool}.project.owner or ${tool}.project.repo`);
+            }
           }
-          if (!integration.project?.projectKey && !integration.project?.key) {
-            throw new Error('Missing sonarqube.project.projectKey (or sonarqube.project.key)');
+
+          if (tool === 'jira') {
+            toolLog.info(`integration details: ${JSON.stringify(integration.credentials)}`);
+            if (!integration.credentials?.token) {
+              throw new Error('Missing jira.credentials.token');
+            }
+            if (!integration.credentials?.email) {
+              throw new Error('Missing jira.credentials.email');
+            }
+            if (!integration.credentials?.baseUrl) {
+              throw new Error('Missing jira.credentials.baseUrl');
+            }
+            if (!integration.project?.projectKey && !integration.project?.key) {
+              throw new Error('Missing jira.project.projectKey (or jira.project.key)');
+            }
           }
-        }
 
-        const connector = createConnector({
-          tool,
-          credentials: {
-            ...(integration?.credentials ?? {}),
-          },
-          project: {
-            ...(integration?.project ?? {}),
-          },
-        });
+          if (tool === 'sonarqube') {
+            if (!integration.credentials?.token) {
+              throw new Error('Missing sonarqube.credentials.token');
+            }
+            if (!integration.project?.projectKey && !integration.project?.key) {
+              throw new Error('Missing sonarqube.project.projectKey (or sonarqube.project.key)');
+            }
+          }
 
-        toolLog.info('fetching connector data');
+          const connector = createConnector({
+            tool,
+            credentials: {
+              ...(integration?.credentials ?? {}),
+            },
+            project: {
+              ...(integration?.project ?? {}),
+            },
+          });
 
-        const connectorOutput = await connector.getData();
+          toolLog.info('fetching connector data');
 
-        //FIXME : delete loggin in production
-        if (tool === 'github') {
+          const connectorOutput = await connector.getData();
+
+          //FIXME : delete loggin in production
+          if (tool === 'github') {
+            toolLog.info(
+              {
+                githubData: connectorOutput.data,
+              },
+              'github data ingested from connector',
+            );
+          }
           toolLog.info(
             {
-              githubData: connectorOutput.data,
+              elapsedMs: Date.now() - toolStartedAt,
             },
-            'github data ingested from connector',
+            'connector data fetched',
           );
-        }
-        toolLog.info(
-          {
-            elapsedMs: Date.now() - toolStartedAt,
-          },
-          'connector data fetched',
-        );
 
+          return { tool, output: connectorOutput, startedAt: toolStartedAt };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          toolLog.error({ err: error, elapsedMs: Date.now() - toolStartedAt }, 'failed to fetch tool data');
+
+          await eventStore.emitProgress({
+            jobId,
+            sessionId,
+            tool,
+            status: 'failed',
+            timestamp: new Date(),
+            error: message,
+          });
+
+          return { tool, error, startedAt: toolStartedAt };
+        }
+      },
+    );
+
+    for (const result of fetchResults) {
+      const { tool } = result;
+      const toolLog = log.child({ tool });
+
+      if ('error' in result) {
+        failedTools.push(tool);
+        continue;
+      }
+
+      try {
         const persistStartedAt = Date.now();
         const persistedSnapshotId = await persistConnectorMetrics({
           projectId: numericProjectId,
           tool,
-          data: connectorOutput.data,
+          data: result.output.data,
           snapshotId: snapshotId ?? undefined,
         });
 
@@ -155,10 +194,10 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
         });
 
         completedTools.push(tool);
-        toolLog.info({ elapsedMs: Date.now() - toolStartedAt }, 'tool sync completed');
+        toolLog.info({ elapsedMs: Date.now() - result.startedAt }, 'tool sync completed');
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unknown error';
-        toolLog.error({ err: error, elapsedMs: Date.now() - toolStartedAt }, 'failed to sync tool');
+        toolLog.error({ err: error, elapsedMs: Date.now() - result.startedAt }, 'failed to persist tool data');
 
         // Emit progress event: tool sync failed
         await eventStore.emitProgress({
@@ -264,4 +303,3 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
     throw error; // Re-throw so BullMQ knows the job failed
   }
 }
-

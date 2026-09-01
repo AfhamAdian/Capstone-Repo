@@ -142,7 +142,7 @@ export function LogActionModal({onClose,preId,projects,actions,initialAction,onS
                   <button
                     onClick={()=>void findSimilar()}
                     disabled={problemAndCause.trim().length<3||searching}
-                    className="flex items-center gap-1.5 text-xs font-semibold text-primary border border-primary/40 px-2.5 py-1 hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 border border-primary bg-primary px-2.5 py-1 text-xs font-semibold text-primary-foreground hover:opacity-90 transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
                     title="Deep-search past problems with Pinecone reranking">
                     {searching?<RefreshCw size={11} className="animate-spin"/>:<Search size={11}/>} {searching?"Searching…":"Deep Search"}
                   </button>

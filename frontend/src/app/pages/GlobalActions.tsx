@@ -23,14 +23,45 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
   const [confirmDelete,setConfirmDelete]=useState<string|null>(null);
   const [deleting,setDeleting]=useState<string|null>(null);
   const [mutationError,setMutationError]=useState<string|null>(null);
+  const [searchResults,setSearchResults]=useState<Action[]|null>(null);
+  const [searching,setSearching]=useState(false);
+  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
+  const [searchError,setSearchError]=useState<string|null>(null);
+  const searchController=useRef<AbortController|null>(null);
+
+  useEffect(()=>()=>searchController.current?.abort(),[]);
+
+  const clearDeepSearch=()=>{
+    searchController.current?.abort();searchController.current=null;
+    setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);
+  };
+  const updateQuery=(query:string)=>{setQ(query);clearDeepSearch();};
+  const updateProjectFilter=(projectId:string)=>{setFilterProject(projectId);clearDeepSearch();};
+  const deepSearch=async()=>{
+    const query=q.trim();
+    if(query.length<3||searching)return;
+    searchController.current?.abort();
+    const controller=new AbortController();
+    searchController.current=controller;
+    setSearching(true);setSearchResults(null);setSearchMode(null);setSearchError(null);
+    try{
+      const result=await searchActions(query,50,{deep:true,projectId:filterProject==="all"?undefined:filterProject,signal:controller.signal});
+      if(controller.signal.aborted)return;
+      setSearchResults(result.actions);setSearchMode(result.mode);
+    }catch(error){
+      if(!controller.signal.aborted)setSearchError(error instanceof Error?error.message:"Deep search is unavailable");
+    }finally{
+      if(searchController.current===controller){searchController.current=null;setSearching(false);}
+    }
+  };
 
   const filtered=useMemo(()=>{
-    let list=[...actions];
+    let list=searchResults?[...searchResults]:[...actions];
     if(filterProject!=="all") list=list.filter(a=>a.projectIds.includes(filterProject));
-    if(q)list=list.filter(a=>actionMatchesKeywordSearch(a,q));
-    list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
+    if(q&&!searchResults)list=list.filter(a=>actionMatchesKeywordSearch(a,q));
+    if(!searchResults)list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
     return list;
-  },[actions,q,filterProject,sortOrder]);
+  },[actions,q,filterProject,sortOrder,searchResults]);
 
   const COL="minmax(0,2.5fr) 150px 130px 120px 104px";
   const ROW_COL="minmax(0,2.5fr) 150px 130px";
@@ -52,7 +83,12 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
           </button>
           <h1 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>All Actions</h1>
           <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} records</span>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={()=>void deepSearch()} disabled={q.trim().length<3||searching}
+              className="flex items-center gap-2 border border-primary bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg disabled:cursor-not-allowed disabled:opacity-40"
+              title="Rerank all actions by deep similarity">
+              {searching?<RefreshCw size={16} className="animate-spin"/>:<Search size={16}/>} {searching?"Searching…":"Deep Search"}
+            </button>
             <button onClick={onLogAction}
               className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-bold px-6 py-3 hover:opacity-90 transition-opacity shadow-lg"
               style={{fontFamily:"var(--font-display)"}}>
@@ -65,11 +101,11 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
         <div className="flex items-center gap-3 mb-5 flex-wrap">
           <div className="flex items-center gap-2 bg-card border border-border px-3 py-2.5 flex-1 max-w-sm">
             <Search size={14} className="text-muted-foreground"/>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by keyword…"
+            <input value={q} onChange={e=>updateQuery(e.target.value)} placeholder="Search actions by keyword…"
               className="bg-transparent text-sm outline-none flex-1 placeholder:text-muted-foreground"/>
-            {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
+            {q&&<button onClick={()=>updateQuery("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
           </div>
-          <select value={filterProject} onChange={e=>setFilterProject(e.target.value)}
+          <select value={filterProject} onChange={e=>updateProjectFilter(e.target.value)}
             className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
             <option value="all">All Projects</option>
             {projects.map(p=><option key={p.id} value={String(p.backendProjectId??p.id)}>{p.name}</option>)}
@@ -84,6 +120,10 @@ export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAc
             ))}
           </div>
         </div>
+
+        {(searchError||searchMode)&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
+          {searchError?<AlertCircle size={14}/>:<Search size={14}/>} {searchError??actionSearchModeLabel(searchMode)}
+        </div>}
 
         <div className="border border-border bg-card overflow-x-auto">
           <div className="min-w-[760px]">
