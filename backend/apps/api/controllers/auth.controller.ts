@@ -21,8 +21,8 @@ import { env } from '../config/env.js';
 function sessionCookieOptions(): CookieOptions {
   return {
     httpOnly: true,
-    secure: false,
-    sameSite: 'none',
+    secure: env.nodeEnv === 'production',
+    sameSite: 'lax',
     path: '/',
     maxAge: sessionStore.maxAgeMs,
   };
