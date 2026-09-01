@@ -2,6 +2,7 @@ import { assertSupabaseClient } from '../config/supabase.js';
 import type { GitHubMetricsResponse } from '../../../libs/connectors/vcs/github-metrics.types.js';
 import type { JiraMetricsResponse } from '../../../libs/connectors/pm/jira-metrics.types.js';
 import type { SonarQubeMetricsResponse } from '../../../libs/connectors/quality/sonarqube-metrics.types.js';
+import type { GithubActionsMetricsResponse } from '../../../libs/connectors/cicd/GithubActionsConnector/github-actions.types.js';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -28,7 +29,7 @@ function isSonarQubeMetricsResponse(data: unknown): data is SonarQubeMetricsResp
   return typeof data.generatedAt === 'string' && typeof data.project.projectKey === 'string';
 }
 
-function isGithubActionsMetricsResponse(data: unknown): boolean {
+function isGithubActionsMetricsResponse(data: unknown): data is GithubActionsMetricsResponse {
   if (!isObject(data)) return false;
   if (!isObject(data.repo) || !isObject(data.metrics)) return false;
   return typeof data.generatedAt === 'string';
@@ -59,33 +60,9 @@ async function createProjectSnapshot(projectId: number, snapshotTime: string): P
 async function insertVersionControlMetrics(snapshotId: number, data: GitHubMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
 
-  const { metrics } = data;
-
   const { error } = await client
     .from('versioncontrolmetrics')
-    .insert([
-      {
-        snapshot_id: snapshotId,
-        issues_closed_per_week: metrics.issuesClosedPerWeek,
-        issue_cycle_time_avg_days: metrics.issueCycleTimeAvgDays,
-        pr_review_coverage_percent: metrics.prReviewCoveragePercent,
-        review_per_pr_avg: metrics.reviewPerPrAvg,
-        self_merged_pr_rate_percent: metrics.selfMergedPrRatePercent,
-        time_to_first_review_avg_hours: metrics.timeToFirstReviewAvgHours,
-        files_modified_gte_10_times: metrics.codeChurn.filesModifiedGte10Times,
-        files_modified_by_gte_3_people: metrics.codeChurn.filesModifiedByGte3People,
-        commit_with_issue_ref_percent: metrics.commitMessageQuality.withIssueRefPercent,
-        commit_with_body_percent: metrics.commitMessageQuality.withBodyPercent,
-        commit_following_convention_percent: metrics.commitMessageQuality.followingConventionPercent,
-        stale_pr_count: metrics.stalePrCount,
-        long_lived_branches_count: metrics.longLivedBranchesCount,
-        pr_revert_rate_percent: metrics.prRevertRatePercent,
-        bus_factor: metrics.busFactor,
-        active_contributions_per_week: metrics.activeContributionsPerWeek,
-        review_network_density: metrics.reviewNetworkDensity,
-        dependency_update_lag_avg_days: metrics.dependencyUpdateLagAvgDays,
-      },
-    ]);
+    .insert([{ snapshot_id: snapshotId, metrics: data.metrics }]);
 
   if (error) {
     throw new Error(`Failed to save version control metrics: ${error.message}`);
@@ -118,66 +95,13 @@ async function insertCodeOwnershipConcentration(snapshotId: number, data: GitHub
 
 async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
-  const { metrics } = data;
 
   const { error } = await client
     .from('projectmanagementmetrics')
-    .insert([
-      {
-        snapshot_id: snapshotId,
-        sprint_completion_rate: metrics.sprintCompletionRate,
-        issue_cycle_time_avg_days: metrics.issueCycleTimeAvgDays,
-        throughput_per_week: metrics.throughputPerWeek,
-        carryover_rate: metrics.carryoverRate,
-        scope_creep_rate: metrics.scopeCreepRate,
-        blocked_items_count: metrics.blockedItemsCount,
-        blocked_items_avg_age_days: metrics.blockedItemsAvgAgeDays,
-        overdue_items_count: metrics.overdueItemsCount,
-        lead_time_avg_days: metrics.leadTime.avgDays,
-        lead_time_median_days: metrics.leadTime.medianDays,
-        lead_time_p95_days: metrics.leadTime.p95Days,
-        lead_time_variance: metrics.leadTime.variance,
-        spillover_ratio: metrics.spillover.spilloverRatio,
-        consecutive_spillover_count: metrics.spillover.consecutiveSpilloverCount,
-        carryover_avg_age_days: metrics.spillover.carryoverAvgAgeDays,
-        blocked_ticket_percent: metrics.blockedWork.blockedTicketPercent,
-        avg_blocked_duration_days: metrics.blockedWork.avgBlockedDurationDays,
-        max_blocked_duration_days: metrics.blockedWork.maxBlockedDurationDays,
-        blocked_reentry_count: metrics.blockedWork.blockedReentryCount,
-        mid_sprint_additions: metrics.scopeChurn.midSprintAdditions,
-        scope_churn_ratio: metrics.scopeChurn.scopeChurnRatio,
-        priority_change_count: metrics.scopeChurn.priorityChangeCount,
-        in_progress_avg_age_days: metrics.staleTickets.inProgressAvgAgeDays,
-        stale_ticket_ratio: metrics.staleTickets.staleTicketRatio,
-        state_movement_count: metrics.staleTickets.stateMovementCount,
-      },
-    ]);
+    .insert([{ snapshot_id: snapshotId, metrics: data.metrics }]);
 
   if (error) {
     throw new Error(`Failed to save project management metrics: ${error.message}`);
-  }
-}
-
-async function insertLeadTimeTrend(snapshotId: number, data: JiraMetricsResponse): Promise<void> {
-  const client = assertSupabaseClient();
-  const trends = data.metrics.leadTime.trendAcrossSprints;
-
-  if (!trends.length) {
-    return;
-  }
-
-  const rows = trends.map((trend) => ({
-    snapshot_id: snapshotId,
-    sprint_name: trend.sprintName,
-    avg_lead_time_days: trend.avgLeadTimeDays,
-  }));
-
-  const { error } = await client
-    .from('leadtimetrend')
-    .insert(rows);
-
-  if (error) {
-    throw new Error(`Failed to save lead time trend: ${error.message}`);
   }
 }
 
@@ -195,62 +119,22 @@ async function insertCodeQualityMetrics(snapshotId: number, data: SonarQubeMetri
 
 async function insertCodeQualityMetrics_impl(snapshotId: number, data: SonarQubeMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
-  const { metrics } = data;
 
   const { error } = await client
     .from('codequalitymetrics')
-    .insert([
-      {
-        snapshot_id: snapshotId,
-        technical_debt_ratio: metrics.technicalDebtRatio,
-        technical_debt_minutes: metrics.technicalDebtMinutes,
-        maintainability_rating: metrics.maintainabilityRating,
-        code_smells: metrics.codeSmells,
-        duplicated_lines_density: metrics.duplicatedLinesDensity,
-        bugs: metrics.bugs,
-        reliability_rating: metrics.reliabilityRating,
-        vulnerabilities: metrics.vulnerabilities,
-        security_rating: metrics.securityRating,
-        critical_vulnerabilities: metrics.criticalVulnerabilities,
-        high_vulnerabilities: metrics.highVulnerabilities,
-        coverage: metrics.coverage,
-        lines_of_code: metrics.linesOfCode,
-        quality_gate_status: metrics.qualityGateStatus,
-        new_bugs: metrics.newBugs,
-        new_vulnerabilities: metrics.newVulnerabilities,
-        new_code_smells: metrics.newCodeSmells,
-        new_coverage: metrics.newCoverage,
-        new_duplicated_lines_density: metrics.newDuplicatedLinesDensity,
-        new_technical_debt: metrics.newTechnicalDebt,
-      },
-    ]);
+    .insert([{ snapshot_id: snapshotId, metrics: data.metrics }]);
 
   if (error) {
     throw new Error(`Failed to save code quality metrics: ${error.message}`);
   }
 }
 
-async function insertCicdMetrics(snapshotId: number, data: any): Promise<void> {
+async function insertCicdMetrics(snapshotId: number, data: GithubActionsMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
-  const { metrics } = data;
 
   const { error } = await client
     .from('cicdmetrics')
-    .insert([
-      {
-        snapshot_id: snapshotId,
-        pipeline_success_rate_percent: metrics.pipelineSuccessRatePercent,
-        avg_pipeline_duration_minutes: metrics.avgPipelineDurationMinutes,
-        flaky_test_count: metrics.flakyTestCount,
-        test_coverage_percent: metrics.testCoveragePercent,
-        test_failure_rate_percent: metrics.testFailureRatePercent,
-        avg_pipeline_runs_per_pr: metrics.avgPipelineRunsPerPr,
-        deployments_per_week: metrics.deploymentsPerWeek,
-        deployment_failure_rate_percent: metrics.deploymentFailureRatePercent,
-        mttr_hours: metrics.mttrHours,
-        time_to_prod_hours: metrics.timeToProdHours,
-      },
-    ]);
+    .insert([{ snapshot_id: snapshotId, metrics: data.metrics }]);
 
   if (error) {
     throw new Error(`Failed to save CI/CD metrics: ${error.message}`);
@@ -307,7 +191,6 @@ async function persistConnectorMetricsImpl(input: {
     }
 
     await insertProjectManagementMetrics(snapshotId, input.data);
-    await insertLeadTimeTrend(snapshotId, input.data);
     return snapshotId;
   }
 

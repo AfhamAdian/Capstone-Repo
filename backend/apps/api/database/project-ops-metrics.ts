@@ -28,18 +28,26 @@ function asNumber(value: unknown): number | null {
   return null;
 }
 
-async function selectBySnapshotIds<T extends Record<string, unknown>>(
+/**
+ * Every tool metrics table stores its data as one `metrics` jsonb column now
+ * (the connector's own camelCase output, verbatim) rather than per-metric
+ * columns - see db/schema/*.sql. Returns snapshot_id -> parsed metrics object.
+ */
+async function selectMetricsBySnapshotIds(
   table: string,
   snapshotIds: number[],
-  columns: string,
-): Promise<T[]> {
-  if (snapshotIds.length === 0) return [];
+): Promise<Map<number, Record<string, unknown>>> {
+  const result = new Map<number, Record<string, unknown>>();
+  if (snapshotIds.length === 0) return result;
   const client = assertSupabaseClient();
-  const { data, error } = await client.from(table).select(columns).in('snapshot_id', snapshotIds);
+  const { data, error } = await client.from(table).select('snapshot_id, metrics').in('snapshot_id', snapshotIds);
   if (error) {
     throw new Error(`Failed to load ${table}: ${error.message}`);
   }
-  return (data ?? []) as unknown as T[];
+  for (const row of (data ?? []) as { snapshot_id: number; metrics: Record<string, unknown> | null }[]) {
+    result.set(row.snapshot_id, row.metrics ?? {});
+  }
+  return result;
 }
 
 export async function listProjectOpsMetricsHistory(
@@ -64,27 +72,11 @@ export async function listProjectOpsMetricsHistory(
 
   const snapshotIds = ordered.map((row) => row.id);
 
-  const [vcsRows, pmRows, cicdRows] = await Promise.all([
-    selectBySnapshotIds<{
-      snapshot_id: number;
-      active_contributions_per_week: unknown;
-      issues_closed_per_week: unknown;
-      time_to_first_review_avg_hours: unknown;
-    }>('versioncontrolmetrics', snapshotIds, 'snapshot_id, active_contributions_per_week, issues_closed_per_week, time_to_first_review_avg_hours'),
-    selectBySnapshotIds<{
-      snapshot_id: number;
-      throughput_per_week: unknown;
-      blocked_items_count: unknown;
-    }>('projectmanagementmetrics', snapshotIds, 'snapshot_id, throughput_per_week, blocked_items_count'),
-    selectBySnapshotIds<{
-      snapshot_id: number;
-      deployments_per_week: unknown;
-    }>('cicdmetrics', snapshotIds, 'snapshot_id, deployments_per_week').catch(() => []),
+  const [vcsBySnapshot, pmBySnapshot, cicdBySnapshot] = await Promise.all([
+    selectMetricsBySnapshotIds('versioncontrolmetrics', snapshotIds),
+    selectMetricsBySnapshotIds('projectmanagementmetrics', snapshotIds),
+    selectMetricsBySnapshotIds('cicdmetrics', snapshotIds).catch(() => new Map<number, Record<string, unknown>>()),
   ]);
-
-  const vcsBySnapshot = new Map(vcsRows.map((row) => [row.snapshot_id, row]));
-  const pmBySnapshot = new Map(pmRows.map((row) => [row.snapshot_id, row]));
-  const cicdBySnapshot = new Map(cicdRows.map((row) => [row.snapshot_id, row]));
 
   return ordered.map((snapshot) => {
     const vcs = vcsBySnapshot.get(snapshot.id);
@@ -93,12 +85,12 @@ export async function listProjectOpsMetricsHistory(
     return {
       snapshotId: snapshot.id,
       snapshotTime: snapshot.snapshot_time,
-      commits: asNumber(vcs?.active_contributions_per_week),
-      ticketsClosed: asNumber(vcs?.issues_closed_per_week),
-      sprintVelocity: asNumber(pm?.throughput_per_week),
-      openBlockers: asNumber(pm?.blocked_items_count),
-      deployments: asNumber(cicd?.deployments_per_week),
-      prCycleTime: asNumber(vcs?.time_to_first_review_avg_hours),
+      commits: asNumber(vcs?.activeContributionsPerWeek),
+      ticketsClosed: asNumber(vcs?.issuesClosedPerWeek),
+      sprintVelocity: asNumber(pm?.throughputPerWeek),
+      openBlockers: asNumber(pm?.blockedItemsCount),
+      deployments: asNumber(cicd?.deploymentsPerWeek),
+      prCycleTime: asNumber(vcs?.timeToFirstReviewAvgHours),
     };
   });
 }

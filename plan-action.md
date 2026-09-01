@@ -1,6 +1,242 @@
 # Action Logging Feature — Implementation Plan
 
-## Principles
+> The original implementation plan below is retained as historical context. The
+> repository now has real cookie-session authentication and semantic action
+> search. The next planned increment is the owner-scoped Effectiveness Review
+> described here. Do not implement it until the concurrent owner/database work
+> has landed and the final action ownership contract has been checked.
+
+## Planned Follow-up: Owner Effectiveness Review
+
+### Product rule: due for review is not the same as ready to judge
+
+An action becoming one week old must not force its owner to rate it. Some
+outcomes take several weeks to become observable. The review system therefore
+needs three states:
+
+1. **Ready for review** — unrated and `next_review_at <= now`.
+2. **Waiting for outcome** — unrated, but the owner has deferred it because the
+   result is not visible yet (`next_review_at > now`).
+3. **Reviewed** — `effectiveness` is 1–5.
+
+The first reminder is scheduled for seven days after the action date by default.
+When prompted, the owner can either rate the action or choose **Not ready yet**
+and review it again in 1, 2, or 4 weeks. A custom date can be a later enhancement;
+presets keep this interaction quick and predictable.
+
+Deferral is not a negative state and must not be labelled "overdue" or styled as
+an error. It means the evidence is still developing. An action remains in the
+system until it is rated; deferring or dismissing a banner never discards it.
+
+### Review cohorts and clean visual distinction
+
+The backend returns one owner-scoped queue, and the frontend presents it under
+three short, descriptive headings:
+
+| Group | Inclusion rule | Default presentation | Visual treatment |
+|---|---|---|---|
+| **From last week** | Due, unrated actions whose `action_date` falls in the previous calendar week | Expanded first | Primary/blue text label and normal card contrast |
+| **Earlier** | Due, unrated actions before the previous calendar week | Expanded after last week | Muted amber text label; never alarming red |
+| **Waiting for outcome** | Unrated actions with `next_review_at > now` | Collapsed summary, expandable by the owner | Muted foreground/neutral label with the next review date |
+
+The groups use headings, spacing, and explicit text rather than colour alone.
+Within a group, order actions by `next_review_at`, then `action_date`, oldest
+first. Each row shows the problem, affected projects, action taken, action date,
+and its short status. Keep the whole row easy to scan; reveal longer root-cause
+text only when expanded.
+
+Example review summary:
+
+```text
+Effectiveness Review                                      5 ready
+
+From last week (3)
+  [Action card]                              Rate  ☆ ☆ ☆ ☆ ☆
+  [Action card]                              Rate  ☆ ☆ ☆ ☆ ☆
+  [Action card]                              Not ready yet
+
+Earlier (2)
+  [Action card]                              Rate  ☆ ☆ ☆ ☆ ☆
+  [Action card]                              Not ready yet
+
+Waiting for outcome (4)                                  Show
+  Next review dates are shown only when this group is expanded.
+```
+
+After a successful rating, keep the row visible briefly with a quiet "Saved"
+state before removing it from the ready queue. This avoids the disorienting
+effect of a card disappearing the instant a star is selected.
+
+### Weekly reminder banner
+
+Use an inline, low-contrast actionable banner on the portfolio/dashboard. Never
+open the rating modal automatically.
+
+Banner copy distinguishes the weekly cohort from carried-over actions:
+
+```text
+5 actions are ready for review
+3 from last week · 2 from earlier
+
+[Review actions]   [Remind me later]   [Dismiss]
+```
+
+If only one cohort has items, omit the empty part instead of showing zero. The
+banner count includes only **Ready for review** actions; it excludes **Waiting
+for outcome** actions until their next review date arrives.
+
+Reminder behaviour:
+
+- Show only after the dashboard's initial content has loaded.
+- Show no more than once in a Monday–Sunday reminder period by default.
+- **Review actions** opens Effectiveness Review; rating never happens inside the
+  banner itself because several cards need context and accessible labels.
+- **Remind me later** snoozes the banner for three days.
+- **Dismiss** hides this weekly banner until the next reminder period.
+- The persistent top-bar review icon/count remains available after snooze or
+  dismissal, so the task is always recoverable.
+- If there are no due actions, do not render the banner or an empty placeholder.
+- Do not use a toast: the reminder requires a decision and must not disappear on
+  a timer.
+
+For the first version, store banner display/snooze state in local storage keyed
+by authenticated user ID and ISO review week. This avoids a second database
+surface while the ownership schema is changing. Move it to a server-side user
+preference only if cross-device reminder continuity becomes a demonstrated need.
+
+### Effectiveness Review interaction
+
+Effectiveness Review is the only place where ratings are editable. All Actions,
+search results, timelines, and similar-action cards display the saved rating as
+read-only.
+
+For every ready card:
+
+- Provide labelled values: **1 Made things worse**, **2 Ineffective**, **3 Mixed
+  or unclear**, **4 Effective**, **5 Highly effective**.
+- Support pointer, keyboard, and screen-reader operation. Star buttons need an
+  accessible name containing both the number and meaning.
+- Disable that card while saving, then show success feedback.
+- On failure, retain the card and previous rating, show an inline error, and
+  offer Retry. Do not leave an optimistic rating looking saved.
+- **Not ready yet** opens a small inline/popup choice for **1 week**, **2 weeks**,
+  or **4 weeks**. Confirming moves the card to Waiting for outcome and displays
+  its next review date.
+- Permit re-rating from the reviewed action detail only if the product still
+  wants corrections; ordinary library rows remain non-interactive.
+
+### Match the existing frontend aesthetic
+
+Reuse the current Pulse visual language rather than introducing a new component
+library:
+
+- square cards and controls, `border-border`, `bg-card`, and the existing shadow;
+- existing uppercase display-font section titles and monospace dates;
+- amber filled stars for rating, with the primary colour for the main action;
+- restrained `motion/react` entrance/exit transitions already used by the app;
+- low-contrast banner with a narrow primary/amber left accent, not a saturated
+  warning block;
+- the existing Effectiveness Review panel/modal shell, opened only after explicit
+  user action;
+- no red treatment for old or deferred reviews—red is reserved for genuine
+  failures and destructive conditions.
+
+On narrow screens, stack banner copy above its actions and make review cards one
+column. Preserve the current maximum panel height and internal scrolling so the
+page beneath it does not jump.
+
+### Backend/API contract to implement after owner work lands
+
+Exact column names must be reconciled with the teammate's ownership migration.
+The intended minimal additions are:
+
+| Field | Purpose |
+|---|---|
+| `logged_by_user_id` | Authenticated owner; expected to come from the teammate's owner work |
+| `next_review_at` | When an unrated action should re-enter the ready queue |
+| `effectiveness_rated_by_user_id` | Audit identity for the current rating |
+| `effectiveness_rated_at` | Audit timestamp for the current rating |
+
+Creation sets `next_review_at` on the server to seven days after `action_date`.
+Do not accept owner or audit IDs from the browser.
+
+Planned endpoints:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/v1/actions/effectiveness-review` | Return the authenticated owner's counts and `from_last_week`, `earlier`, and `waiting_for_outcome` arrays |
+| `PUT` | `/api/v1/actions/:id/effectiveness` | Verify ownership and save rating plus audit fields |
+| `PUT` | `/api/v1/actions/:id/review-schedule` | Verify ownership and set `nextReviewAt` using an allowed defer preset |
+
+The server, not the browser, calculates previous-calendar-week boundaries using
+an agreed product timezone. Return explicit `window_start` and `window_end` in
+the response so the UI copy and tests do not depend on client clock logic.
+
+The review endpoint must include all due, unrated actions, not only last week's.
+That is what prevents unrated actions from silently disappearing after their
+first weekly cohort. The weekly distinction is presentation metadata, not an
+eligibility cutoff.
+
+### Ownership and concurrent-database guardrail
+
+Do not add these columns or migrations until the teammate's owner changes are
+merged. At implementation time:
+
+1. Re-run CodeGraph and inspect the final `actions`, `User`, `project`, and
+   membership schema.
+2. Reuse the teammate's owner column and authorization service instead of adding
+   a competing ownership model.
+3. Make rating/review-schedule changes additive and put them in a new timestamped
+   Supabase migration; never edit a migration that may already have been run.
+4. Keep reminder presentation state out of the database in version one.
+5. Confirm action list and semantic-search scoping still use the same owner,
+   company, and project rules after the merge.
+
+### Verification plan
+
+- Date-boundary tests for Monday/Sunday, month/year rollover, leap days, and the
+  agreed timezone.
+- Queue tests proving that last-week, older, deferred, and rated actions enter
+  exactly one group.
+- Regression test proving an older unrated action continues to appear under
+  Earlier until rated or deferred.
+- Deferral tests for allowed presets, owner-only authorization, and re-entry when
+  `next_review_at` arrives.
+- Banner-policy tests for once-per-week display, three-day snooze, dismissal,
+  empty queue, and counts that exclude waiting actions.
+- API tests for owner-only rating, invalid rating, missing action, audit fields,
+  and company/project isolation.
+- Frontend build plus keyboard, focus, mobile stacking, long-text, and failed-save
+  checks against the existing light and dark themes.
+
+### UX research basis
+
+- [Carbon notifications](https://carbondesignsystem.com/components/notification/usage/)
+  recommends sparse use, low contrast for low-priority information, a persistent
+  actionable notification rather than a timed toast, and an alternative place
+  where the task remains available.
+- [Carbon notification pattern](https://carbondesignsystem.com/patterns/notification-pattern/)
+  recommends matching visual disruption to urgency and keeping optional reminder
+  actions non-blocking.
+- [GOV.UK notification banner](https://design-system.service.gov.uk/components/notification-banner/)
+  recommends using banners sparingly, showing at most one, aligning it with page
+  content, and exposing a neutral banner as an accessible labelled region.
+- [GOV.UK task list](https://design-system.service.gov.uk/components/task-list/)
+  supports grouping a larger set of tasks under clear headings and pairing each
+  item with a short text status.
+- [GOV.UK complete multiple tasks](https://design-system.service.gov.uk/patterns/complete-multiple-tasks/)
+  recommends the smallest useful status vocabulary, sentence case, and drawing
+  attention to work that still requires action rather than completed work.
+- [Nielsen Norman Group notification guidance](https://www.nngroup.com/articles/smart-home-notifications/)
+  supports meaningful event thresholds and explicit frequency control to prevent
+  notification fatigue.
+
+## Historical Original Implementation Plan
+
+The remaining sections document the already-completed first implementation and
+are not the specification for the upcoming owner-scoped review work.
+
+### Original principles
 
 - **No DTO/mapper layer** — codebase doesn't use it (`project.ts`, `metrics.ts`, `risk-score.ts` all return raw rows). API returns snake_case; frontend `api.ts` handles the mapping to its own `Action` interface later.
 - **No service layer** — for simple CRUD the service would be pass-through functions. Validation inline in controller (matching `sync.controller.ts` style), queries in `database/actions.ts`.

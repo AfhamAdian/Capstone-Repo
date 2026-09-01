@@ -15,7 +15,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:actions": "node --import tsx --test tests/action-search.test.ts tests/embeddings.test.ts",
+    "test:actions": "node --import tsx --test tests/action-search.test.ts tests/embeddings.test.ts tests/pinecone-reranker.test.ts",
     "backfill:action-embeddings": "tsx scripts/backfill-action-embeddings.ts",
     "test:github-metrics": "npm run build && node dist/scripts/test-github-metrics.js",
     "test:jira-metrics": "npm run build && node dist/scripts/test-jira-metrics.js"
@@ -25,6 +25,7 @@
     "@octokit/rest": "^20.1.0",
     "@slack/web-api": "^8.0.0",
     "@supabase/supabase-js": "^2.101.1",
+    "adm-zip": "^0.6.0",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.2.0",
     "cookie-parser": "^1.4.7",
@@ -32,6 +33,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.0",
+    "fast-xml-parser": "^5.11.0",
     "helmet": "^8.0.0",
     "ioredis": "^5.10.1",
     "morgan": "^1.10.0",
@@ -40,6 +42,7 @@
     "resend": "^6.19.0"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",

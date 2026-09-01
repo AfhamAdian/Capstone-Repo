@@ -1,6 +1,7 @@
 import type { SyncRequestPayload } from '@libs/sync/index.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { listIntegrations } from './project-tool-integration.js';
+import { getWorkspaceById } from './workspace.js';
 
 type ToolIntegration = {
   credentials?: Record<string, string | undefined>;
@@ -55,14 +56,16 @@ export interface ProjectRecord {
   name: string;
   description: string | null;
   created_at: string | null;
+  workspace_id: number | null;
 }
 
-const PROJECT_COLUMNS = 'id, company_id, name, description, created_at';
+const PROJECT_COLUMNS = 'id, company_id, name, description, created_at, workspace_id';
 
 export async function createProject(input: {
   companyId: number;
   name: string;
   description?: string | null;
+  workspaceId?: number | null;
 }): Promise<ProjectRecord> {
   const client = assertSupabaseClient();
 
@@ -74,6 +77,7 @@ export async function createProject(input: {
         name: input.name.trim(),
         description: input.description?.trim() || null,
         created_at: new Date().toISOString(),
+        ...(input.workspaceId ? { workspace_id: input.workspaceId } : {}),
       },
     ])
     .select(PROJECT_COLUMNS)
@@ -173,7 +177,7 @@ export async function getProjectIntegrationsForTools(
 
   const { data, error } = await client
     .from('project')
-    .select('id')
+    .select('id, workspace_id')
     .eq('id', numericProjectId)
     .single();
 
@@ -192,10 +196,15 @@ export async function getProjectIntegrationsForTools(
     return typeof value === 'string' && value.length > 0 ? value : undefined;
   };
 
+  // VCS token falls back to the project's workspace PAT (stored once on the workspace), so imported
+  // projects don't duplicate the token in their config.
+  const workspaceId = (data.workspace_id as number | null) ?? null;
+  const workspaceToken = workspaceId ? (await getWorkspaceById(workspaceId))?.access_token : undefined;
+
   const integrations: Record<string, ToolIntegration> = {};
 
   if (tools.includes('github')) {
-    const token = cfg('github', 'token');
+    const token = cfg('github', 'token') ?? workspaceToken;
     const owner = cfg('github', 'owner');
     const repo = cfg('github', 'repo');
     if (!token || !owner || !repo) {
@@ -205,7 +214,7 @@ export async function getProjectIntegrationsForTools(
   }
 
   if (tools.includes('gitlab')) {
-    const token = cfg('gitlab', 'token');
+    const token = cfg('gitlab', 'token') ?? workspaceToken;
     const owner = cfg('gitlab', 'owner');
     const repo = cfg('gitlab', 'repo');
     if (!token || !owner || !repo) {
@@ -245,7 +254,7 @@ export async function getProjectIntegrationsForTools(
 
   if (tools.includes('github-actions')) {
     // CI runs on the GitHub repo, so it can borrow the github config when not set explicitly.
-    const token = cfg('github-actions', 'token') ?? cfg('github', 'token');
+    const token = cfg('github-actions', 'token') ?? cfg('github', 'token') ?? workspaceToken;
     const owner = cfg('github-actions', 'owner') ?? cfg('github', 'owner');
     const repo = cfg('github-actions', 'repo') ?? cfg('github', 'repo');
     if (!token || !owner || !repo) {
@@ -271,15 +280,14 @@ export interface ProjectRow {
   companyId: number;
   name: string;
   description: string | null;
-  owner: string | null;
-  repo: string | null;
   createdAt: string | null;
   pendingSurvey: boolean;
   pendingSurveyTrigger: string | null;
 }
 
 /** Every project, for the dashboard's project list. No auth/company scoping yet (see authorization.service.ts's known gaps). */
-const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, owner, repo, created_at, pending_survey, pending_survey_trigger';
+// owner/repo intentionally omitted — they're legacy columns; the dashboard reads owner/repo from the vcs integration config.
+const PROJECT_ROW_COLUMNS = 'id, company_id, name, description, created_at, pending_survey, pending_survey_trigger';
 
 function toProjectRow(p: Record<string, unknown>): ProjectRow {
   return {
@@ -287,8 +295,6 @@ function toProjectRow(p: Record<string, unknown>): ProjectRow {
     companyId: p.company_id as number,
     name: p.name as string,
     description: (p.description as string) ?? null,
-    owner: (p.owner as string) ?? null,
-    repo: (p.repo as string) ?? null,
     createdAt: (p.created_at as string) ?? null,
     pendingSurvey: Boolean(p.pending_survey),
     pendingSurveyTrigger: (p.pending_survey_trigger as string) ?? null,

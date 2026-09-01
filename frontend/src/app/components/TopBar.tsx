@@ -1,23 +1,32 @@
 import { useState, useRef, useEffect, type MouseEvent } from "react";
 import {
-  Activity, ChevronRight, ChevronDown, Search, Star, Bell, Building2, Moon, Sun,
+  Activity, ChevronRight, ChevronDown, Search, Star, Bell, Building2, Moon, Sun, LogOut,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
 import { hColor, hClass } from "../format";
 import { findProjectByPath } from "../hooks/useProjectHealth";
+import { useWorkspace } from "../context/WorkspaceContext";
 
 export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingCount,onRatingOpen,onManageWorkspaces}:{
   dark:boolean;onToggle:()=>void;projects:Project[];activeId:string|null;onSelect:(id:string)=>void;onHome:()=>void;
   pendingCount:number;onRatingOpen:()=>void;onManageWorkspaces:()=>void;
 }) {
+  const {user,logout}=useWorkspace();
   const [open,setOpen]=useState(false);
   const [q,setQ]=useState("");
+  const [userOpen,setUserOpen]=useState(false);
   const ref=useRef<HTMLDivElement>(null);
+  const userRef=useRef<HTMLDivElement>(null);
   useEffect(()=>{
-    const h=(e:MouseEvent)=>{if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false);};
+    const h=(e:MouseEvent)=>{
+      if(ref.current&&!ref.current.contains(e.target as Node))setOpen(false);
+      if(userRef.current&&!userRef.current.contains(e.target as Node))setUserOpen(false);
+    };
     document.addEventListener("mousedown",h); return ()=>document.removeEventListener("mousedown",h);
   },[]);
+  const userLabel=user?.name||user?.email||"";
+  const initials=userLabel.split(/[\s@.]+/).filter(Boolean).slice(0,2).map(s=>s[0]?.toUpperCase()).join("")||"?";
   const active=findProjectByPath(projects,activeId);
   const filtered=projects.filter(p=>p.name.toLowerCase().includes(q.toLowerCase()));
   return (
@@ -79,16 +88,15 @@ export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingC
       )}
       <div className="ml-auto flex items-center gap-1">
         {/* Rating reminder icon */}
-        {pendingCount>0&&(
-          <button onClick={onRatingOpen}
-            className="relative p-2 text-amber-500 hover:text-amber-400 transition-colors"
-            title={`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`}>
-            <Star size={17} className="fill-amber-400 text-amber-400"/>
-            <span className="absolute top-1 right-0.5 min-w-[16px] h-4 bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5 leading-none">
-              {pendingCount}
-            </span>
-          </button>
-        )}
+        <button onClick={onRatingOpen}
+          className={`relative p-2 transition-colors ${pendingCount>0?"text-amber-500 hover:text-amber-400":"text-muted-foreground hover:text-foreground"}`}
+          aria-label={pendingCount>0?`${pendingCount} unrated action${pendingCount===1?"":"s"} owned by you`:"Open effectiveness reviews"}
+          title={pendingCount>0?`${pendingCount} action${pendingCount>1?"s":""} need your effectiveness rating`:"Effectiveness reviews"}>
+          <Star size={17} className={pendingCount>0?"fill-amber-400 text-amber-400":""}/>
+          {pendingCount>0&&<span className="absolute top-1 right-0.5 min-w-[16px] h-4 bg-amber-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5 leading-none">
+            {pendingCount}
+          </span>}
+        </button>
         <button className="relative p-2 text-muted-foreground hover:text-foreground transition-colors">
           <Bell size={17}/>
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"/>
@@ -99,7 +107,29 @@ export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingC
         <button onClick={onToggle} className="p-2 text-muted-foreground hover:text-foreground transition-colors">
           {dark?<Sun size={17}/>:<Moon size={17}/>}
         </button>
-        <div className="w-8 h-8 bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground ml-1" style={{fontFamily:"var(--font-display)"}}>SC</div>
+        <div className="relative ml-1" ref={userRef}>
+          <button onClick={()=>setUserOpen(o=>!o)} title={userLabel||"Account"}
+            className="w-8 h-8 bg-primary flex items-center justify-center text-sm font-bold text-primary-foreground hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>
+            {initials}
+          </button>
+          <AnimatePresence>
+            {userOpen&&(
+              <motion.div initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,y:-6}} transition={{duration:0.13}}
+                className="absolute right-0 top-full mt-1 w-56 bg-popover border border-border shadow-2xl z-50">
+                {userLabel&&(
+                  <div className="px-4 py-3 border-b border-border">
+                    {user?.name&&<div className="text-sm font-semibold text-foreground truncate">{user.name}</div>}
+                    {user?.email&&<div className="text-xs text-muted-foreground truncate">{user.email}</div>}
+                  </div>
+                )}
+                <button onClick={()=>{setUserOpen(false);logout();}}
+                  className="w-full flex items-center gap-2 px-4 py-3 text-sm text-foreground hover:bg-muted transition-colors text-left">
+                  <LogOut size={15}/> Log out
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
     </header>
   );

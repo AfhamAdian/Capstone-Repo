@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate, Outlet, useNavigate, useParams, useSearchParams } from "react-router";
-import { paths, resolvePortfolioPath } from "./app-paths";
+import { paths, resolvePortfolioPath, isValidWorkspaceId } from "./app-paths";
 import { useWorkspace } from "./context/WorkspaceContext";
 import { PublicSurveyPage } from "./pages/PublicSurveyPage";
 import { LoginView } from "./pages/LoginView";
@@ -27,7 +27,7 @@ function AuthLoadingGate() {
 
 function GuestOnly() {
   const {isAuthenticated,activeWorkspace}=useWorkspace();
-  if(isAuthenticated) return <Navigate to={resolvePortfolioPath(activeWorkspace?.vcs)} replace/>;
+  if(isAuthenticated) return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   return <Outlet/>;
 }
 
@@ -46,13 +46,17 @@ function PublicSurveyRoute() {
 
 function LoginRoute() {
   const navigate=useNavigate();
-  return <LoginView onSuccess={()=>navigate(paths.workspaces)} onNavigateToRegister={()=>navigate(paths.register)} onNavigateToForgot={()=>navigate(paths.forgotPassword)}/>;
+  const [searchParams]=useSearchParams();
+  const invite=searchParams.get("invite") ?? undefined;
+  return <LoginView onSuccess={()=>navigate(paths.workspaces)} onNavigateToRegister={()=>navigate(paths.register)} onNavigateToForgot={()=>navigate(paths.forgotPassword)} inviteToken={invite}/>;
 }
 
 function RegisterRoute() {
   const navigate=useNavigate();
   const [searchParams]=useSearchParams();
-  return <RegisterView onSuccess={()=>navigate(paths.workspaces)} onNavigateToLogin={()=>navigate(paths.login)} inviteToken={searchParams.get("invite") ?? undefined}/>;
+  const invite=searchParams.get("invite") ?? undefined;
+  // Preserve the invite token when bouncing an existing-account invitee to the login page.
+  return <RegisterView onSuccess={()=>navigate(paths.workspaces)} onNavigateToLogin={()=>navigate(invite?`${paths.login}?invite=${invite}`:paths.login)} inviteToken={invite}/>;
 }
 
 function ForgotPasswordRoute() {
@@ -69,7 +73,7 @@ function ResetPasswordRoute() {
 function WorkspacesRoute() {
   const navigate=useNavigate();
   const {user}=useWorkspace();
-  return <VcsWorkspaceView onSelect={vcs=>navigate(paths.workspacePortfolio(vcs))} onAddProject={()=>navigate(paths.addProject)} isAdmin={user?.role==="admin"}/>;
+  return <VcsWorkspaceView onSelectWorkspace={ws=>navigate(paths.workspacePortfolio(ws.id))} onCreate={()=>navigate(paths.createWorkspace)} isAdmin={user?.role==="admin"}/>;
 }
 
 function CreateWorkspaceRoute() {
@@ -79,15 +83,18 @@ function CreateWorkspaceRoute() {
 
 function ProjectsRoute() {
   const navigate=useNavigate();
-  return <ProjectsView onAddProject={()=>navigate(paths.addProject)}/>;
+  const {activeWorkspace}=useWorkspace();
+  return <ProjectsView onAddProject={()=>navigate(activeWorkspace?.id?paths.addProject(activeWorkspace.id):paths.workspaces)}/>;
 }
 
 function AddProjectRoute() {
   const navigate=useNavigate();
   const {user}=useWorkspace();
-  // Only admins can create projects — members never reach the form.
-  if(user?.role!=="admin") return <Navigate to={paths.projectsAdmin} replace/>;
-  return <AddProjectView onCreated={()=>navigate(paths.portfolio)} onCancel={()=>navigate(paths.projectsAdmin)}/>;
+  const {workspaceId}=useParams();
+  // Only admins can add projects — members never reach the picker.
+  if(user?.role!=="admin") return <Navigate to={paths.workspaces} replace/>;
+  if(!isValidWorkspaceId(workspaceId)) return <Navigate to={paths.workspaces} replace/>;
+  return <AddProjectView workspaceId={workspaceId!} onCreated={()=>navigate(paths.workspacePortfolio(workspaceId!))} onCancel={()=>navigate(paths.workspacePortfolio(workspaceId!))}/>;
 }
 
 export default function App() {
@@ -107,11 +114,11 @@ export default function App() {
           <Route path={paths.workspaces} element={<WorkspacesRoute/>}/>
           <Route path={paths.createWorkspace} element={<CreateWorkspaceRoute/>}/>
           <Route path={paths.projectsAdmin} element={<ProjectsRoute/>}/>
-          <Route path={paths.addProject} element={<AddProjectRoute/>}/>
+          <Route path="/workspaces/:workspaceId/projects/new" element={<AddProjectRoute/>}/>
 
           <Route element={<AppLayout/>}>
             <Route path="/" element={<PortfolioEntry/>}/>
-            <Route path="/workspaces/:vcs" element={<PortfolioEntry/>}/>
+            <Route path="/workspaces/:workspaceId" element={<PortfolioEntry/>}/>
             <Route path={paths.globalActions} element={<GlobalActionsRoute/>}/>
             <Route path={paths.globalSurveys} element={<GlobalSurveysRoute/>}/>
 

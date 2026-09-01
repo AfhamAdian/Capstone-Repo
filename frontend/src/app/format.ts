@@ -1,10 +1,78 @@
 import type { ActionSearchMode } from "./api";
 import type { SurveyStatus } from "./api-survey";
-import type { Survey } from "./types";
+import type { Action, Project, Survey } from "./types";
 
 export const SUBSCORE_LABELS: Record<string, string> = {
-  delivery: "Delivery", codeQuality: "Code Quality", cicd: "CI/CD", teamHealth: "Team Health", blockers: "Blockers",
+  codeQuality: "Code Quality",
+  cicdDeploymentHealth: "CI/CD",
+  teamHealth: "Team Health",
+  engineeringProcess: "Engineering Process",
+  planningExecution: "Planning & Execution",
 };
+
+/**
+ * "Code Quality" isn't a score the backend computes - it's a frontend-only display merge of
+ * the 3 code-quality-adjacent scores from the 7-score health engine (Security, Reliability,
+ * Maintainability), so the dashboard can show 5 categories instead of 7. Equal weights for now
+ * (no stated preference among the three); the 3 raw scores stay available for a hover/detail
+ * breakdown - see CodeQualityBreakdown usage in Dashboard.tsx/ProjectsOverview.tsx.
+ */
+export function computeCodeQualityScore(subscores: { security: number; reliability: number; maintainability: number }): number {
+  return Math.round((subscores.security + subscores.reliability + subscores.maintainability) / 3);
+}
+
+export interface DisplaySubscores {
+  codeQuality: number;
+  cicdDeploymentHealth: number;
+  teamHealth: number;
+  engineeringProcess: number;
+  planningExecution: number;
+}
+
+/** The 7 raw scores, collapsed to the 5 categories actually shown on the dashboard. */
+export function toDisplaySubscores(subscores: {
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
+  teamHealth: number;
+  engineeringProcess: number;
+  planningExecution: number;
+}): DisplaySubscores {
+  return {
+    codeQuality: computeCodeQualityScore(subscores),
+    cicdDeploymentHealth: subscores.cicdDeploymentHealth,
+    teamHealth: subscores.teamHealth,
+    engineeringProcess: subscores.engineeringProcess,
+    planningExecution: subscores.planningExecution,
+  };
+}
+
+type SeriesPoint = { v: number; label: string; date?: string };
+
+/**
+ * Merges the security/reliability/maintainability trend series into one "Code Quality"
+ * trend, point-by-point average - all subscore series share the same snapshot-history
+ * index alignment, so this just zips and averages them.
+ */
+export function computeCodeQualitySeries(subscoreSeries: Record<string, SeriesPoint[]>): SeriesPoint[] {
+  const sec = subscoreSeries.security ?? [];
+  const rel = subscoreSeries.reliability ?? [];
+  const main = subscoreSeries.maintainability ?? [];
+  const len = Math.max(sec.length, rel.length, main.length);
+  const out: SeriesPoint[] = [];
+  for (let i = 0; i < len; i++) {
+    const s = sec[i], r = rel[i], m = main[i];
+    const vals = [s?.v, r?.v, m?.v].filter((v): v is number => typeof v === "number");
+    if (vals.length === 0) continue;
+    out.push({
+      v: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+      label: s?.label ?? r?.label ?? m?.label ?? "",
+      date: s?.date ?? r?.date ?? m?.date,
+    });
+  }
+  return out;
+}
 
 export function scoreInt(n: number): number {
   return Math.round(Number.isFinite(n) ? n : 0);
@@ -57,6 +125,11 @@ export function fmtDate(d: string) {
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+/** Actions persist stable backend project ids; legacy rows may still contain the display slug. */
+export function actionIncludesProject(action: Pick<Action, "projectIds">, project: Pick<Project, "id" | "backendProjectId">): boolean {
+  return action.projectIds.includes(project.backendProjectId ?? project.id) || action.projectIds.includes(project.id);
+}
+
 export function triggerColor(trigger: string): string {
   if (/threshold|exceeded|dropped|declined/i.test(trigger)) return "text-amber-600 dark:text-amber-500";
   if (/manual|quarterly|pulse/i.test(trigger)) return "text-blue-600 dark:text-blue-400";
@@ -70,15 +143,49 @@ export function projectTagStyle(score: number): { bg: string; text: string } {
 }
 
 export function actionSearchModeLabel(mode: ActionSearchMode | null): string {
-  if (mode === "hybrid") return "Hybrid semantic + keyword results";
-  if (mode === "semantic") return "Semantic similarity results";
-  if (mode === "lexical") return "Keyword fallback results";
+  if (mode === "rerank") return "Pinecone deep similarity results";
+  if (mode === "lexical") return "Keyword results";
   return "Searching by relevance";
 }
 
 export function actionSimilarityLabel(similarity: number | undefined): string | null {
   if (similarity === undefined || !Number.isFinite(similarity)) return null;
   return `${Math.round(Math.max(0, Math.min(1, similarity)) * 100)}% similar`;
+}
+
+function editDistance(left: string, right: string): number {
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 1; leftIndex <= left.length; leftIndex++) {
+    const current = [leftIndex];
+    for (let rightIndex = 1; rightIndex <= right.length; rightIndex++) {
+      current[rightIndex] = Math.min(
+        current[rightIndex - 1]! + 1,
+        previous[rightIndex]! + 1,
+        previous[rightIndex - 1]! + (left[leftIndex - 1] === right[rightIndex - 1] ? 0 : 1),
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length]!;
+}
+
+/** Lightweight local keyword matching with typo tolerance; it never invokes semantic search. */
+export function actionMatchesKeywordSearch(
+  action: Pick<Action, "problem" | "reason" | "actionTaken">,
+  query: string,
+): boolean {
+  const normalizedQuery = query.toLocaleLowerCase().trim().replace(/\s+/g, " ");
+  if (!normalizedQuery) return true;
+  const text = `${action.problem} ${action.reason} ${action.actionTaken}`.toLocaleLowerCase();
+  if (text.includes(normalizedQuery)) return true;
+  const words = text.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const tokens = normalizedQuery.match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (tokens.length === 0) return false;
+  return tokens.every(token => words.some(word => {
+    if (word.includes(token) || (word.length >= 3 && token.includes(word))) return true;
+    const tolerance = token.length >= 8 ? 2 : token.length >= 4 ? 1 : 0;
+    return tolerance > 0 && Math.abs(word.length - token.length) <= tolerance && editDistance(word, token) <= tolerance;
+  }));
 }
 
 export const SURVEY_STATUS_CONFIG: Record<SurveyStatus, { c: string; l: string }> = {

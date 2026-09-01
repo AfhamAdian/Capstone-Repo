@@ -2,8 +2,8 @@ import { useState, useMemo } from "react";
 import { ChevronRight, Search, Plus, Zap, MessageSquare, Bookmark, Star, RefreshCw } from "lucide-react";
 import { motion } from "motion/react";
 import type { SyncRiskKey } from "../api";
-import type { Project, Action, Survey } from "../types";
-import { hColor } from "../format";
+import type { Project, Survey } from "../types";
+import { hColor, toDisplaySubscores, type DisplaySubscores } from "../format";
 import { Ring, TrendIcon } from "../components/ScoreVisuals";
 import { useDashboardSync } from "../hooks/useDashboardSync";
 
@@ -25,8 +25,8 @@ function SyncBtn({project,onSyncComplete}:{
   );
 }
 
-export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
-  projects:Project[];actions:Action[];surveys:Survey[];
+export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
+  projects:Project[];surveys:Survey[];pendingReviewCount:number;
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
@@ -37,8 +37,6 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
 }) {
   const [tab,setTab]=useState<"all"|"tracked">("all");
   const [q,setQ]=useState("");
-  const pendingRatings=useMemo(()=>actions.filter(a=>a.effectiveness===null),[actions]);
-
   const visible=useMemo(()=>{
     let list=tab==="tracked"?projects.filter(p=>trackedIds.has(p.id)):projects;
     if(q)list=list.filter(p=>p.name.toLowerCase().includes(q.toLowerCase())||p.team.toLowerCase().includes(q.toLowerCase())||(p.owner??"").toLowerCase().includes(q.toLowerCase()));
@@ -75,8 +73,8 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
               className="flex items-center gap-2 border border-border bg-card text-[15px] font-semibold px-4 py-2.5 text-foreground hover:border-primary hover:text-primary transition-colors"
               style={{fontFamily:"var(--font-display)"}}>
               <Zap size={14}/> All Actions
-              {pendingRatings.length>0&&(
-                <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingRatings.length}</span>
+              {pendingReviewCount>0&&(
+                <span className="inline-flex items-center justify-center w-5 h-5 bg-amber-400 text-white text-xs font-bold">{pendingReviewCount}</span>
               )}
             </button>
             <button onClick={onViewSurveys}
@@ -120,7 +118,7 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
         <div className="border border-border bg-card overflow-x-auto">
           <div style={{minWidth:900}}>
             <div className="grid items-center border-b border-border bg-muted px-6 py-3" style={{gridTemplateColumns:cols}}>
-              {["Project","Delivery","Code Quality","CI/CD","Team Health","Blockers","Health","Trend",""].map((h,i)=>(
+              {["Project","Code Quality","CI/CD","Team Health","Eng. Process","Planning & Exec.","Health","Trend",""].map((h,i)=>(
                 <div key={i} className={`text-sm font-semibold text-foreground ${i>=1&&i<=6?"text-center":""}`} style={{fontFamily:"var(--font-display)"}}>{h}</div>
               ))}
             </div>
@@ -135,7 +133,9 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
                   <div className="h-8 w-16 bg-muted animate-pulse ml-auto"/>
                 </div>
               ))
-            ):visible.map((p,idx)=>(
+            ):visible.map((p,idx)=>{
+              const display=toDisplaySubscores(p.subscores);
+              return (
               <motion.div key={p.id} initial={{opacity:0}} animate={{opacity:1}} transition={{delay:idx*0.03,duration:0.2}}>
                 <div onClick={()=>onSelect(p.id)}
                   className="grid items-center px-6 py-4 border-b border-border hover:bg-muted/40 cursor-pointer group transition-colors"
@@ -160,8 +160,15 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
                       </div>
                     )}
                   </div>
-                  {(["delivery","codeQuality","cicd","teamHealth","blockers"] as const).map(k=>(
-                    <div key={k} className="flex justify-center" onClick={e=>e.stopPropagation()}><Ring score={p.subscores[k]} size={44}/></div>
+                  {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>(
+                    <div
+                      key={k}
+                      className="flex justify-center"
+                      onClick={e=>e.stopPropagation()}
+                      title={k==="codeQuality"?`Security ${Math.round(p.subscores.security)} · Reliability ${Math.round(p.subscores.reliability)} · Maintainability ${Math.round(p.subscores.maintainability)}`:undefined}
+                    >
+                      <Ring score={display[k]} size={44}/>
+                    </div>
                   ))}
                   <div className="flex justify-center" onClick={e=>e.stopPropagation()}><Ring score={p.score} size={56}/></div>
                   <div className="flex items-center justify-center gap-1.5">
@@ -173,7 +180,8 @@ export function PortfolioView({projects,actions,surveys,onSelect,onLogAction,onV
                   <div className="flex justify-center" onClick={e=>e.stopPropagation()}><SyncBtn project={p} onSyncComplete={onSyncComplete}/></div>
                 </div>
               </motion.div>
-            ))}
+              );
+            })}
             {visible.length===0&&!loading&&<div className="text-center py-16 text-base text-muted-foreground">No projects match your filter.</div>}
           </div>
         </div>

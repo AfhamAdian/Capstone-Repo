@@ -11,9 +11,9 @@ export async function sendProjectInvites(input: {
   companyId: number;
   projectId: number;
   projectName: string;
-  emails: string[];
+  invites: Array<{ email: string }>;
 }): Promise<void> {
-  for (const email of input.emails) {
+  for (const { email } of input.invites) {
     try {
       const token = await inviteTokenStore.create({
         email,

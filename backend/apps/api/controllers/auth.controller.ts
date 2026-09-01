@@ -4,6 +4,7 @@ import type { CookieOptions, Request, Response } from 'express';
 import { sessionStore } from '@libs/auth/session-store.js';
 import {
   AuthError,
+  acceptProjectInvite,
   forgotPassword,
   getCurrentUser,
   getInvite,
@@ -11,6 +12,8 @@ import {
   logout,
   register,
   resetPassword,
+  sendEmailVerificationCode,
+  verifyEmailCode,
 } from '../services/auth.service.js';
 import { SESSION_COOKIE_NAME, readSessionId } from '../middlewares/auth.middleware.js';
 import { env } from '../config/env.js';
@@ -32,6 +35,28 @@ function handleAuthError(error: unknown, response: Response): void {
   }
   const message = error instanceof Error ? error.message : 'Authentication failed';
   response.status(500).json({ message });
+}
+
+// POST /api/v1/auth/send-verification-code — emails a signup verification code.
+export async function sendVerificationCodeHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { email } = request.body ?? {};
+    await sendEmailVerificationCode(email);
+    response.status(200).json({ message: 'Verification code sent' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
+}
+
+// POST /api/v1/auth/verify-email-code — confirms the code so registration can proceed.
+export async function verifyEmailCodeHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { email, code } = request.body ?? {};
+    await verifyEmailCode(email, code);
+    response.status(200).json({ message: 'Email verified' });
+  } catch (error) {
+    handleAuthError(error, response);
+  }
 }
 
 // POST /api/v1/auth/register
@@ -86,6 +111,25 @@ export async function getInviteHandler(request: Request, response: Response): Pr
     return;
   }
   response.status(200).json({ invite });
+}
+
+// POST /api/v1/auth/accept-invite — logged-in user accepts a project invite (existing-account path).
+export async function acceptInviteHandler(request: Request, response: Response): Promise<void> {
+  try {
+    const { token } = request.body ?? {};
+    if (!token || typeof token !== 'string') {
+      response.status(400).json({ message: 'Invite token is required' });
+      return;
+    }
+    const auth = request.auth!;
+    const result = await acceptProjectInvite(
+      { userId: auth.userId, companyId: auth.companyId, email: auth.email },
+      token,
+    );
+    response.status(200).json(result);
+  } catch (error) {
+    handleAuthError(error, response);
+  }
 }
 
 // POST /api/v1/auth/forgot-password — always 200 to avoid revealing whether the email is registered.

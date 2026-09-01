@@ -1,52 +1,47 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
-  ChevronLeft, Plus, Search, RefreshCw, X, AlertCircle, ChevronDown, Star,
+  ChevronLeft, Plus, Search, RefreshCw, X, AlertCircle, ChevronDown, Pencil, Trash2,
 } from "lucide-react";
 import {
-  ComposedChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ReferenceLine, Brush, ResponsiveContainer,
+  ComposedChart, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ReferenceLine, Brush, ResponsiveContainer,
 } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { searchActions, type ActionSearchMode } from "../api";
+import { listAllProjectActions, searchActions, type ActionSearchMode } from "../api";
 import type { Project, Action } from "../types";
-import { actionSearchModeLabel, actionSimilarityLabel, projectTagStyle, fmtDate, ttStyle } from "../format";
+import { actionIncludesProject, actionMatchesKeywordSearch, actionSearchModeLabel, actionSimilarityLabel, projectTagStyle, fmtDate, ttStyle } from "../format";
 import { InlineRating } from "../components/InlineRating";
 
-export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAction}:{
-  actions:Action[];projects:Project[];onBack:()=>void;onLogAction:()=>void;onRateAction:(id:string,rating:number)=>void;
+export function GlobalActionsView({actions,projects,currentUserId,onBack,onLogAction,onEditAction,onDeleteAction,onRateAction}:{
+  actions:Action[];projects:Project[];onBack:()=>void;onLogAction:()=>void;
+  currentUserId:number|null;onEditAction:(action:Action)=>void;onDeleteAction:(id:string)=>Promise<void>;
+  onRateAction:(id:string,rating:number)=>Promise<void>;
 }) {
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [ex,setEx]=useState<string|null>(null);
-  const [searchResults,setSearchResults]=useState<Action[]|null>(null);
-  const [searching,setSearching]=useState(false);
-  const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
-  const [searchError,setSearchError]=useState<string|null>(null);
-
-  useEffect(()=>{
-    const query=q.trim();
-    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
-    const controller=new AbortController();
-    setSearching(true);setSearchError(null);
-    const timer=setTimeout(()=>{
-      searchActions(query,50,{projectId:filterProject!=="all"?filterProject:undefined,signal:controller.signal})
-        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
-        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
-    },300);
-    return()=>{clearTimeout(timer);controller.abort();};
-  },[q,filterProject]);
+  const [confirmDelete,setConfirmDelete]=useState<string|null>(null);
+  const [deleting,setDeleting]=useState<string|null>(null);
+  const [mutationError,setMutationError]=useState<string|null>(null);
 
   const filtered=useMemo(()=>{
-    const semanticQuery=q.trim().length>=3;
-    let list=[...(semanticQuery&&!searchError?(searchResults??[]):actions)];
+    let list=[...actions];
     if(filterProject!=="all") list=list.filter(a=>a.projectIds.includes(filterProject));
-    if(q&&(!semanticQuery||searchError)){const lq=q.toLowerCase();list=list.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));}
-    if(!semanticQuery||searchError)list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
+    if(q)list=list.filter(a=>actionMatchesKeywordSearch(a,q));
+    list.sort((a,b)=>{const da=new Date(a.timestamp).getTime(),db=new Date(b.timestamp).getTime();return sortOrder==="newest"?db-da:da-db;});
     return list;
-  },[actions,searchResults,searchError,q,filterProject,sortOrder]);
+  },[actions,q,filterProject,sortOrder]);
 
-  const COL="minmax(0,2.5fr) 150px 130px 90px 36px";
+  const COL="minmax(0,2.5fr) 150px 130px 120px 104px";
+  const ROW_COL="minmax(0,2.5fr) 150px 130px";
+
+  const removeAction=async(id:string)=>{
+    if(deleting)return;
+    setDeleting(id);setMutationError(null);
+    try{await onDeleteAction(id);setConfirmDelete(null);setEx(null);}
+    catch(error){setMutationError(error instanceof Error?error.message:"Could not delete this action");}
+    finally{setDeleting(null);}
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-background">
@@ -70,17 +65,15 @@ export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAct
         <div className="flex items-center gap-3 mb-5 flex-wrap">
           <div className="flex items-center gap-2 bg-card border border-border px-3 py-2.5 flex-1 max-w-sm">
             <Search size={14} className="text-muted-foreground"/>
-            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by meaning…"
+            <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search actions by keyword…"
               className="bg-transparent text-sm outline-none flex-1 placeholder:text-muted-foreground"/>
-            {searching&&<RefreshCw size={13} className="text-primary animate-spin"/>}
             {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
           </div>
           <select value={filterProject} onChange={e=>setFilterProject(e.target.value)}
             className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
             <option value="all">All Projects</option>
-            {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+            {projects.map(p=><option key={p.id} value={String(p.backendProjectId??p.id)}>{p.name}</option>)}
           </select>
-          {q.trim().length>=3&&<div className="border border-border bg-card px-3 py-2.5 text-sm font-semibold text-primary">{searching?"Searching…":searchError?"Local keyword results":actionSearchModeLabel(searchMode)}</div>}
           <div className="flex border border-border">
             {(["newest","oldest"] as const).map(o=>(
               <button key={o} onClick={()=>setSortOrder(o)}
@@ -92,19 +85,19 @@ export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAct
           </div>
         </div>
 
-        {searchError&&q.trim().length>=3&&<div className="mb-4 flex items-center gap-2 border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={14}/>{searchError}</div>}
-
-        <div className="border border-border bg-card">
+        <div className="border border-border bg-card overflow-x-auto">
+          <div className="min-w-[760px]">
           <div className="grid px-5 py-3 border-b border-border bg-muted" style={{gridTemplateColumns:COL}}>
-            {["Problem","Projects","Date","Rating",""].map(h=><div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>)}
+            {["Problem","Projects","Date","Rating","Manage"].map(h=><div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>)}
           </div>
           {filtered.map(a=>{
-            const projs=projects.filter(p=>a.projectIds.includes(p.id));
+            const projs=projects.filter(p=>actionIncludesProject(a,p));
             return (
               <div key={a.id}>
+                <div className="grid border-b border-border hover:bg-muted/40 transition-colors items-center" style={{gridTemplateColumns:COL}}>
                 <button onClick={()=>setEx(ex===a.id?null:a.id)}
-                  className="w-full grid px-5 py-4 border-b border-border hover:bg-muted/40 transition-colors text-left items-center"
-                  style={{gridTemplateColumns:COL}}>
+                  className="grid px-5 py-4 text-left items-center min-w-0"
+                  style={{gridTemplateColumns:ROW_COL,gridColumn:"1 / 4"}}>
                   <div>
                     <div className="flex items-start gap-2"><div className="text-[15px] font-medium text-foreground leading-snug">{a.problem}</div>{actionSimilarityLabel(a.similarity)&&<span className="shrink-0 bg-primary/10 px-1.5 py-0.5 text-xs font-semibold text-primary">{actionSimilarityLabel(a.similarity)}</span>}</div>
                     <div className="text-sm text-muted-foreground mt-0.5">{a.loggedBy}</div>
@@ -116,9 +109,14 @@ export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAct
                     })}
                   </div>
                   <div className="text-sm font-medium text-foreground bg-muted px-2 py-1 w-fit" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</div>
-                  <InlineRating effectiveness={a.effectiveness} onRate={rating=>onRateAction(a.id,rating)}/>
-                  <ChevronDown size={14} className={`text-muted-foreground transition-transform ${ex===a.id?"rotate-180":""}`}/>
                 </button>
+                <div className="px-2"><InlineRating effectiveness={a.effectiveness} canRate={a.loggedByUserId===currentUserId} onRate={rating=>onRateAction(a.id,rating)}/></div>
+                <div className="flex items-center justify-end gap-1 pr-4">
+                  <button onClick={()=>onEditAction(a)} aria-label={`Edit ${a.problem}`} title="Edit action" className="p-2 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"><Pencil size={14}/></button>
+                  <button onClick={()=>{setConfirmDelete(confirmDelete===a.id?null:a.id);setMutationError(null);setEx(a.id);}} aria-label={`Delete ${a.problem}`} title="Delete action" className="p-2 text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors"><Trash2 size={14}/></button>
+                  <button onClick={()=>setEx(ex===a.id?null:a.id)} aria-label={ex===a.id?"Collapse action details":"Expand action details"} className="p-2 text-muted-foreground hover:text-foreground"><ChevronDown size={14} className={`transition-transform ${ex===a.id?"rotate-180":""}`}/></button>
+                </div>
+                </div>
                 <AnimatePresence>
                   {ex===a.id&&(
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden border-b border-border bg-muted/20">
@@ -126,6 +124,12 @@ export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAct
                         <div><div className="text-sm font-semibold text-muted-foreground mb-2">Problem &amp; Root Cause</div><div className="text-[15px] text-foreground leading-relaxed">{a.reason}</div></div>
                         <div><div className="text-sm font-semibold text-muted-foreground mb-2">Action Taken</div><div className="text-[15px] text-foreground leading-relaxed">{a.actionTaken}</div></div>
                       </div>
+                      {confirmDelete===a.id&&<div className="mx-5 mb-5 border border-red-500/30 bg-red-500/5 px-4 py-3 flex items-center gap-3 flex-wrap">
+                        <div className="flex-1 min-w-52"><div className="text-sm font-semibold text-foreground">Delete this action?</div><div className="text-xs text-muted-foreground mt-0.5">This permanently removes its details, rating, and search index.</div></div>
+                        <button disabled={deleting===a.id} onClick={()=>setConfirmDelete(null)} className="px-3 py-2 text-sm font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50">Cancel</button>
+                        <button disabled={deleting===a.id} onClick={()=>void removeAction(a.id)} className="px-3 py-2 text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">{deleting===a.id?"Deleting…":"Delete action"}</button>
+                        {mutationError&&<div className="basis-full text-xs text-red-600 dark:text-red-400">{mutationError}</div>}
+                      </div>}
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -133,29 +137,82 @@ export function GlobalActionsView({actions,projects,onBack,onLogAction,onRateAct
             );
           })}
           {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No actions match your filter.</div>}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export function ActionsTimeline({project,actions}:{project:Project;actions:Action[];}) {
+export function ActionsTimeline({project,actions,currentUserId,onRateAction}:{project:Project;actions:Action[];currentUserId:number|null;onRateAction:(id:string,rating:number)=>Promise<void>;}) {
   const ts=project.timeSeries;
-  const minDate=ts[0]?.date??"", maxDate=ts[ts.length-1]?.date??"";
-  const [start,setStart]=useState(()=>{const d=new Date(maxDate);d.setDate(d.getDate()-30);return d.toISOString().split("T")[0];});
+  const projectId=String(project.backendProjectId??project.id);
+  const fallbackActions=useMemo(()=>actions.filter(a=>actionIncludesProject(a,project)),[actions,project]);
+  const [databaseActions,setDatabaseActions]=useState<Action[]|null>(null);
+  const [actionsLoading,setActionsLoading]=useState(true);
+  const [actionsError,setActionsError]=useState<string|null>(null);
+  useEffect(()=>{
+    let current=true;
+    setDatabaseActions(null);setActionsLoading(true);setActionsError(null);
+    listAllProjectActions(projectId)
+      .then(rows=>{if(current)setDatabaseActions(rows);})
+      .catch(error=>{if(current){setDatabaseActions(null);setActionsError(error instanceof Error?error.message:"Could not load action history");}})
+      .finally(()=>{if(current)setActionsLoading(false);});
+    return()=>{current=false;};
+  },[projectId]);
+  const pa=useMemo(()=>{
+    if(!databaseActions)return fallbackActions;
+    const merged=new Map(databaseActions.map(action=>[action.id,action]));
+    fallbackActions.forEach(action=>merged.set(action.id,action));
+    return [...merged.values()];
+  },[databaseActions,fallbackActions]);
+  const allDates=useMemo(()=>[...ts.map(point=>point.date),...pa.map(action=>action.timestamp)].filter(Boolean).sort(),[ts,pa]);
+  const today=new Date().toISOString().slice(0,10);
+  const minDate=allDates[0]??today, maxDate=allDates[allDates.length-1]??today;
+  const [start,setStart]=useState(minDate);
   const [end,setEnd]=useState(maxDate);
-  const [sel,setSel]=useState<Action|null>(null);
+  const [chartSelection,setChartSelection]=useState<Action|null>(null);
+  const [listSelection,setListSelection]=useState<Action|null>(null);
+  const [hoveredGroup,setHoveredGroup]=useState<{date:string;items:Action[]}|null>(null);
+  useEffect(()=>{
+    const date=new Date(`${maxDate}T00:00:00.000Z`);date.setUTCDate(date.getUTCDate()-30);
+    setStart(date.toISOString().slice(0,10)<minDate?minDate:date.toISOString().slice(0,10));
+    setEnd(maxDate);setChartSelection(null);setListSelection(null);
+  },[projectId,minDate,maxDate]);
   const filtered=useMemo(()=>ts.filter(d=>d.date>=start&&d.date<=end),[ts,start,end]);
-  const pa=actions.filter(a=>a.projectIds.includes(project.id));
-  const setPreset=(days:number|null)=>{setEnd(maxDate);if(days===null){setStart(minDate);return;}const d=new Date(maxDate);d.setDate(d.getDate()-days);setStart(d.toISOString().split("T")[0]);};
-  const am=useMemo(()=>{
-    const map:Record<string,Action>={};
-    pa.forEach(a=>{
-      if(!filtered.length)return;
-      const cl=filtered.reduce((p,c)=>Math.abs(new Date(c.date).getTime()-new Date(a.timestamp).getTime())<Math.abs(new Date(p.date).getTime()-new Date(a.timestamp).getTime())?c:p,filtered[0]);
-      if(cl)map[cl.label]=a;
-    });return map;
-  },[pa,filtered]);
+  const visibleActions=useMemo(()=>pa.filter(a=>a.timestamp>=start&&a.timestamp<=end).sort((a,b)=>b.timestamp.localeCompare(a.timestamp)),[pa,start,end]);
+  const toTime=(date:string)=>new Date(`${date}T12:00:00.000Z`).getTime();
+  const rangeStart=new Date(`${start}T00:00:00.000Z`).getTime();
+  const rangeEnd=new Date(`${end}T00:00:00.000Z`).getTime()+86_400_000;
+  const chartData=useMemo(()=>filtered.map(point=>({...point,time:toTime(point.date)})),[filtered]);
+  const actionGroups=useMemo(()=>{
+    const groups=new Map<string,Action[]>();
+    visibleActions.forEach(action=>groups.set(action.timestamp,[...(groups.get(action.timestamp)??[]),action]));
+    return [...groups.entries()].map(([date,items])=>({date,time:toTime(date),items}));
+  },[visibleActions]);
+  const setPreset=(days:number|null)=>{
+    setEnd(maxDate);
+    if(days===null){setStart(minDate);return;}
+    const date=new Date(`${maxDate}T00:00:00.000Z`);date.setUTCDate(date.getUTCDate()-(days-1));
+    const next=date.toISOString().slice(0,10);setStart(next<minDate?minDate:next);
+  };
+  const brushRange=useMemo(()=>{
+    if(!ts.length)return {startIndex:0,endIndex:0};
+    const first=ts.findIndex(point=>point.date>=start);
+    let last=ts.findIndex(point=>point.date>end);
+    if(last<0)last=ts.length;
+    return {startIndex:first<0?0:first,endIndex:Math.max(first<0?0:first,last-1)};
+  },[ts,start,end]);
+  const formatTick=(time:number)=>new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(time));
+  const selectedVisible=chartSelection&&visibleActions.some(action=>action.id===chartSelection.id)?chartSelection:null;
+  const latestMetric=(key:string)=>project.metricSeries[key]?.filter(point=>point.date&&point.date>=start&&point.date<=end).at(-1)?.v;
+  const scoreChange=filtered.length>1?filtered[filtered.length-1].score-filtered[0].score:null;
+  const contextStats=[
+    {label:"Health change",value:scoreChange===null?"—":`${scoreChange>0?"+":""}${scoreChange} pts`},
+    {label:"Commits / week",value:latestMetric("commits")??"—"},
+    {label:"Tickets closed / week",value:latestMetric("tickets")??"—"},
+    {label:"Deployments / week",value:latestMetric("deployments")??"—"},
+  ];
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8">
@@ -164,7 +221,7 @@ export function ActionsTimeline({project,actions}:{project:Project;actions:Actio
           <div className="flex border border-border">
             {[{l:"7D",d:7},{l:"30D",d:30},{l:"90D",d:90},{l:"All",d:null}].map(r=>(
               <button key={r.l} onClick={()=>setPreset(r.d)}
-                className="px-4 py-2.5 text-[15px] font-semibold text-foreground/70 hover:text-foreground hover:bg-muted transition-colors border-r border-border last:border-r-0"
+                className={`px-4 py-2.5 text-[15px] font-semibold hover:text-foreground hover:bg-muted transition-colors border-r border-border last:border-r-0 ${r.d===null&&start===minDate&&end===maxDate?"bg-foreground text-background":"text-foreground/70"}`}
                 style={{fontFamily:"var(--font-display)"}}>
                 {r.l}
               </button>
@@ -181,42 +238,82 @@ export function ActionsTimeline({project,actions}:{project:Project;actions:Actio
               className="bg-transparent text-[15px] outline-none text-foreground" style={{fontFamily:"var(--font-mono)"}}/>
           </div>
           <div className="bg-card border border-border px-4 py-2.5 text-sm text-muted-foreground">
-            {filtered.length} data points shown
+            {filtered.length} score points · {visibleActions.length} actions
           </div>
+        </div>
+        {actionsError&&<div className="mb-5 flex items-center gap-2 border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={15}/>The database request failed. Showing the actions already loaded in this session. {actionsError}</div>}
+        <div className="grid grid-cols-2 lg:grid-cols-4 border border-border bg-card mb-4">
+          {contextStats.map((stat,index)=><div key={stat.label} className={`px-5 py-4 ${index%2===0?"border-r border-border":""} lg:border-r lg:last:border-r-0 ${index<2?"border-b border-border lg:border-b-0":""}`}><div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1" style={{fontFamily:"var(--font-display)"}}>{stat.label}</div><div className="text-xl font-bold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{stat.value}</div></div>)}
         </div>
         <div className="bg-card border border-border p-6 mb-7">
           <div className="text-base font-bold text-foreground mb-1" style={{fontFamily:"var(--font-display)"}}>Health Score Over Time</div>
-          <div className="text-sm text-muted-foreground mb-5">Orange markers indicate logged actions</div>
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={filtered} margin={{top:5,right:8,bottom:24,left:8}}>
-              <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
-              <XAxis dataKey="label" tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}} interval={Math.max(1,Math.floor(filtered.length/8))}/>
-              <YAxis domain={[20,100]} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={30}/>
-              <ReTooltip contentStyle={ttStyle} formatter={(v:number)=>[v,"Score"]}/>
-              <Area type="monotone" dataKey="score" stroke="var(--primary)" strokeWidth={2} fill="var(--primary)" fillOpacity={0.07} dot={false}/>
-              {Object.keys(am).map(label=><ReferenceLine key={label} x={label} stroke="var(--chart-3)" strokeDasharray="3 3" strokeWidth={2} label={{value:"▲",position:"bottom",fill:"var(--chart-3)",fontSize:10}}/>)}
-              <Brush dataKey="label" height={24} travellerWidth={10} stroke="var(--border)" fill="var(--muted)" tickFormatter={()=>""}/>
-            </ComposedChart>
-          </ResponsiveContainer>
+          <div className="text-sm text-muted-foreground mb-5">Each orange vertical bar sits on the exact date an action was taken. Select a bar to inspect it.</div>
+          <div className="relative">
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={chartData} margin={{top:5,right:8,bottom:24,left:8}}>
+                <CartesianGrid strokeDasharray="2 8" stroke="var(--border)" vertical={false}/>
+                <XAxis dataKey="time" type="number" scale="time" domain={[rangeStart,rangeEnd]} tickFormatter={formatTick} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={{stroke:"var(--border)"}} minTickGap={42}/>
+                <YAxis domain={[0,100]} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={30}/>
+                <ReTooltip contentStyle={ttStyle} formatter={(v:number)=>[v,"Score"]} labelFormatter={(value)=>formatTick(Number(value))}/>
+                <Area type="monotone" dataKey="score" stroke="var(--primary)" strokeWidth={2} fill="var(--primary)" fillOpacity={0.07} dot={false}/>
+                {actionGroups.flatMap(group=>[
+                  <ReferenceLine key={`${group.date}-hit`} x={group.time} stroke="transparent" strokeWidth={16} onMouseEnter={()=>setHoveredGroup(group)} onMouseLeave={()=>setHoveredGroup(null)} onClick={()=>{setChartSelection(group.items[0]);setListSelection(null);}} className="cursor-pointer"/>,
+                  <ReferenceLine key={group.date} x={group.time} stroke="var(--chart-3)" strokeWidth={selectedVisible?.timestamp===group.date?5:3} strokeOpacity={selectedVisible?.timestamp===group.date?1:.78} className="pointer-events-none" label={{value:group.items.length>1?String(group.items.length):"",position:"insideTop",fill:"var(--chart-3)",fontSize:11,fontWeight:700}}/>,
+                ])}
+              </ComposedChart>
+            </ResponsiveContainer>
+            <AnimatePresence>
+              {hoveredGroup&&<motion.div initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} exit={{opacity:0,y:4}} transition={{duration:.1}} className="pointer-events-none absolute right-3 top-3 z-10 w-64 border border-[var(--chart-3)] bg-card/95 px-4 py-3 shadow-xl backdrop-blur-sm">
+                <div className="text-xs font-semibold text-[var(--chart-3)] mb-1" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(hoveredGroup.date)}</div>
+                <div className="text-sm font-semibold text-foreground leading-snug line-clamp-2">{hoveredGroup.items[0].problem}</div>
+                <div className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{hoveredGroup.items[0].actionTaken}</div>
+                <div className="text-xs font-medium text-muted-foreground mt-2">{hoveredGroup.items[0].loggedBy}{hoveredGroup.items.length>1?` · +${hoveredGroup.items.length-1} more on this date`:""}</div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground/60 mt-2">Click for full details</div>
+              </motion.div>}
+            </AnimatePresence>
+          </div>
+          {ts.length>1&&<div className="mt-2 border-t border-border pt-3">
+            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2" style={{fontFamily:"var(--font-display)"}}>Drag to change the visible window</div>
+            <ResponsiveContainer width="100%" height={54}>
+              <AreaChart data={ts} margin={{top:0,right:8,bottom:0,left:8}}>
+                <Area type="monotone" dataKey="score" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} dot={false}/>
+                <Brush dataKey="date" height={28} travellerWidth={10} stroke="var(--primary)" fill="var(--muted)" tickFormatter={()=>""} startIndex={brushRange.startIndex} endIndex={brushRange.endIndex} onChange={range=>{if(range.startIndex===undefined||range.endIndex===undefined)return;setStart(ts[range.startIndex]?.date??start);setEnd(ts[range.endIndex]?.date??end);}}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>}
+          {selectedVisible&&<div className="mt-4 border-l-4 border-[var(--chart-3)] bg-muted/40 px-5 py-4">
+            <div className="flex items-start gap-4 mb-4">
+              <div className="min-w-0 flex-1"><div className="text-xs font-semibold uppercase tracking-wide text-[var(--chart-3)] mb-1" style={{fontFamily:"var(--font-display)"}}>Full action details</div><div className="text-xs font-semibold text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(selectedVisible.timestamp)} · {selectedVisible.loggedBy} · {selectedVisible.effectiveness===null?"Not rated":`${selectedVisible.effectiveness}/5 effectiveness`}</div></div>
+              <button onClick={()=>setChartSelection(null)} aria-label="Close selected action" className="p-1 text-muted-foreground hover:text-foreground"><X size={15}/></button>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="md:col-span-2"><div className="text-xs font-semibold text-muted-foreground mb-1">Problem</div><div className="text-sm font-semibold text-foreground leading-relaxed">{selectedVisible.problem}</div></div>
+              <div><div className="text-xs font-semibold text-muted-foreground mb-1">Root cause</div><div className="text-sm text-foreground leading-relaxed">{selectedVisible.reason}</div></div>
+              <div><div className="text-xs font-semibold text-muted-foreground mb-1">Action taken</div><div className="text-sm text-foreground leading-relaxed">{selectedVisible.actionTaken}</div></div>
+              {(selectedVisible.nextReviewAt||selectedVisible.effectivenessRatedAt)&&<div className="md:col-span-2 border-t border-border pt-3 text-xs text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{selectedVisible.effectivenessRatedAt?`Rated ${fmtDate(selectedVisible.effectivenessRatedAt)}`:`Next review ${fmtDate(selectedVisible.nextReviewAt!)}`}</div>}
+            </div>
+          </div>}
         </div>
         <div>
-          <div className="text-base font-bold text-foreground mb-4" style={{fontFamily:"var(--font-display)"}}>Logged Actions ({pa.length})</div>
+          <div className="flex items-center gap-2 mb-4"><div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Actions in this window ({visibleActions.length})</div>{actionsLoading&&<RefreshCw size={13} className="text-primary animate-spin"/>}</div>
           <div className="space-y-2">
-            {pa.map(a=>(
-              <div key={a.id} className="bg-card border border-border overflow-hidden">
-                <button onClick={()=>setSel(sel?.id===a.id?null:a)}
-                  className="w-full px-5 py-4 flex items-start justify-between gap-4 hover:bg-muted/30 transition-colors text-left">
+            {visibleActions.map(a=>(
+              <div key={a.id} className={`bg-card border overflow-hidden ${listSelection?.id===a.id?"border-[var(--chart-3)]":"border-border"}`}>
+                <div className="flex items-center hover:bg-muted/30 transition-colors">
+                <button onClick={()=>{setListSelection(listSelection?.id===a.id?null:a);setChartSelection(null);}}
+                  className="flex-1 min-w-0 px-5 py-4 flex items-start justify-between gap-4 text-left">
                   <div>
                     <div className="text-sm text-muted-foreground mb-1.5">{fmtDate(a.timestamp)} · {a.loggedBy}</div>
                     <div className="text-[15px] font-semibold text-foreground">{a.problem}</div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    {a.effectiveness!==null?<div className="flex gap-0.5">{Array.from({length:5}).map((_,i)=><Star key={i} size={12} className={i<a.effectiveness!?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>)}</div>:<span className="text-sm text-muted-foreground italic">pending</span>}
-                    <ChevronDown size={14} className={`text-muted-foreground transition-transform ${sel?.id===a.id?"rotate-180":""}`}/>
+                    <ChevronDown size={14} className={`text-muted-foreground transition-transform ${listSelection?.id===a.id?"rotate-180":""}`}/>
                   </div>
                 </button>
+                <div className="pr-5 shrink-0"><InlineRating effectiveness={a.effectiveness} canRate={a.loggedByUserId===currentUserId} onRate={rating=>onRateAction(a.id,rating)}/></div>
+                </div>
                 <AnimatePresence>
-                  {sel?.id===a.id&&(
+                  {listSelection?.id===a.id&&(
                     <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden">
                       <div className="px-5 pb-5 pt-2 border-t border-border grid grid-cols-2 gap-5">
                         <div><div className="text-sm font-semibold text-muted-foreground mb-2">Root Cause</div><div className="text-[15px] text-foreground leading-relaxed">{a.reason}</div></div>
@@ -227,6 +324,7 @@ export function ActionsTimeline({project,actions}:{project:Project;actions:Actio
                 </AnimatePresence>
               </div>
             ))}
+            {!actionsLoading&&visibleActions.length===0&&<div className="border border-dashed border-border bg-card py-12 text-center text-sm text-muted-foreground">No actions were logged in this date range.</div>}
           </div>
         </div>
       </div>
@@ -234,33 +332,43 @@ export function ActionsTimeline({project,actions}:{project:Project;actions:Actio
   );
 }
 
-export function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:string;}) {
+export function ActionsLibrary({actions,project,currentUserId,onRateAction}:{actions:Action[];project?:Project;currentUserId:number|null;onRateAction:(id:string,rating:number)=>Promise<void>;}) {
+  const projectId=project?String(project.backendProjectId??project.id):undefined;
   const [q,setQ]=useState(""), [ex,setEx]=useState<string|null>(null);
   const [searchResults,setSearchResults]=useState<Action[]|null>(null);
   const [searching,setSearching]=useState(false);
   const [searchMode,setSearchMode]=useState<ActionSearchMode|null>(null);
   const [searchError,setSearchError]=useState<string|null>(null);
-  useEffect(()=>{
+  const searchController=useRef<AbortController|null>(null);
+  useEffect(()=>()=>searchController.current?.abort(),[]);
+  const updateQuery=(query:string)=>{
+    searchController.current?.abort();searchController.current=null;
+    setQ(query);setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);
+  };
+  const deepSearch=async()=>{
     const query=q.trim();
-    if(query.length<3){setSearchResults(null);setSearching(false);setSearchMode(null);setSearchError(null);return;}
+    if(query.length<3||searching)return;
+    searchController.current?.abort();
     const controller=new AbortController();
-    setSearching(true);setSearchError(null);
-    const timer=setTimeout(()=>{
-      searchActions(query,50,{projectId,signal:controller.signal})
-        .then(result=>{setSearchResults(result.actions);setSearchMode(result.mode);})
-        .catch(error=>{if((error as Error).name!=="AbortError")setSearchError("Search service unavailable. Showing local keyword matches.");})
-        .finally(()=>{if(!controller.signal.aborted)setSearching(false);});
-    },300);
-    return()=>{clearTimeout(timer);controller.abort();};
-  },[q,projectId]);
+    searchController.current=controller;
+    setSearching(true);setSearchResults(null);setSearchMode(null);setSearchError(null);
+    try{
+      const result=await searchActions(query,50,{deep:true,projectId,signal:controller.signal});
+      if(controller.signal.aborted)return;
+      setSearchResults(result.actions);setSearchMode(result.mode);
+    }catch(error){
+      if(!controller.signal.aborted)setSearchError(error instanceof Error?error.message:"Deep search is unavailable");
+    }finally{
+      if(searchController.current===controller){searchController.current=null;setSearching(false);}
+    }
+  };
   const filtered=useMemo(()=>{
-    const base=actions.filter(a=>!projectId||a.projectIds.includes(projectId));
-    if(q.trim().length>=3&&!searchError)return searchResults??[];
+    const base=actions.filter(a=>!project||actionIncludesProject(a,project));
+    if(searchResults)return searchResults;
     if(!q)return base;
-    const lq=q.toLowerCase();
-    return base.filter(a=>a.problem.toLowerCase().includes(lq)||a.actionTaken.toLowerCase().includes(lq)||a.reason.toLowerCase().includes(lq));
-  },[actions,searchResults,searchError,q,projectId]);
-  const COL="minmax(0,3fr) 140px 120px 90px";
+    return base.filter(a=>actionMatchesKeywordSearch(a,q));
+  },[actions,searchResults,q,project]);
+  const COL="minmax(0,3fr) 140px 120px 120px";
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8">
@@ -268,14 +376,20 @@ export function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:
           <h2 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>Actions Library</h2>
           <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} records</span>
         </div>
-        <div className="flex items-center gap-2 bg-card border border-border px-4 py-3.5 mb-6">
-          <Search size={16} className="text-muted-foreground shrink-0"/>
-          <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search action history by meaning…"
-            className="flex-1 text-[15px] bg-transparent outline-none placeholder:text-muted-foreground"/>
-          {searching&&<RefreshCw size={14} className="text-primary animate-spin"/>}
-          {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={15}/></button>}
+        <div className="flex items-stretch gap-2 mb-6">
+          <div className="flex flex-1 items-center gap-2 bg-card border border-border px-4 py-3.5">
+            <Search size={16} className="text-muted-foreground shrink-0"/>
+            <input value={q} onChange={e=>updateQuery(e.target.value)} placeholder="Search action history by keyword…"
+              className="flex-1 text-[15px] bg-transparent outline-none placeholder:text-muted-foreground"/>
+            {q&&<button onClick={()=>updateQuery("")} className="text-muted-foreground hover:text-foreground"><X size={15}/></button>}
+          </div>
+          <button onClick={()=>void deepSearch()} disabled={q.trim().length<3||searching}
+            className="flex items-center gap-2 border border-primary bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Rerank action history by deep similarity">
+            {searching?<RefreshCw size={14} className="animate-spin"/>:<Search size={14}/>} {searching?"Searching…":"Deep Search"}
+          </button>
         </div>
-        {q.trim().length>=3&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
+        {(searchError||searchMode)&&!searching&&<div className={`mb-4 flex items-center gap-2 border px-3 py-2 text-sm ${searchError?"border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300":"border-border bg-muted/30 text-muted-foreground"}`}>
           {searchError?<AlertCircle size={14}/>:<Search size={14}/>} {searchError??actionSearchModeLabel(searchMode)}
         </div>}
         <div className="border border-border bg-card">
@@ -284,14 +398,16 @@ export function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:
           </div>
           {filtered.map(a=>(
             <div key={a.id}>
+              <div className="grid border-b border-border hover:bg-muted/40 transition-colors items-center" style={{gridTemplateColumns:COL}}>
               <button onClick={()=>setEx(ex===a.id?null:a.id)}
-                className="w-full grid px-5 py-4 border-b border-border hover:bg-muted/40 transition-colors text-left items-center"
-                style={{gridTemplateColumns:COL}}>
+                className="grid px-5 py-4 text-left items-center"
+                style={{gridTemplateColumns:"minmax(0,3fr) 140px 120px",gridColumn:"1 / 4"}}>
                 <div className="pr-5"><div className="text-[15px] font-medium text-foreground leading-snug">{a.problem}</div>{actionSimilarityLabel(a.similarity)&&<div className="mt-1 text-xs font-semibold text-primary">{actionSimilarityLabel(a.similarity)}</div>}</div>
                 <div className="text-[15px] text-foreground/80">{a.loggedBy}</div>
                 <div className="text-sm font-medium text-foreground/70 bg-muted px-2 py-1 w-fit" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(a.timestamp)}</div>
-                <div className="flex gap-0.5 items-center">{a.effectiveness!==null?Array.from({length:5}).map((_,i)=><Star key={i} size={12} className={i<a.effectiveness!?"text-amber-400 fill-amber-400":"text-muted-foreground"}/>):<span className="text-sm text-muted-foreground">—</span>}</div>
               </button>
+              <div className="px-3"><InlineRating effectiveness={a.effectiveness} canRate={a.loggedByUserId===currentUserId} onRate={rating=>onRateAction(a.id,rating)}/></div>
+              </div>
               <AnimatePresence>
                 {ex===a.id&&(
                   <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden border-b border-border bg-muted/20">
@@ -304,7 +420,7 @@ export function ActionsLibrary({actions,projectId}:{actions:Action[];projectId?:
               </AnimatePresence>
             </div>
           ))}
-          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Searching action history…":"No actions match your search."}</div>}
+          {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">{searching?"Reranking action history…":"No actions match your search."}</div>}
         </div>
       </div>
     </div>

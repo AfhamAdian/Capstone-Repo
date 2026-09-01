@@ -177,12 +177,24 @@ CREATE TABLE public.actions (
   effectiveness integer,
   logged_by text NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
+  company_id integer,
+  logged_by_user_id integer,
+  next_review_at timestamp with time zone,
+  effectiveness_rated_by_user_id integer,
+  effectiveness_rated_at timestamp with time zone,
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT actions_pkey PRIMARY KEY (id),
-  CONSTRAINT actions_effectiveness_check CHECK (effectiveness >= 1 AND effectiveness <= 5)
+  CONSTRAINT actions_effectiveness_check CHECK (effectiveness >= 1 AND effectiveness <= 5),
+  CONSTRAINT actions_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.company(id),
+  CONSTRAINT actions_logged_by_user_id_fkey FOREIGN KEY (logged_by_user_id) REFERENCES public."User"(id),
+  CONSTRAINT actions_effectiveness_rated_by_user_id_fkey FOREIGN KEY (effectiveness_rated_by_user_id) REFERENCES public."User"(id)
 );
 CREATE INDEX idx_actions_project_ids ON public.actions USING GIN (project_ids);
 CREATE INDEX idx_actions_action_date ON public.actions (action_date DESC);
 CREATE INDEX idx_actions_pending ON public.actions (effectiveness) WHERE effectiveness IS NULL;
+CREATE INDEX idx_actions_company_date ON public.actions (company_id, action_date DESC);
+CREATE INDEX idx_actions_owner_date ON public.actions (logged_by_user_id, action_date DESC);
+CREATE INDEX idx_actions_owner_pending_review ON public.actions (logged_by_user_id, next_review_at) WHERE effectiveness IS NULL;
 CREATE TABLE public.action_embeddings (
   action_id uuid NOT NULL,
   embedding_version text NOT NULL,
@@ -199,7 +211,7 @@ CREATE TABLE public.action_embeddings (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT action_embeddings_pkey PRIMARY KEY (action_id, embedding_version),
   CONSTRAINT action_embeddings_action_id_fkey FOREIGN KEY (action_id) REFERENCES public.actions(id) ON DELETE CASCADE,
-  CONSTRAINT action_embeddings_provider_check CHECK (provider = 'siliconflow'::text),
+  CONSTRAINT action_embeddings_provider_check CHECK (provider = ANY (ARRAY['gemini'::text, 'siliconflow'::text])),
   CONSTRAINT action_embeddings_dimensions_check CHECK (dimensions > 0),
   CONSTRAINT action_embeddings_status_check CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'ready'::text, 'failed'::text])),
   CONSTRAINT action_embeddings_attempt_count_check CHECK (attempt_count >= 0),

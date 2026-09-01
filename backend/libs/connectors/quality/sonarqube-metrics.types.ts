@@ -1,12 +1,10 @@
 /**
  * SonarQube metrics return types
  *
- * 18 metrics (12 core + 6 new-code). See instructions/SONARQUBE_METRICS.md.
+ * 21 metrics chosen for code quality health scoring. See sonar-metrics.md.
  * All values are nullable: a metric can be absent if the project has not been
  * analyzed for it (e.g. coverage requires a coverage report upload).
  */
-
-export type QualityGateStatus = 'OK' | 'ERROR';
 
 export interface SonarQubeMetricsResponse {
   generatedAt: string;
@@ -16,37 +14,38 @@ export interface SonarQubeMetricsResponse {
   };
   metrics: {
     // Maintainability
-    technicalDebtRatio: number | null; // sqale_debt_ratio (%)
-    technicalDebtMinutes: number | null; // sqale_index (raw minutes)
     maintainabilityRating: number | null; // sqale_rating (1=A .. 5=E)
-    codeSmells: number | null;
-    duplicatedLinesDensity: number | null; // %
+    codeSmells: number | null; // code_smells
+    newCodeSmells: number | null; // new_code_smells
+    duplicatedLinesDensity: number | null; // duplicated_lines_density (%)
+    newDuplicatedLinesDensity: number | null; // new_duplicated_lines_density (%)
+    newTechnicalDebt: number | null; // new_technical_debt (minutes)
+
+    // Complexity
+    cyclomaticComplexity: number | null; // complexity
+    cognitiveComplexity: number | null; // cognitive_complexity
 
     // Reliability
-    bugs: number | null;
-    reliabilityRating: number | null; // 1=A .. 5=E
+    reliabilityRating: number | null; // reliability_rating (1=A .. 5=E)
+    reliabilityRemediationEffort: number | null; // reliability_remediation_effort (minutes)
+    newBugs: number | null; // new_bugs
 
     // Security
-    vulnerabilities: number | null;
-    securityRating: number | null; // 1=A .. 5=E
-    criticalVulnerabilities: number | null; // BLOCKER + CRITICAL severities
-    highVulnerabilities: number | null; // MAJOR severity
+    securityRating: number | null; // security_rating (1=A .. 5=E)
+    securityHotspots: number | null; // security_hotspots (count)
+    securityReviewRating: number | null; // security_review_rating (1=A .. 5=E)
+    securityRemediationEffort: number | null; // security_remediation_effort (minutes)
+    newVulnerabilities: number | null; // new_vulnerabilities
+    hotspotFilesWorstOffenders: Array<{ file: string; hotspotCount: number }>; // top files by unresolved hotspot count
 
     // Coverage
-    coverage: number | null; // % — null until coverage reporting is configured
+    coverage: number | null; // coverage (%) — null until coverage reporting is configured
+    newCoverage: number | null; // new_coverage (%)
 
     // Size (normalizer)
     linesOfCode: number | null; // ncloc
 
-    // Overall gate
-    qualityGateStatus: QualityGateStatus | null;
-
-    // New code (trajectory)
-    newBugs: number | null;
-    newVulnerabilities: number | null;
-    newCodeSmells: number | null;
-    newCoverage: number | null; // %
-    newDuplicatedLinesDensity: number | null; // %
-    newTechnicalDebt: number | null; // minutes
+    // Overall gate (trend, not a single snapshot)
+    qualityGatePassRatePercent: number | null; // % of analyses in the lookback window with status OK
   };
 }

@@ -10,7 +10,11 @@ import {
   listActions,
   getAction,
   searchActions,
+  updateAction,
+  deleteAction,
   updateEffectiveness,
+  deferActionReview,
+  listEffectivenessReviews,
 } from '../controllers/actions.controller.js';
 
 export const actionsRouter = Router();
@@ -23,11 +27,15 @@ actionsRouter.use(requireAuth);
 actionsRouter.post('/', asyncHandler(createAction));
 
 /**
- * GET /api/v1/actions/search?q=...&limit=...
- * Placeholder semantic search. NOTE: registered before /:id so "search"
+ * GET /api/v1/actions/search?q=...&limit=...&mode=deep
+ * Company-scoped keyword search, or explicit Pinecone reranking with mode=deep.
+ * Registered before /:id so "search"
  * is not captured as an id param.
  */
 actionsRouter.get('/search', asyncHandler(searchActions));
+
+/** Owner-only effectiveness queue, registered before /:id. */
+actionsRouter.get('/effectiveness-review', asyncHandler(listEffectivenessReviews));
 
 /**
  * GET /api/v1/actions?projectId=&from=&to=&pending=&limit=
@@ -41,8 +49,13 @@ actionsRouter.get('/', asyncHandler(listActions));
  */
 actionsRouter.get('/:id', asyncHandler(getAction));
 
+/** Members edit/delete their own; admins edit/delete company actions. */
+actionsRouter.put('/:id', asyncHandler(updateAction));
+actionsRouter.delete('/:id', asyncHandler(deleteAction));
+
 /**
  * PUT /api/v1/actions/:id/effectiveness
- * Rate action effectiveness 1-5 (Level 2+)
+ * Rate action effectiveness 1-5 (action owner only)
  */
 actionsRouter.put('/:id/effectiveness', asyncHandler(updateEffectiveness));
+actionsRouter.put('/:id/review-schedule', asyncHandler(deferActionReview));

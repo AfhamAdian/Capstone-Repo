@@ -7,10 +7,10 @@ export const paths = {
   resetPassword: "/reset-password",
   workspaces: "/workspaces",
   createWorkspace: "/workspaces/new",
-  workspacePortfolio: (vcs: string) => `/workspaces/${encodeURIComponent(vcs)}`,
+  workspacePortfolio: (workspaceId: string | number) => `/workspaces/${encodeURIComponent(String(workspaceId))}`,
   portfolio: "/",
   projectsAdmin: "/projects",
-  addProject: "/projects/new",
+  addProject: (workspaceId: string | number) => `/workspaces/${encodeURIComponent(String(workspaceId))}/projects/new`,
   globalActions: "/actions",
   globalSurveys: "/surveys",
   publicSurvey: (token: string) => `/survey/${encodeURIComponent(token)}`,
@@ -28,7 +28,16 @@ export function isValidVcs(v: string | null | undefined): v is VcsProvider {
   return v != null && VCS_PROVIDERS.includes(v as VcsProvider);
 }
 
-/** Where "go back to the portfolio" should land, given whatever vcs (workspace) is currently in play. */
-export function resolvePortfolioPath(vcs: string | null | undefined): string {
-  return isValidVcs(vcs) ? paths.workspacePortfolio(vcs) : paths.portfolio;
+// A workspace id in the URL is a positive integer.
+export function isValidWorkspaceId(v: string | null | undefined): boolean {
+  if (v == null) return false;
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0;
+}
+
+/** Where "go back to the portfolio" should land, given the active workspace id (or the chooser if none). */
+export function resolvePortfolioPath(workspaceId: string | number | null | undefined): string {
+  return isValidWorkspaceId(workspaceId != null ? String(workspaceId) : null)
+    ? paths.workspacePortfolio(workspaceId!)
+    : paths.workspaces;
 }

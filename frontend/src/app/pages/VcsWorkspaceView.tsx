@@ -1,11 +1,8 @@
-import { useEffect, useState } from "react";
-import { Activity, ChevronRight, FolderKanban, GitBranch, LogOut, Plus } from "lucide-react";
-import { listProjects, type ProjectListItem } from "../api";
+import { Activity, ChevronRight, GitBranch, LogOut, Plus } from "lucide-react";
 import { useWorkspace } from "../context/WorkspaceContext";
+import type { WorkspaceView } from "../api";
 
 const VCS_LABELS: Record<string, string> = { github: "GitHub", gitlab: "GitLab", bitbucket: "Bitbucket" };
-// Every version-control workspace the platform supports — always shown, even with 0 projects.
-const PROVIDERS = ["github", "gitlab", "bitbucket"] as const;
 
 function VCSIcon({ vcs, className }: { vcs: string; className?: string }) {
   switch (vcs) {
@@ -33,30 +30,15 @@ function VCSIcon({ vcs, className }: { vcs: string; className?: string }) {
 }
 
 export function VcsWorkspaceView({
-  onSelect,
-  onAddProject,
+  onSelectWorkspace,
+  onCreate,
   isAdmin,
 }: {
-  onSelect: (vcs: string) => void;
-  onAddProject: () => void;
+  onSelectWorkspace: (ws: WorkspaceView) => void;
+  onCreate: () => void;
   isAdmin: boolean;
 }) {
-  const { user, logout } = useWorkspace();
-  const [projects, setProjects] = useState<ProjectListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    listProjects()
-      .then(setProjects)
-      .catch(() => setProjects([]))
-      .finally(() => setLoading(false));
-  }, []);
-
-  // Count real projects per version-control tool — that's the "workspace".
-  const counts = projects.reduce<Record<string, number>>((m, p) => {
-    if (p.vcs) m[p.vcs] = (m[p.vcs] ?? 0) + 1;
-    return m;
-  }, {});
+  const { user, logout, backendWorkspaces, workspacesLoading } = useWorkspace();
 
   return (
     <div className="h-screen overflow-y-auto bg-background text-foreground">
@@ -79,84 +61,81 @@ export function VcsWorkspaceView({
       </header>
 
       <main className="max-w-6xl mx-auto px-8 py-12">
-        <div className="mb-8">
-          <h1 className="text-4xl font-bold uppercase tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
-            Select a Workspace
-          </h1>
-          <p className="text-base text-muted-foreground mt-1">
-            Choose a version control workspace to see the projects tracked in it.
-          </p>
+        <div className="flex items-end justify-between gap-4 mb-8 flex-wrap">
+          <div>
+            <h1 className="text-4xl font-bold uppercase tracking-tight" style={{ fontFamily: "var(--font-display)" }}>
+              Your Workspaces
+            </h1>
+            <p className="text-base text-muted-foreground mt-1">
+              Open a workspace to see its projects, or create a new one.
+            </p>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={onCreate}
+              className="flex items-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold px-5 py-3 hover:opacity-90 transition-opacity"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              <Plus size={16} /> Create Workspace
+            </button>
+          )}
         </div>
 
-        {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
+        {workspacesLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-        {!loading && (
-          <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {PROVIDERS.map((vcs) => {
-                const count = counts[vcs] ?? 0;
-                return (
-                  <button
-                    key={vcs}
-                    onClick={() => onSelect(vcs)}
-                    className="group relative text-left border border-border bg-card hover:border-primary/50 transition-colors overflow-hidden"
-                  >
-                    <div className="h-1 w-full bg-primary" />
-                    <div className="p-5">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="h-9 w-9 bg-foreground flex items-center justify-center text-background">
-                          <VCSIcon vcs={vcs} className="h-4.5 w-4.5" />
-                        </div>
-                        <span className="text-xs font-medium px-2 py-0.5 border border-border text-muted-foreground">
-                          {VCS_LABELS[vcs]}
-                        </span>
-                      </div>
-                      <h3 className="text-[15px] font-bold truncate mb-3" style={{ fontFamily: "var(--font-display)" }}>
-                        {VCS_LABELS[vcs]}
-                      </h3>
-                      <div className="flex items-center gap-1 text-muted-foreground text-xs">
-                        <FolderKanban size={13} />
-                        <span>{count} project{count !== 1 ? "s" : ""}</span>
-                      </div>
-                      <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-muted-foreground group-hover:text-primary transition-colors">
-                        Open workspace
-                        <ChevronRight size={13} />
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-
-              {isAdmin && (
-                <button
-                  onClick={onAddProject}
-                  className="group relative text-left border-2 border-dashed border-border hover:border-primary transition-colors"
-                >
-                  <div className="p-5 flex flex-col h-full">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="h-9 w-9 border-2 border-dashed border-border group-hover:border-primary flex items-center justify-center transition-colors">
-                        <Plus size={16} className="text-muted-foreground group-hover:text-primary transition-colors" />
-                      </div>
-                    </div>
-                    <h3 className="text-[15px] font-bold text-muted-foreground group-hover:text-foreground mb-1 transition-colors" style={{ fontFamily: "var(--font-display)" }}>
-                      Add Project
-                    </h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Connect a repository and track a new project in a workspace.
-                    </p>
-                    <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-transparent group-hover:text-primary transition-colors">
-                      Get started
-                      <ChevronRight size={13} />
-                    </div>
-                  </div>
-                </button>
-              )}
+        {/* Empty state */}
+        {!workspacesLoading && backendWorkspaces.length === 0 && (
+          <div className="border border-dashed border-border p-16 text-center">
+            <div className="h-12 w-12 border-2 border-dashed border-border flex items-center justify-center mx-auto mb-4">
+              <Plus size={20} className="text-muted-foreground" />
             </div>
-
-            <p className="mt-8 text-sm text-muted-foreground">
-              {projects.length} project{projects.length !== 1 ? "s" : ""} tracked across your workspaces
+            <h3 className="text-lg font-bold mb-1" style={{ fontFamily: "var(--font-display)" }}>No workspaces yet</h3>
+            <p className="text-sm text-muted-foreground mb-5">
+              {isAdmin ? "Connect a version control provider to import repositories as projects." : "Ask an admin to create a workspace."}
             </p>
-          </>
+            {isAdmin && (
+              <button
+                onClick={onCreate}
+                className="inline-flex items-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
+                style={{ fontFamily: "var(--font-display)" }}
+              >
+                <Plus size={16} /> Create your first workspace
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Workspace cards */}
+        {!workspacesLoading && backendWorkspaces.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {backendWorkspaces.map((ws) => (
+              <button
+                key={ws.id}
+                onClick={() => onSelectWorkspace(ws)}
+                className="group relative text-left border border-border bg-card hover:border-primary/50 transition-colors overflow-hidden"
+              >
+                <div className="h-1 w-full bg-primary" />
+                <div className="p-5">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="h-9 w-9 bg-foreground flex items-center justify-center text-background">
+                      <VCSIcon vcs={ws.vcsProvider} className="h-4.5 w-4.5" />
+                    </div>
+                    <span className="text-xs font-medium px-2 py-0.5 border border-border text-muted-foreground">
+                      {VCS_LABELS[ws.vcsProvider] ?? ws.vcsProvider}
+                    </span>
+                  </div>
+                  <h3 className="text-[15px] font-bold truncate mb-1" style={{ fontFamily: "var(--font-display)" }}>
+                    {ws.name}
+                  </h3>
+                  <p className="text-xs text-muted-foreground truncate mb-3">@{ws.organization}</p>
+                  <div className="flex items-center gap-1 text-xs font-semibold text-muted-foreground group-hover:text-primary transition-colors">
+                    Open workspace
+                    <ChevronRight size={13} />
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
         )}
       </main>
     </div>

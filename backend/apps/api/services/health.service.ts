@@ -28,10 +28,17 @@ export async function getHealthStatus() {
       },
       semanticActionSearch: {
         status: env.isSemanticSearchConfigured ? 'configured' : 'lexical_fallback',
-        provider: 'siliconflow',
-        model: env.siliconFlowEmbeddingModel,
-        dimensions: env.siliconFlowEmbeddingDimensions,
+        provider: 'gemini',
+        model: env.geminiEmbeddingModel,
+        dimensions: env.geminiEmbeddingDimensions,
         embeddingVersion: env.actionEmbeddingVersion,
+      },
+      actionReranking: {
+        status: env.isActionRerankConfigured ? 'configured' : 'not_configured',
+        provider: 'pinecone',
+        model: env.pineconeRerankModel,
+        minScore: env.pineconeRerankMinScore,
+        candidateLimit: env.pineconeRerankCandidateLimit,
       },
     },
   };

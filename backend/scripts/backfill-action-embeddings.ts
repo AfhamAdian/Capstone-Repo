@@ -19,11 +19,11 @@ function positiveArg(name: string, fallback: number): number {
 async function main(): Promise<void> {
   if (
     !env.isSemanticSearchConfigured
-    || !env.siliconFlowEmbeddingModel
-    || env.siliconFlowEmbeddingDimensions <= 0
+    || !env.geminiEmbeddingModel
+    || env.geminiEmbeddingDimensions <= 0
   ) {
     throw new Error(
-      'Set SILICONFLOW_API_KEY (and optionally override the SiliconFlow endpoint/model/dimensions) first.',
+      'Set GEMINI_API_KEY (and optionally override the Gemini endpoint/model/dimensions) first.',
     );
   }
 
@@ -51,8 +51,8 @@ async function main(): Promise<void> {
       if (
         existing?.status === 'ready'
         && existing.content_hash === contentHash
-        && existing.model === env.siliconFlowEmbeddingModel
-        && existing.dimensions === env.siliconFlowEmbeddingDimensions
+        && existing.model === env.geminiEmbeddingModel
+        && existing.dimensions === env.geminiEmbeddingDimensions
       ) {
         skipped += 1;
         continue;
@@ -64,8 +64,8 @@ async function main(): Promise<void> {
       await upsertPendingActionEmbedding({
         actionId: action.id,
         embeddingVersion: env.actionEmbeddingVersion,
-        model: env.siliconFlowEmbeddingModel,
-        dimensions: env.siliconFlowEmbeddingDimensions,
+        model: env.geminiEmbeddingModel,
+        dimensions: env.geminiEmbeddingDimensions,
         contentHash,
       });
       await queue?.enqueue({ actionId: action.id, embeddingVersion: env.actionEmbeddingVersion });
@@ -90,8 +90,8 @@ async function main(): Promise<void> {
       skipped,
       queued: queue ? prepared : 0,
       embeddingVersion: env.actionEmbeddingVersion,
-      model: env.siliconFlowEmbeddingModel,
-      dimensions: env.siliconFlowEmbeddingDimensions,
+      model: env.geminiEmbeddingModel,
+      dimensions: env.geminiEmbeddingDimensions,
     }, null, 2));
   } finally {
     await queue?.close();
