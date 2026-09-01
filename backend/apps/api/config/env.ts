@@ -116,6 +116,9 @@ const surveyResponseDeadlineDays = boundedInteger(
 );
 const surveyMinAnonymousResponses = boundedInteger(process.env.SURVEY_MIN_ANONYMOUS_RESPONSES, 5, 3, 100);
 
+// Survey feature: minimum days between two survey emails to the same developer (any project)
+const surveyMinDaysBetweenSurveys = boundedInteger(process.env.SURVEY_MIN_DAYS_BETWEEN_SURVEYS, 15, 1, 60);
+
 // Survey feature: encrypted link tokens (AES-256-GCM key, base64url-encoded, 32 bytes decoded)
 const surveyTokenEncKey = process.env.SURVEY_TOKEN_ENC_KEY;
 
@@ -161,6 +164,7 @@ export const env = {
   surveyQuestionGenLeadDays,
   surveyResponseDeadlineDays,
   surveyMinAnonymousResponses,
+  surveyMinDaysBetweenSurveys,
   surveyTokenEncKey,
   manualSurveyMonthlyLimit,
 } as const;

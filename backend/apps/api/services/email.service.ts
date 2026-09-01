@@ -63,3 +63,25 @@ export async function sendProjectInviteEmail(
 
   log.info({ to }, 'project invite email sent');
 }
+
+export async function sendSurveyEmail(to: string, name: string, surveyUrl: string): Promise<void> {
+  if (!transporter) {
+    log.warn({ to, surveyUrl }, 'SMTP not configured — skipping send, logging survey link instead');
+    return;
+  }
+
+  await transporter.sendMail({
+    from: env.smtpFrom,
+    to,
+    subject: 'Your team pulse survey is open',
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2>Hi ${name},</h2>
+        <p>A short pulse survey is open for your project. Your response is anonymous.</p>
+        <p><a href="${surveyUrl}" style="display:inline-block; background:#111; color:#fff; padding:12px 20px; text-decoration:none; border-radius:6px;">Take the survey</a></p>
+      </div>
+    `,
+  });
+
+  log.info({ to }, 'survey email sent');
+}
