@@ -14,11 +14,13 @@ export type SurveyStatus =
 export type SurveySource = "manual" | "auto_pulse";
 
 export interface SurveyScores {
-  delivery: number;
-  codeQuality: number;
-  cicd: number;
+  security: number;
+  reliability: number;
+  maintainability: number;
+  cicdDeploymentHealth: number;
   teamHealth: number;
-  blockers: number;
+  engineeringProcess: number;
+  planningExecution: number;
 }
 
 export interface SurveyListItem {
@@ -43,12 +45,22 @@ export interface SurveyListItem {
   publicUrl: string | null;
 }
 
+export type HealthTrendLabel = "steady" | "gradual_increase" | "gradual_decrease" | "sharp_increase" | "sharp_decrease" | "unknown";
+
+export interface CategoryTrend {
+  delta: number | null;
+  label: HealthTrendLabel;
+}
+
+export type SurveyCategoryKey = "security" | "reliability" | "maintainability" | "cicdDeploymentHealth" | "teamHealth" | "engineeringProcess" | "planningExecution";
+
 export interface SurveyHealthContext {
   capturedAt: string;
   overallScore: number | null;
-  scores: Record<"delivery" | "codeQuality" | "cicd" | "teamHealth" | "blockers", number | null>;
-  trendDelta: number | null;
-  source: "project_health_score" | "unavailable";
+  scores: Record<SurveyCategoryKey, number | null>;
+  metricsSnapshotId: number | null;
+  source: "risk_score" | "unavailable";
+  trend?: Record<"overall" | SurveyCategoryKey, CategoryTrend> & { previousCapturedAt: string | null };
   incidents?: {
     snapshotId: number | null;
     snapshotTime: string | null;

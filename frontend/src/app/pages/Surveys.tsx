@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import {
-  ChevronLeft, ChevronRight, Search, X, ChevronDown, Send, Sparkles, Plus,
+  ChevronLeft, ChevronRight, Search, X, ChevronDown, Send, Sparkles, Plus, RefreshCw,
 } from "lucide-react";
 import {
   LineChart, Line, ResponsiveContainer, Tooltip as ReTooltip, XAxis, YAxis, CartesianGrid,
@@ -10,7 +10,7 @@ import { getSurveyQuota, type SurveyQuota } from "../api-survey";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
 import type { Project, Survey } from "../types";
 import {
-  fmtDate, hColor, SUBSCORE_LABELS, SURVEY_HISTORY_COLS, surveyResponseRate, surveyDeliveryChannels,
+  fmtDate, hColor, SURVEY_CATEGORY_LABELS, SURVEY_HISTORY_COLS, surveyResponseRate, surveyDeliveryChannels,
   surveyHasResults, surveyCanExpand, surveyRowStatus, triggerColor, projectTagStyle, SURVEY_STATUS_CONFIG,
 } from "../format";
 import { Ring } from "../components/ScoreVisuals";
@@ -196,7 +196,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
   );
 }
 
-export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;loadError?:string|null;loading?:boolean;}) {
+export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,loading}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;onRefresh?:()=>void;loadError?:string|null;loading?:boolean;}) {
   const ps=surveys.filter(s=>s.projectId===project.id);
   const completed=ps.filter(s=>surveyHasResults(s)&&(s.themes.length>0||Boolean(s.scores)||Boolean(s.aiInsight)));
   const {settings,update,customGuidance,audienceSize}=useProjectSurveySettings(project.id);
@@ -225,17 +225,19 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
     .slice(-6)
     .map(s=>({
       label:fmtDate(s.sentDate),
-      overall:Math.round(Object.values(s.scores!).reduce((a,b)=>a+b,0)/5),
-      delivery:s.scores!.delivery,
-      codeQuality:s.scores!.codeQuality,
-      cicd:s.scores!.cicd,
+      overall:Math.round(Object.values(s.scores!).reduce((a,b)=>a+b,0)/7),
+      security:s.scores!.security,
+      reliability:s.scores!.reliability,
+      maintainability:s.scores!.maintainability,
+      cicdDeploymentHealth:s.scores!.cicdDeploymentHealth,
       teamHealth:s.scores!.teamHealth,
-      blockers:s.scores!.blockers,
+      engineeringProcess:s.scores!.engineeringProcess,
+      planningExecution:s.scores!.planningExecution,
     })),[ps]);
   const upcomingAuto=ps.find(s=>s.source==="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
   const manualDraft=ps.find(s=>s.source!=="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&!s.questionsLocked);
   const reviewBanners=[manualDraft,upcomingAuto].filter((s,i,arr):s is Survey=>s!=null&&arr.findIndex(x=>x?.id===s.id)===i);
-  const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
+  const skeys=["security","reliability","maintainability","cicdDeploymentHealth","teamHealth","engineeringProcess","planningExecution"] as const;
   const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
   const quotaLimit=quota?quota.limit:2;
 
@@ -276,6 +278,11 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button onClick={()=>onRefresh?.()} disabled={loading} title="Refresh surveys"
+              className="flex items-center gap-2 border border-border px-3 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+              style={{fontFamily:"var(--font-display)"}}>
+              <RefreshCw size={14} className={loading?"animate-spin":""}/>
+            </button>
             <button onClick={()=>setShowGenerateDemo(true)}
               className="flex items-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors"
               style={{fontFamily:"var(--font-display)"}}>
@@ -326,14 +333,14 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
               </span>
               <span className="text-sm text-muted-foreground">{latest.responseCount} of {latest.targetCount} responded</span>
             </div>
-            <div className="grid grid-cols-6 gap-0">
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-0">
               <div className="flex flex-col items-center justify-center px-4 py-5 border-r border-border bg-muted/30">
                 <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Overall</div>
                 <span className="text-5xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{project.score}</span>
               </div>
               {skeys.map((k,i)=>(
-                <div key={k} className={`flex flex-col items-center justify-between px-2 py-4 ${i<4?"border-r border-border":""}`}>
-                  <div className="text-xs font-semibold text-muted-foreground text-center mb-2 leading-tight px-1">{SUBSCORE_LABELS[k]}</div>
+                <div key={k} className={`flex flex-col items-center justify-between px-2 py-4 ${i<skeys.length-1?"border-r border-border":""}`}>
+                  <div className="text-xs font-semibold text-muted-foreground text-center mb-2 leading-tight px-1">{SURVEY_CATEGORY_LABELS[k]}</div>
                   <Ring score={latest.scores![k]} size={52}/>
                 </div>
               ))}
@@ -355,11 +362,13 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
                   <YAxis domain={[0,100]} tick={{fill:"var(--foreground)",fontSize:11,fontFamily:"var(--font-mono)"}} tickLine={false} axisLine={false} width={32}/>
                   <ReTooltip contentStyle={{background:"var(--popover)",border:"1px solid var(--border)",fontSize:12}}/>
                   <Line type="monotone" dataKey="overall" name="Overall" stroke="var(--primary)" strokeWidth={2.5} dot={{r:3}}/>
-                  <Line type="monotone" dataKey="delivery" name="Delivery" stroke="#3b82f6" strokeWidth={1.5} dot={false}/>
-                  <Line type="monotone" dataKey="codeQuality" name="Code Quality" stroke="#10b981" strokeWidth={1.5} dot={false}/>
-                  <Line type="monotone" dataKey="cicd" name="CI/CD" stroke="#8b5cf6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="security" name="Security" stroke="#ef4444" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="reliability" name="Reliability" stroke="#3b82f6" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="maintainability" name="Maintainability" stroke="#10b981" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="cicdDeploymentHealth" name="CI/CD & Deployment" stroke="#8b5cf6" strokeWidth={1.5} dot={false}/>
                   <Line type="monotone" dataKey="teamHealth" name="Team Health" stroke="#f59e0b" strokeWidth={1.5} dot={false}/>
-                  <Line type="monotone" dataKey="blockers" name="Blockers" stroke="#ef4444" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="engineeringProcess" name="Engineering Process" stroke="#06b6d4" strokeWidth={1.5} dot={false}/>
+                  <Line type="monotone" dataKey="planningExecution" name="Planning & Execution" stroke="#f97316" strokeWidth={1.5} dot={false}/>
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -416,7 +425,7 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
                   <div className="flex items-center gap-3 mb-4 flex-wrap">
                     {skeys.map(k=>(
                       <div key={k} className="flex items-center gap-1.5">
-                        <span className="text-xs text-muted-foreground">{SUBSCORE_LABELS[k]}</span>
+                        <span className="text-xs text-muted-foreground">{SURVEY_CATEGORY_LABELS[k]}</span>
                         <span className="text-sm font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(completed[iIdx].scores![k])}}>{completed[iIdx].scores![k]}</span>
                       </div>
                     ))}

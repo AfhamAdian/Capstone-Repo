@@ -6,6 +6,7 @@ import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
 import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
+import { useProjectSurveys } from "./hooks/useProjectSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
 import { SurveyFlow } from "./components/SurveyFlow";
 import { TopBar } from "./components/TopBar";
@@ -307,8 +308,9 @@ export function ActionsLibraryRoute() {
 }
 
 export function SurveysRoute() {
-  const {project,surveys,refetchSurveys,surveysError,surveysLoading}=useProjectContext();
-  return <SurveysView project={project} surveys={surveys} onSurveySent={refetchSurveys} loadError={surveysError} loading={surveysLoading}/>;
+  const {project}=useProjectContext();
+  const {surveys,loading,error,refetch}=useProjectSurveys(project);
+  return <SurveysView project={project} surveys={surveys} onSurveySent={refetch} onRefresh={refetch} loadError={error} loading={loading}/>;
 }
 
 export function SettingsRoute() {

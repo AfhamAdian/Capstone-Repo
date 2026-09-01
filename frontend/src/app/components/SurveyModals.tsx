@@ -10,7 +10,7 @@ import {
   type SurveyHealthContext, type SurveyQuota, type QuestionScore, type GeneratedSurveyQuestion,
 } from "../api-survey";
 import type { Project, Survey } from "../types";
-import { fmtDate, hColor, scoreInt, SUBSCORE_LABELS } from "../format";
+import { fmtDate, hColor, scoreInt, SURVEY_CATEGORY_KEYS, SURVEY_CATEGORY_LABELS } from "../format";
 
 export function surveyIncidentLines(health: SurveyHealthContext): string[] {
   const incidents = health.incidents;
@@ -116,12 +116,11 @@ export function SurveyAskedQuestions({questions}:{questions?:GeneratedSurveyQues
 }
 
 export function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores"]>}) {
-  const keys = ["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
   return (
-    <div className="grid grid-cols-5 gap-2 mb-4">
-      {keys.map((k)=>(
+    <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 mb-4">
+      {SURVEY_CATEGORY_KEYS.map((k)=>(
         <div key={k} className="border border-border px-2 py-2 text-center">
-          <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SUBSCORE_LABELS[k]}</div>
+          <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SURVEY_CATEGORY_LABELS[k]}</div>
           <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scoreInt(scores[k])}</div>
         </div>
       ))}
@@ -164,7 +163,7 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
   const persist=async()=>{
     if(!canEdit) return;
     const payload=questions.filter(q=>q.text.trim()).map(q=>({
-      category:q.category||"delivery",questionText:q.text.trim(),questionType:q.questionType,
+      category:q.category||SURVEY_CATEGORY_KEYS[0],questionText:q.text.trim(),questionType:q.questionType,
     }));
     if(payload.length===0) return;
     await updateSurveyQuestions(surveyId,payload);
@@ -209,7 +208,7 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
               <div className="text-sm font-bold mb-1">AI health context</div>
               <p className="text-sm text-muted-foreground">
                 Captured {fmtDate(health.capturedAt)} · Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
-                {health.trendDelta==null?"":` · Trend ${health.trendDelta>0?"+":""}${health.trendDelta.toFixed(1)}`}
+                {health.trend?.overall?.delta==null?"":` · Trend ${health.trend.overall.delta>0?"+":""}${health.trend.overall.delta.toFixed(1)}`}
               </p>
               {surveyIncidentLines(health).length>0&&(
                 <ul className="mt-3 space-y-1 text-sm text-foreground">
@@ -224,10 +223,10 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
             {questions.map((question,index)=>(
               <div key={question.id} className="border border-border p-3">
                 <div className="flex gap-2 mb-2">
-                  <select aria-label={`Category for question ${index+1}`} disabled={!canEdit} value={question.category||"delivery"}
+                  <select aria-label={`Category for question ${index+1}`} disabled={!canEdit} value={question.category||SURVEY_CATEGORY_KEYS[0]}
                     onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,category:e.target.value}:q))}
                     className="bg-card border border-border px-2 py-1.5 text-sm">
-                    {["delivery","codeQuality","cicd","teamHealth","blockers"].map(category=><option key={category} value={category}>{category}</option>)}
+                    {SURVEY_CATEGORY_KEYS.map(category=><option key={category} value={category}>{SURVEY_CATEGORY_LABELS[category]}</option>)}
                   </select>
                   <select aria-label={`Type for question ${index+1}`} disabled={!canEdit} value={question.questionType}
                     onChange={e=>setQuestions(current=>current.map(q=>q.id===question.id?{...q,questionType:e.target.value as "text"|"scale"}:q))}
@@ -278,7 +277,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
   const [sentResult,setSentResult]=useState<{queued?:boolean;questionCount?:number;url?:string;expiresAt?:string;delivery?:{slackSent?:boolean;telegramSent?:boolean;discordSent?:boolean}}|null>(null);
 
   const questionPayload=()=>questions.filter(q=>q.text.trim()).map(q=>({
-    category:q.category||"delivery",
+    category:q.category||SURVEY_CATEGORY_KEYS[0],
     questionText:q.text.trim(),
     questionType:q.questionType,
   }));

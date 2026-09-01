@@ -11,6 +11,25 @@ export const SUBSCORE_LABELS: Record<string, string> = {
 };
 
 /**
+ * Survey scoring uses the risk engine's full 7-category rubric (no Code Quality
+ * merge - the AI scores security/reliability/maintainability independently from
+ * survey answers, unlike the dashboard's frontend-only display merge above).
+ */
+export const SURVEY_CATEGORY_KEYS = [
+  "security", "reliability", "maintainability", "cicdDeploymentHealth", "teamHealth", "engineeringProcess", "planningExecution",
+] as const;
+
+export const SURVEY_CATEGORY_LABELS: Record<string, string> = {
+  security: "Security",
+  reliability: "Reliability",
+  maintainability: "Maintainability",
+  cicdDeploymentHealth: "CI/CD & Deployment",
+  teamHealth: "Team Health",
+  engineeringProcess: "Engineering Process",
+  planningExecution: "Planning & Execution",
+};
+
+/**
  * "Code Quality" isn't a score the backend computes - it's a frontend-only display merge of
  * the 3 code-quality-adjacent scores from the 7-score health engine (Security, Reliability,
  * Maintainability), so the dashboard can show 5 categories instead of 7. Equal weights for now

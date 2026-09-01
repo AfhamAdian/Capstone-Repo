@@ -1,42 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  listGlobalSurveys,
+  listProjectSurveys,
   getSurveyDetail,
-  type GeneratedSurveyQuestion,
   type SurveyDetail,
-  type SurveyHealthContext,
-  type SurveySource,
-  type SurveyStatus,
 } from "../api-survey";
-
-/**
- * Mirrors App.tsx's local `Survey` interface structurally (App.tsx doesn't
- * export it, and TS is structurally typed, so this is assignable wherever a
- * `Survey[]` prop is expected without a shared import).
- */
-export interface FrontendSurvey {
-  id: string;
-  projectId: string;
-  status: SurveyStatus;
-  source: SurveySource;
-  trigger: string;
-  sentDate: string;
-  responseCount: number;
-  targetCount: number;
-  scores?: { security: number; reliability: number; maintainability: number; cicdDeploymentHealth: number; teamHealth: number; engineeringProcess: number; planningExecution: number };
-  themes: string[];
-  aiInsight: string;
-  rawResponses: { question: string; answers: string[] }[];
-  questions: GeneratedSurveyQuestion[];
-  reviewDeadlineAt: string | null;
-  scheduledSendAt: string | null;
-  closedAt: string | null;
-  questionsLocked: boolean;
-  healthContext: SurveyHealthContext | null;
-  analysisError: string | null;
-  delivery: SurveyDetail["delivery"];
-  publicUrl: string | null;
-}
+import type { FrontendSurvey } from "./useSurveys";
 
 interface ProjectIdentity {
   id: string;
@@ -44,27 +12,20 @@ interface ProjectIdentity {
 }
 
 /**
- * Fetches every survey across all real (backend-synced) projects and merges
- * in full detail (scores/themes/aiInsight/rawResponses) for completed ones,
- * so the existing survey UI - which expects a fully-populated array, same
- * shape the old SURVEYS mock provided - keeps working unchanged. Projects
- * without a backendProjectId (demo-only) are simply absent from this list;
- * the caller is expected to union in their local mock surveys separately.
+ * Same shape as useSurveys, but scoped to a single project via the
+ * project-level list endpoint instead of fetching every project's surveys
+ * and filtering client-side. Use this for the per-project Surveys page;
+ * useSurveys (global) is still what the portfolio-wide views need.
  */
-export function useSurveys(projects: ProjectIdentity[]) {
+export function useProjectSurveys(project: ProjectIdentity) {
   const [surveys, setSurveys] = useState<FrontendSurvey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const backedProjectIds = projects
-    .filter((p) => p.backendProjectId)
-    .map((p) => p.backendProjectId!)
-    .sort()
-    .join(",");
+  const backendProjectId = project.backendProjectId;
 
   const fetchSurveys = useCallback(async (opts?: { silent?: boolean }) => {
-    const backendToFrontend = new Map(projects.filter((p) => p.backendProjectId).map((p) => [p.backendProjectId!, p.id]));
-    if (backendToFrontend.size === 0) {
+    if (!backendProjectId) {
       setSurveys([]);
       setLoading(false);
       return;
@@ -73,26 +34,25 @@ export function useSurveys(projects: ProjectIdentity[]) {
     if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const items = await listGlobalSurveys();
-      const relevant = items.filter((s) => backendToFrontend.has(String(s.projectId)));
+      const items = await listProjectSurveys(backendProjectId);
 
       const detailById = new Map<number, SurveyDetail>();
       await Promise.all(
-        relevant.map(async (s) => {
-            try {
-              detailById.set(s.id, await getSurveyDetail(s.id));
-            } catch {
-              // Missing detail for one survey shouldn't break the whole list - it just renders without scores/insight.
-            }
-          }),
+        items.map(async (s) => {
+          try {
+            detailById.set(s.id, await getSurveyDetail(s.id));
+          } catch {
+            // Missing detail for one survey shouldn't break the whole list - it just renders without scores/insight.
+          }
+        }),
       );
 
       setSurveys(
-        relevant.map((s) => {
+        items.map((s) => {
           const detail = detailById.get(s.id);
           return {
             id: String(s.id),
-            projectId: backendToFrontend.get(String(s.projectId))!,
+            projectId: project.id,
             status: detail?.status ?? s.status,
             source: detail?.source ?? s.source ?? "manual",
             trigger: s.trigger,
@@ -121,16 +81,15 @@ export function useSurveys(projects: ProjectIdentity[]) {
       if (!opts?.silent) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backedProjectIds]);
+  }, [backendProjectId, project.id]);
 
   useEffect(() => {
     void fetchSurveys();
   }, [fetchSurveys]);
 
-  // "active" (a survey currently open collecting responses, up to 15 days) is deliberately
-  // excluded here - it's a long-lived normal state, not a short-lived background job to poll
-  // for. Only the genuinely transient states below get the fast poll; refresh active surveys
-  // manually via the Refresh button instead.
+  // Same rationale as useSurveys: "active" is long-lived (up to 15 days), not a
+  // short background job, so it's excluded from the fast poll - use the Refresh
+  // button for that. Only the genuinely transient states below auto-poll.
   const waitingForBackground = surveys.some((s) => {
     if (s.status === "closed" && !s.scores) return true;
     if (s.status === "draft" && s.questions.length === 0) return true;
