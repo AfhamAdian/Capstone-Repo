@@ -61,7 +61,7 @@ export interface Survey {
   sentDate: string;
   responseCount: number;
   targetCount: number;
-  scores?: { delivery: number; codeQuality: number; cicd: number; teamHealth: number; blockers: number };
+  scores?: { security: number; reliability: number; maintainability: number; cicdDeploymentHealth: number; teamHealth: number; engineeringProcess: number; planningExecution: number };
   themes: string[];
   aiInsight: string;
   rawResponses: { question: string; answers: string[] }[];
