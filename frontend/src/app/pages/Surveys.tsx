@@ -234,7 +234,7 @@ export function SurveysView({project,surveys,onSurveySent,loadError,loading}:{pr
     })),[ps]);
   const upcomingAuto=ps.find(s=>s.source==="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0);
   const manualDraft=ps.find(s=>s.source!=="auto_pulse"&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&!s.questionsLocked);
-  const reviewBanners=[manualDraft,upcomingAuto].filter((s,i,arr):s is Survey=>Boolean(s)&&arr.findIndex(x=>x?.id===s.id)===i);
+  const reviewBanners=[manualDraft,upcomingAuto].filter((s,i,arr):s is Survey=>s!=null&&arr.findIndex(x=>x?.id===s.id)===i);
   const skeys=["delivery","codeQuality","cicd","teamHealth","blockers"] as const;
   const quotaUsed=quota?quota.used:ps.filter(s=>{const d=new Date(s.sentDate);const now=new Date();return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();}).length;
   const quotaLimit=quota?quota.limit:2;

@@ -8,7 +8,10 @@
   },
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -68,9 +71,19 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "4.1.12",
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "4.7.0",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.5",
+    "globals": "^17.12.0",
     "tailwindcss": "4.1.12",
+    "typescript": "~5.7.2",
+    "typescript-eslint": "^8.69.0",
     "vite": "^6.4.3"
   },
   "peerDependencies": {
