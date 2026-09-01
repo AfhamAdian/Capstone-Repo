@@ -84,7 +84,6 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
           }
 
           if (tool === 'jira') {
-            toolLog.info(`integration details: ${JSON.stringify(integration.credentials)}`);
             if (!integration.credentials?.token) {
               throw new Error('Missing jira.credentials.token');
             }

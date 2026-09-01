@@ -8,6 +8,8 @@ import { CreateVcsConnectorInput, VcsConnectorOptions } from '../types.js';
 import { GitHubMetricsResponse } from '../github-metrics.types.js';
 import type { IConnector } from '@libs/sync/index.js';
 import { mapWithConcurrency } from '@libs/sync/map-with-concurrency.js';
+import { getGitHubClient } from '@libs/utils/github-octokit.js';
+import { logger } from '@libs/logger.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
@@ -19,6 +21,8 @@ const DEFAULT_GRAPHQL_THREADS_PAGE_SIZE = 100;
 const DEFAULT_GRAPHQL_LABELS_PAGE_SIZE = 20;
 const DEFAULT_LONG_LIVED_BRANCH_THRESHOLD_DAYS = 30;
 const COMMIT_DETAIL_CONCURRENCY = 4;
+const BRANCH_COMPARE_CONCURRENCY = 4;
+const DEPENDENCY_LOOKUP_CONCURRENCY = 8;
 
 const STALE_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT = 50;
@@ -136,6 +140,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	private project: { owner: string; repo: string };
 	private octokit: Octokit;
 	private options: Required<VcsConnectorOptions>;
+	private readonly log = logger.child({ component: 'github-connector' });
 
 	constructor(input: CreateVcsConnectorInput) {
 		if (!input.credentials.token) {
@@ -150,7 +155,9 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 			owner: input.project.owner,
 			repo: input.project.repo,
 		};
-		this.octokit = new Octokit({ auth: input.credentials.token });
+		// Shared per-token client: throttling/retry live in the plugin layer, and the
+		// github-actions connector reuses the same instance so both stay inside one budget.
+		this.octokit = getGitHubClient(input.credentials.token);
 		this.options = {
 			commitWindowDays: input.options?.commitWindowDays ?? DEFAULT_COMMIT_WINDOW_DAYS,
 			graphqlPageSize: input.options?.graphqlPageSize ?? DEFAULT_GRAPHQL_PAGE_SIZE,
@@ -162,21 +169,10 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		};
 	}
 
-	private async checkRateLimit(): Promise<void> {
-		try {
-			const { data } = await this.octokit.rateLimit.get();
-			const remaining = data.resources.core.remaining;
-			const resetAt = new Date(data.resources.core.reset * 1000);
-
-			if (remaining < RATE_LIMIT_THRESHOLD) {
-				const waitMs = Math.max(resetAt.getTime() - Date.now(), RATE_LIMIT_PAUSE_MS);
-				await new Promise((resolve) => setTimeout(resolve, waitMs));
-			}
-		} catch {
-			// ignore rate-limit check failures
-		}
-	}
-
+	// REST rate limiting is handled by the throttling plugin on the shared client
+	// (see libs/utils/github-octokit.ts). GraphQL has its own points budget that
+	// the plugin doesn't track, but each query already returns `rateLimit` in its own
+	// payload - so this check costs no extra request.
 	private async checkGraphQLRateLimit(rateLimit: { remaining: number; resetAt: string }): Promise<void> {
 		if (!rateLimit) return;
 		if (rateLimit.remaining < RATE_LIMIT_THRESHOLD) {
@@ -292,7 +288,6 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 	}
 
 private async fetchCommits(daysBack: number): Promise<any[]> {
-		await this.checkRateLimit();
 		const since = this.getTimeframe(daysBack);
 		const commits = await this.octokit.paginate(this.octokit.repos.listCommits, {
 			owner: this.project.owner,
@@ -335,7 +330,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	}
 
 	private async getDefaultBranch(): Promise<string> {
-		await this.checkRateLimit();
 		const { data } = await this.octokit.repos.get({
 			owner: this.project.owner,
 			repo: this.project.repo,
@@ -448,22 +442,42 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 		return Math.round((avgMs / (24 * 60 * 60 * 1000)) * 10) / 10;
 	}
 
+	// A dropped commit silently deflates codeChurn and codeOwnershipConcentration, so the
+	// drop count is logged rather than swallowed — without it a run that lost half its
+	// commits to rate limiting is indistinguishable from a genuinely quiet month.
 	private async fetchCommitDetails(commits: any[]): Promise<any[]> {
 		const details = await mapWithConcurrency(commits, COMMIT_DETAIL_CONCURRENCY, async (commit) => {
 			try {
-				await this.checkRateLimit();
 				const { data } = await this.octokit.repos.getCommit({
 					owner: this.project.owner,
 					repo: this.project.repo,
 					ref: commit.sha,
 				});
 				return data;
-			} catch {
+			} catch (error) {
+				this.log.warn(
+					{ err: error, sha: commit.sha, repo: `${this.project.owner}/${this.project.repo}` },
+					'failed to fetch commit detail; commit excluded from churn and ownership metrics',
+				);
 				return null;
 			}
 		});
 
-		return details.filter((commit): commit is NonNullable<typeof commit> => commit !== null);
+		const resolved = details.filter((commit): commit is NonNullable<typeof commit> => commit !== null);
+
+		if (resolved.length < commits.length) {
+			this.log.warn(
+				{
+					repo: `${this.project.owner}/${this.project.repo}`,
+					requested: commits.length,
+					resolved: resolved.length,
+					dropped: commits.length - resolved.length,
+				},
+				'commit details incomplete; churn and ownership metrics under-report',
+			);
+		}
+
+		return resolved;
 	}
 
 	private calculateCodeChurn(
@@ -601,23 +615,33 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	}
 
 	// ahead_by === 0 means every commit on the branch is already reachable from
-	// defaultBranch — i.e. it's fully merged, just not deleted yet. On failure
-	// (e.g. branch/network issue) we don't assume it's merged, so it still counts.
-	private async isBranchMerged(branchName: string, defaultBranch: string): Promise<boolean> {
+	// defaultBranch — i.e. it's fully merged, just not deleted yet. null means the
+	// comparison couldn't be made at all (branch gone, rate limited, network), which is
+	// deliberately distinct from "not merged" — see calculateLongLivedBranches.
+	private async isBranchMerged(branchName: string, defaultBranch: string): Promise<boolean | null> {
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.compareCommitsWithBasehead({
 				owner: this.project.owner,
 				repo: this.project.repo,
 				basehead: `${defaultBranch}...${branchName}`,
 			});
 			return data.ahead_by === 0;
-		} catch {
-			return false;
+		} catch (error) {
+			this.log.warn(
+				{ err: error, branch: branchName, repo: `${this.project.owner}/${this.project.repo}` },
+				'failed to compare branch against default; merge state unknown',
+			);
+			return null;
 		}
 	}
 
-	private async calculateLongLivedBranches(branches: any[], defaultBranch: string): Promise<number> {
+	// An undeterminable branch still counts as long-lived (the pre-existing conservative
+	// choice), but if *every* comparison failed we return null rather than reporting each
+	// stale branch as long-lived — that case is total upstream failure, not a measurement.
+	private async calculateLongLivedBranches(
+		branches: any[],
+		defaultBranch: string,
+	): Promise<number | null> {
 		const threshold = Date.now() - this.options.longLivedBranchThresholdDays * 24 * 60 * 60 * 1000;
 
 		const staleCandidates = branches.filter((branch: any) => {
@@ -626,11 +650,36 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 			return new Date(branch.lastCommitDate).getTime() < threshold;
 		});
 
-		const mergedFlags = await Promise.all(
-			staleCandidates.map((branch: any) => this.isBranchMerged(branch.name, defaultBranch)),
+		if (staleCandidates.length === 0) return 0;
+
+		const mergedFlags = await mapWithConcurrency(
+			staleCandidates,
+			BRANCH_COMPARE_CONCURRENCY,
+			(branch: any) => this.isBranchMerged(branch.name, defaultBranch),
 		);
 
-		return staleCandidates.filter((_, i) => !mergedFlags[i]).length;
+		const unknownCount = mergedFlags.filter((flag) => flag === null).length;
+
+		if (unknownCount === staleCandidates.length) {
+			this.log.warn(
+				{ repo: `${this.project.owner}/${this.project.repo}`, staleCandidates: staleCandidates.length },
+				'every branch comparison failed; reporting longLivedBranchesCount as not measurable',
+			);
+			return null;
+		}
+
+		if (unknownCount > 0) {
+			this.log.warn(
+				{
+					repo: `${this.project.owner}/${this.project.repo}`,
+					unknownCount,
+					staleCandidates: staleCandidates.length,
+				},
+				'some branch comparisons failed; longLivedBranchesCount may over-report',
+			);
+		}
+
+		return staleCandidates.filter((_, i) => mergedFlags[i] !== true).length;
 	}
 
 	private calculateBusFactor(commits: any[]): number {
@@ -768,9 +817,17 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	private static readonly VENDOR_DIR_PATTERN =
 		/(^|\/)(node_modules|vendor|\.venv|venv|dist|build|target|\.gradle)\//;
 
-	private async findManifestPaths(filenames: string[], treeSha: string): Promise<string[]> {
+	// One recursive tree fetch serves every ecosystem. This used to be called once per
+	// manifest type, producing four byte-identical (and potentially multi-megabyte)
+	// responses for the same tree_sha, since the filename filter is applied client-side.
+	private async findManifestPathsByGroup(
+		filenameGroups: Record<string, string[]>,
+		treeSha: string,
+	): Promise<Record<string, string[]>> {
+		const empty = Object.fromEntries(Object.keys(filenameGroups).map((group) => [group, []]));
+
+		let entries: any[];
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.git.getTree({
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -778,18 +835,44 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 				recursive: 'true',
 			});
 
-			return (data.tree ?? [])
-				.filter(
-					(entry: any) =>
-						entry.type === 'blob' &&
-						typeof entry.path === 'string' &&
-						filenames.includes(entry.path.split('/').pop()) &&
-						!GitHubConnector.VENDOR_DIR_PATTERN.test(entry.path),
-				)
-				.map((entry: any) => entry.path as string);
-		} catch {
-			return [];
+			if (data.truncated) {
+				this.log.warn(
+					{ repo: `${this.project.owner}/${this.project.repo}`, treeSha },
+					'git tree truncated by the API; some manifests may be missed',
+				);
+			}
+
+			entries = data.tree ?? [];
+		} catch (error) {
+			// One failed fetch now degrades every ecosystem at once rather than one at a
+			// time, so it's logged instead of being swallowed per-group as it used to be.
+			this.log.warn(
+				{ err: error, repo: `${this.project.owner}/${this.project.repo}`, treeSha },
+				'failed to fetch git tree; dependency lag not measurable',
+			);
+			return empty;
 		}
+
+		const blobs = entries.filter(
+			(entry: any) =>
+				entry.type === 'blob' &&
+				typeof entry.path === 'string' &&
+				!GitHubConnector.VENDOR_DIR_PATTERN.test(entry.path),
+		);
+
+		const byGroup: Record<string, string[]> = { ...empty };
+		for (const entry of blobs) {
+			const basename = (entry.path as string).split('/').pop();
+			if (!basename) continue;
+
+			for (const [group, filenames] of Object.entries(filenameGroups)) {
+				if (filenames.includes(basename)) {
+					byGroup[group]!.push(entry.path as string);
+				}
+			}
+		}
+
+		return byGroup;
 	}
 
 	private async fetchPackageManifestAt(path: string): Promise<{
@@ -797,7 +880,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 		devDependencies: Record<string, string>;
 	} | null> {
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -849,7 +931,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	// entries, and options/comments/blank lines are skipped, same policy as npm's extractPinnedVersion
 	private async fetchRequirementsTxtAt(path: string): Promise<Record<string, string> | null> {
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -901,7 +982,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	// ("${spring.version}") and dependencies with no explicit <version> (inherited from a parent/BOM)
 	private async fetchPomXmlAt(path: string): Promise<JavaDependency[] | null> {
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -940,7 +1020,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 
 	private async fetchGradleDependenciesAt(path: string): Promise<JavaDependency[] | null> {
 		try {
-			await this.checkRateLimit();
 			const { data } = await this.octokit.repos.getContent({
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -997,49 +1076,66 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 	}
 
 	private async calculateDependencyUpdateLag(defaultBranch: string): Promise<number | null> {
-		const [npmManifestPaths, pythonManifestPaths, pomManifestPaths, gradleManifestPaths] =
-			await Promise.all([
-				this.findManifestPaths(['package.json'], defaultBranch),
-				this.findManifestPaths(['requirements.txt'], defaultBranch),
-				this.findManifestPaths(['pom.xml'], defaultBranch),
-				this.findManifestPaths(['build.gradle', 'build.gradle.kts'], defaultBranch),
-			]);
+		const manifestPaths = await this.findManifestPathsByGroup(
+			{
+				npm: ['package.json'],
+				python: ['requirements.txt'],
+				pom: ['pom.xml'],
+				gradle: ['build.gradle', 'build.gradle.kts'],
+			},
+			defaultBranch,
+		);
 
 		const [npmManifests, pythonManifests, pomManifests, gradleManifests] = await Promise.all([
-			Promise.all(npmManifestPaths.map((path) => this.fetchPackageManifestAt(path))),
-			Promise.all(pythonManifestPaths.map((path) => this.fetchRequirementsTxtAt(path))),
-			Promise.all(pomManifestPaths.map((path) => this.fetchPomXmlAt(path))),
-			Promise.all(gradleManifestPaths.map((path) => this.fetchGradleDependenciesAt(path))),
+			mapWithConcurrency(manifestPaths.npm!, DEPENDENCY_LOOKUP_CONCURRENCY, (path) =>
+				this.fetchPackageManifestAt(path),
+			),
+			mapWithConcurrency(manifestPaths.python!, DEPENDENCY_LOOKUP_CONCURRENCY, (path) =>
+				this.fetchRequirementsTxtAt(path),
+			),
+			mapWithConcurrency(manifestPaths.pom!, DEPENDENCY_LOOKUP_CONCURRENCY, (path) =>
+				this.fetchPomXmlAt(path),
+			),
+			mapWithConcurrency(manifestPaths.gradle!, DEPENDENCY_LOOKUP_CONCURRENCY, (path) =>
+				this.fetchGradleDependenciesAt(path),
+			),
 		]);
 
-		const lagDaysPromises: Promise<number | null>[] = [];
+		// Each occurrence is kept as its own lookup rather than deduped by package name:
+		// the average is deliberately weighted by how many manifests pin a dependency, and
+		// collapsing duplicates here would change the metric's value, not just its cost.
+		const lookups: Array<() => Promise<number | null>> = [];
 
 		for (const manifest of npmManifests) {
 			if (!manifest) continue;
 			const allNpmDeps = { ...manifest.dependencies, ...manifest.devDependencies };
 			for (const [name, versionSpec] of Object.entries(allNpmDeps)) {
 				const version = this.extractPinnedVersion(versionSpec);
-				if (version) lagDaysPromises.push(this.fetchDependencyLagDays(name, version));
+				if (version) lookups.push(() => this.fetchDependencyLagDays(name, version));
 			}
 		}
 
 		for (const manifest of pythonManifests) {
 			if (!manifest) continue;
 			for (const [name, version] of Object.entries(manifest)) {
-				lagDaysPromises.push(this.fetchPyPiDependencyLagDays(name, version));
+				lookups.push(() => this.fetchPyPiDependencyLagDays(name, version));
 			}
 		}
 
 		for (const deps of [...pomManifests, ...gradleManifests]) {
 			if (!deps) continue;
 			for (const { groupId, artifactId, version } of deps) {
-				lagDaysPromises.push(this.fetchMavenDependencyLagDays(groupId, artifactId, version));
+				lookups.push(() => this.fetchMavenDependencyLagDays(groupId, artifactId, version));
 			}
 		}
 
-		if (lagDaysPromises.length === 0) return null;
+		if (lookups.length === 0) return null;
 
-		const lagDaysResults = await Promise.all(lagDaysPromises);
+		const lagDaysResults = await mapWithConcurrency(
+			lookups,
+			DEPENDENCY_LOOKUP_CONCURRENCY,
+			(lookup) => lookup(),
+		);
 		const lagDaysList = lagDaysResults.filter((d): d is number => d !== null);
 		if (lagDaysList.length === 0) return null;
 
@@ -1133,7 +1229,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 
 	private async fetchDependabotAlertCount(): Promise<number | null> {
 		try {
-			await this.checkRateLimit();
 			const alerts = await this.octokit.paginate(this.octokit.dependabot.listAlertsForRepo, {
 				owner: this.project.owner,
 				repo: this.project.repo,
@@ -1149,7 +1244,6 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 
 	private async fetchSecretScanningAlertCount(): Promise<number | null> {
 		try {
-			await this.checkRateLimit();
 			const alerts = await this.octokit.paginate(this.octokit.secretScanning.listAlertsForRepo, {
 				owner: this.project.owner,
 				repo: this.project.repo,

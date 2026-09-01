@@ -28,9 +28,10 @@ for Actions workflow runs (no `run_attempt`, no run-level duration, no `pull_req
 so this connector is REST-only for GitHub data, plus two new local capabilities (zip reading, XML
 parsing) that didn't exist anywhere else in this codebase before this connector needed them.
 
-**Rate limiting**: same `checkRateLimit()` pattern as the VCS connector — one
-`octokit.rateLimit.get()` check before REST calls, pausing if remaining calls drop below a
-threshold (100).
+**Rate limiting**: same as the VCS connector — the shared throttled client in
+`libs/utils/github-octokit.ts` (`@octokit/plugin-throttling` + `@octokit/plugin-retry`),
+cached per token so both connectors stay inside one budget when they run concurrently. The old
+per-call `octokit.rateLimit.get()` preflight is gone.
 
 ---
 

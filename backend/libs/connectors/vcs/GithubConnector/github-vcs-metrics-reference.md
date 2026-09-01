@@ -29,11 +29,19 @@ it's already efficient as a flat list (all PRs, commits, closed issues) or where
 clean GraphQL equivalent (per-commit file-level diff stats, security alerts, reading raw file
 content, listing the full repo tree).
 
-**Rate limiting:** REST calls call `checkRateLimit()` first, which does one `octokit.rateLimit.get()`
-check and pauses if remaining calls drop below a threshold (100). GraphQL calls don't need a
-separate check — every GraphQL query in this connector requests `rateLimit { remaining, resetAt }`
-inline, so the same pause logic runs off data already returned by the query itself, at no extra
-network cost.
+**Rate limiting:** REST calls go through the shared throttled client in
+`libs/utils/github-octokit.ts`, which uses `@octokit/plugin-throttling` and
+`@octokit/plugin-retry` to read the `x-ratelimit-*` headers off responses already in flight and
+back off on both primary and secondary limits. Clients are cached per token so this connector and
+the github-actions connector — which run concurrently — share one budget rather than each keeping
+its own view of it. GraphQL has a separate points budget the plugin doesn't track, but every
+GraphQL query here requests `rateLimit { remaining, resetAt }` inline, so `checkGraphQLRateLimit()`
+runs off data the query already returned, at no extra network cost.
+
+This replaced a per-call `checkRateLimit()` preflight that spent a full `octokit.rateLimit.get()`
+round trip before each REST call it guarded — roughly half of this connector's REST traffic — and
+which didn't actually throttle, since concurrent callers each observed "remaining < 100"
+independently and each slept in parallel.
 
 **No local git clone.** Everything is fetched via the GitHub API or public package registries.
 

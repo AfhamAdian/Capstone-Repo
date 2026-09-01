@@ -28,6 +28,8 @@
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
+    "@octokit/plugin-retry": "^6.1.0",
+    "@octokit/plugin-throttling": "^8.2.0",
     "@octokit/rest": "^20.1.0",
     "@slack/web-api": "^8.0.0",
     "@supabase/supabase-js": "^2.101.1",
