@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One in-flight run per branch; superseded runs are cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Decide which projects a change touches so one-sided PRs skip the other job.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+
+  backend:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: backend/.nvmrc
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:actions
+
+  frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+        env:
+          # Baked at build time. Real deployments override this in Netlify.
+          VITE_API_BASE_URL: /api/v1
+
+  # Single required check for branch protection. Passes when every job that ran
+  # passed; a skipped backend/frontend job (one-sided PR) is not a failure.
+  ci-ok:
+    if: ${{ always() }}
+    needs: [changes, backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs
+        run: |
+          echo "changes:  ${{ needs.changes.result }}"
+          echo "backend:  ${{ needs.backend.result }}"
+          echo "frontend: ${{ needs.frontend.result }}"
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "::error::changes job did not succeed"
+            exit 1
+          fi
+          for r in "${{ needs.backend.result }}" "${{ needs.frontend.result }}"; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::a required job did not pass ($r)"
+              exit 1
+            fi
+          done
+          echo "All required checks passed."

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type MouseEvent } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { X, ChevronDown, Check, Search, Send, AlertCircle, Star, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project, Action } from "../types";

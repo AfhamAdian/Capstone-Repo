@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type MouseEvent } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Activity, ChevronRight, ChevronDown, Search, Star, Bell, Building2, Moon, Sun, LogOut,
 } from "lucide-react";
