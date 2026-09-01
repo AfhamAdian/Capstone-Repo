@@ -69,8 +69,8 @@ export interface GitHubMetricsResponse {
     prReviewCoveragePercent: number;
     // Self-Merged MR Rate (%)
     selfMergedPrRatePercent: number;
-    // Long-Lived Branch Count
-    longLivedBranchesCount: number;
+    // Long-Lived Branch Count — null when no branch comparison could be made at all
+    longLivedBranchesCount: number | null;
     // Active Contributors Per Week
     activeContributionsPerWeek: number;
     // Dependency Update Lag (Average Days)

@@ -2,15 +2,18 @@ import { Octokit } from '@octokit/rest';
 import AdmZip from 'adm-zip';
 import { XMLParser } from 'fast-xml-parser';
 import type { IConnector, ConnectorOutput } from '@libs/sync/index.js';
+import { mapWithConcurrency } from '@libs/sync/map-with-concurrency.js';
+import { getGitHubClient } from '@libs/utils/github-octokit.js';
+import { logger } from '@libs/logger.js';
 import type {
   GithubActionsMetricsResponse,
   GithubActionsConnectorOptions,
   CreateGithubActionsConnectorInput,
 } from './github-actions.types.js';
 
-const RATE_LIMIT_THRESHOLD = 100;
-const RATE_LIMIT_PAUSE_MS = 60_000;
 const PAGE_SIZE = 100;
+const DEPLOYMENT_STATUS_CONCURRENCY = 4;
+const DEPLOYMENT_LEAD_TIME_CONCURRENCY = 4;
 const DEFAULT_DEPLOYMENT_ENVIRONMENT = 'production';
 const DEFAULT_DEPLOYMENT_WINDOW_DAYS = 30;
 const DEFAULT_MTTR_LOOKBACK_DAYS = 90;
@@ -32,6 +35,7 @@ export class GithubActionsConnector implements IConnector {
   // Populated lazily; the same sampled runs are examined by both Test Failure Rate and
   // Flaky Test Count, so this avoids downloading/parsing each run's JUnit artifact twice.
   private junitCasesCache = new Map<number, Promise<JUnitTestCase[]>>();
+  private readonly log = logger.child({ component: 'github-actions-connector' });
 
   constructor(input: CreateGithubActionsConnectorInput) {
     if (!input.credentials.token) {
@@ -46,7 +50,9 @@ export class GithubActionsConnector implements IConnector {
       owner: input.project.owner,
       repo: input.project.repo,
     };
-    this.octokit = new Octokit({ auth: input.credentials.token });
+    // Shared per-token client — the vcs connector runs concurrently against the same
+    // budget, so both go through one throttled instance (libs/utils/github-octokit.ts).
+    this.octokit = getGitHubClient(input.credentials.token);
     this.options = {
       deploymentEnvironment: input.options?.deploymentEnvironment ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
       deploymentWindowDays: input.options?.deploymentWindowDays ?? DEFAULT_DEPLOYMENT_WINDOW_DAYS,
@@ -56,21 +62,6 @@ export class GithubActionsConnector implements IConnector {
       coverageArtifactPattern:
         input.options?.coverageArtifactPattern ?? DEFAULT_COVERAGE_ARTIFACT_PATTERN,
     };
-  }
-
-  private async checkRateLimit(): Promise<void> {
-    try {
-      const { data } = await this.octokit.rateLimit.get();
-      const remaining = data.resources.core.remaining;
-      const resetAt = new Date(data.resources.core.reset * 1000);
-
-      if (remaining < RATE_LIMIT_THRESHOLD) {
-        const waitMs = Math.max(resetAt.getTime() - Date.now(), RATE_LIMIT_PAUSE_MS);
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-      }
-    } catch {
-      // ignore rate-limit check failures
-    }
   }
 
   async getData(): Promise<ConnectorOutput> {
@@ -131,7 +122,6 @@ export class GithubActionsConnector implements IConnector {
   }
 
   private async fetchWorkflowRuns(): Promise<any[]> {
-    await this.checkRateLimit();
     const runs = await this.octokit.paginate(this.octokit.actions.listWorkflowRunsForRepo, {
       owner: this.project.owner,
       repo: this.project.repo,
@@ -141,7 +131,6 @@ export class GithubActionsConnector implements IConnector {
   }
 
   private async fetchDeployments(): Promise<any[]> {
-    await this.checkRateLimit();
     const deployments = await this.octokit.paginate(this.octokit.repos.listDeployments, {
       owner: this.project.owner,
       repo: this.project.repo,
@@ -152,7 +141,6 @@ export class GithubActionsConnector implements IConnector {
   }
 
   private async getDefaultBranch(): Promise<string> {
-    await this.checkRateLimit();
     const { data } = await this.octokit.repos.get({
       owner: this.project.owner,
       repo: this.project.repo,
@@ -161,7 +149,6 @@ export class GithubActionsConnector implements IConnector {
   }
 
   private async fetchMergedPullRequests(defaultBranch: string): Promise<any[]> {
-    await this.checkRateLimit();
     const prs = await this.octokit.paginate(this.octokit.pulls.list, {
       owner: this.project.owner,
       repo: this.project.repo,
@@ -361,7 +348,6 @@ export class GithubActionsConnector implements IConnector {
   }
 
   private async fetchWorkflowRunArtifacts(runId: number): Promise<any[]> {
-    await this.checkRateLimit();
     return this.octokit.paginate(this.octokit.actions.listWorkflowRunArtifacts, {
       owner: this.project.owner,
       repo: this.project.repo,
@@ -372,7 +358,6 @@ export class GithubActionsConnector implements IConnector {
 
   private async downloadArtifactZip(artifactId: number): Promise<Buffer | null> {
     try {
-      await this.checkRateLimit();
       const response = await this.octokit.actions.downloadArtifact({
         owner: this.project.owner,
         repo: this.project.repo,
@@ -544,31 +529,41 @@ export class GithubActionsConnector implements IConnector {
     const windowStart = Date.now() - this.options.deploymentWindowDays * 24 * 60 * 60 * 1000;
     const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
 
-    let failureCount = 0;
-    let evaluatedCount = 0;
+    // Deployments are independent of one another, so their status fetches run
+    // concurrently rather than one at a time — bounded, so a repo with a lot of
+    // recent deployments doesn't burst into the secondary rate limit.
+    const outcomes = await mapWithConcurrency(
+      recentDeployments,
+      DEPLOYMENT_STATUS_CONCURRENCY,
+      async (d: any): Promise<'failed' | 'succeeded' | 'unevaluated'> => {
+        try {
+          const statuses = await this.octokit.paginate(this.octokit.repos.listDeploymentStatuses, {
+            owner: this.project.owner,
+            repo: this.project.repo,
+            deployment_id: d.id,
+          });
 
-    for (const d of recentDeployments) {
-      try {
-        await this.checkRateLimit();
-        const statuses = await this.octokit.paginate(this.octokit.repos.listDeploymentStatuses, {
-          owner: this.project.owner,
-          repo: this.project.repo,
-          deployment_id: d.id,
-        });
+          if (statuses.length === 0) return 'unevaluated';
 
-        if (statuses.length > 0) {
           const latestStatus = statuses.reduce((latest, s) =>
             new Date(s.created_at).getTime() > new Date(latest.created_at).getTime() ? s : latest,
           );
-          if (latestStatus.state === 'failure' || latestStatus.state === 'error') {
-            failureCount++;
-          }
-          evaluatedCount++;
+
+          return latestStatus.state === 'failure' || latestStatus.state === 'error'
+            ? 'failed'
+            : 'succeeded';
+        } catch (error) {
+          this.log.warn(
+            { err: error, deploymentId: d.id, repo: `${this.project.owner}/${this.project.repo}` },
+            'failed to fetch deployment statuses; deployment excluded from failure rate',
+          );
+          return 'unevaluated';
         }
-      } catch {
-        // ignore
-      }
-    }
+      },
+    );
+
+    const failureCount = outcomes.filter((outcome) => outcome === 'failed').length;
+    const evaluatedCount = outcomes.filter((outcome) => outcome !== 'unevaluated').length;
 
     // No deployment in the window could actually be evaluated — nothing to measure,
     // not a clean pass ("0% failure").
@@ -622,17 +617,23 @@ export class GithubActionsConnector implements IConnector {
 
   // ancestorSha's history contains descendantSha's changes iff descendantSha is not
   // "behind" ancestorSha at all — i.e. everything in ancestorSha is already reachable from descendantSha.
-  private async isCommitAncestor(ancestorSha: string, descendantSha: string): Promise<boolean> {
+  // null means the comparison couldn't be made, which is distinct from a definite "no":
+  // treating a failed comparison as "no" would silently attribute the deployment to an
+  // older PR and report a plausible-but-wrong lead time.
+  private async isCommitAncestor(ancestorSha: string, descendantSha: string): Promise<boolean | null> {
     try {
-      await this.checkRateLimit();
       const { data } = await this.octokit.repos.compareCommitsWithBasehead({
         owner: this.project.owner,
         repo: this.project.repo,
         basehead: `${ancestorSha}...${descendantSha}`,
       });
       return data.behind_by === 0;
-    } catch {
-      return false;
+    } catch (error) {
+      this.log.warn(
+        { err: error, ancestorSha, descendantSha, repo: `${this.project.owner}/${this.project.repo}` },
+        'failed to compare commits; deployment lead time not attributable',
+      );
+      return null;
     }
   }
 
@@ -646,24 +647,37 @@ export class GithubActionsConnector implements IConnector {
     const recentDeployments = deployments.filter(d => new Date(d.created_at).getTime() > windowStart);
     if (recentDeployments.length === 0 || mergedPrs.length === 0) return null;
 
-    const sortedPrs = [...mergedPrs].sort(
-      (a, b) => new Date(b.merged_at).getTime() - new Date(a.merged_at).getTime(),
+    // merged_at is parsed once here rather than on every deployment's candidate scan.
+    const sortedPrs = mergedPrs
+      .map((pr: any) => ({ pr, mergedAtMs: new Date(pr.merged_at).getTime() }))
+      .sort((a, b) => b.mergedAtMs - a.mergedAtMs);
+
+    // Deployments are independent, so they're evaluated concurrently. The candidate walk
+    // inside each one stays strictly ordered and sequential — it depends on taking the
+    // most recent merge that is an ancestor, then stopping.
+    const leadTimes = await mapWithConcurrency(
+      recentDeployments,
+      DEPLOYMENT_LEAD_TIME_CONCURRENCY,
+      async (deployment: any): Promise<number | null> => {
+        const deployedAt = new Date(deployment.created_at).getTime();
+        const candidates = sortedPrs
+          .filter((entry) => entry.mergedAtMs <= deployedAt)
+          .slice(0, MAX_MERGE_CANDIDATES_PER_DEPLOYMENT);
+
+        for (const { pr, mergedAtMs } of candidates) {
+          const includesMerge = await this.isCommitAncestor(pr.merge_commit_sha, deployment.sha);
+
+          // Unknown, not "no" — walking on to an older candidate here would attribute the
+          // deployment to the wrong PR, so this deployment is left unmeasured instead.
+          if (includesMerge === null) return null;
+          if (includesMerge) return deployedAt - mergedAtMs;
+        }
+
+        return null;
+      },
     );
 
-    const leadTimesMs: number[] = [];
-
-    for (const deployment of recentDeployments) {
-      const deployedAt = new Date(deployment.created_at).getTime();
-      const candidates = sortedPrs.filter(pr => new Date(pr.merged_at).getTime() <= deployedAt);
-
-      for (const pr of candidates.slice(0, MAX_MERGE_CANDIDATES_PER_DEPLOYMENT)) {
-        const includesMerge = await this.isCommitAncestor(pr.merge_commit_sha, deployment.sha);
-        if (includesMerge) {
-          leadTimesMs.push(deployedAt - new Date(pr.merged_at).getTime());
-          break;
-        }
-      }
-    }
+    const leadTimesMs = leadTimes.filter((ms): ms is number => ms !== null);
 
     if (leadTimesMs.length === 0) return null;
 

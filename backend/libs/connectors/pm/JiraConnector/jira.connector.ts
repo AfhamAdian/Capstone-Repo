@@ -765,15 +765,52 @@ export class JiraConnector implements IPmConnector, IConnector {
     };
   }
 
+  // created/updated are parsed once per issue instead of twice per membership test.
+  // calculateCarryoverSprintsSurvived alone used to re-parse the whole issue list once
+  // per (incomplete issue x sprint) pair, which on a busy project ran into millions of
+  // Date allocations on the worker's only thread.
+  private issueTimesCache = new WeakMap<JiraIssue, { created: number; updated: number }>();
+
+  private getIssueTimes(issue: JiraIssue): { created: number; updated: number } {
+    const cached = this.issueTimesCache.get(issue);
+    if (cached) return cached;
+
+    const times = {
+      created: new Date(issue.fields.created).getTime(),
+      updated: new Date(issue.fields.updated).getTime(),
+    };
+    this.issueTimesCache.set(issue, times);
+    return times;
+  }
+
+  // Keyed on the sprint AND the array identity: calculateLeadTimeMetrics passes a
+  // filtered `closedIssues` array while every other caller passes the full set, so a
+  // cache keyed on sprint id alone would hand the lead-time path the wrong population.
+  private sprintMembershipCache = new WeakMap<JiraIssue[], Map<number, JiraIssue[]>>();
+
   private getIssuesInSprint(sprint: JiraSprint, issues: JiraIssue[]): JiraIssue[] {
+    let bySprintId = this.sprintMembershipCache.get(issues);
+    if (!bySprintId) {
+      bySprintId = new Map<number, JiraIssue[]>();
+      this.sprintMembershipCache.set(issues, bySprintId);
+    }
+
+    const cached = bySprintId.get(sprint.id);
+    if (cached) return cached;
+
+    const members = this.computeIssuesInSprint(sprint, issues);
+    bySprintId.set(sprint.id, members);
+    return members;
+  }
+
+  private computeIssuesInSprint(sprint: JiraSprint, issues: JiraIssue[]): JiraIssue[] {
     if (!sprint.startDate || !sprint.endDate) return [];
 
     const sprintStart = new Date(sprint.startDate).getTime();
     const sprintEnd = new Date(sprint.endDate).getTime();
 
     return issues.filter((issue) => {
-      const created = new Date(issue.fields.created).getTime();
-      const updated = new Date(issue.fields.updated).getTime();
+      const { created, updated } = this.getIssueTimes(issue);
 
       // Issue was created before sprint ended and updated during or after sprint
       return created <= sprintEnd && updated >= sprintStart;

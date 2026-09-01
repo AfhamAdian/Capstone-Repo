@@ -199,7 +199,7 @@ async function main() {
     prReviewCoveragePercent: vcs.prReviewCoveragePercent,
     selfMergedPrRatePercent: vcs.selfMergedPrRatePercent,
     commitMessageQualityPercent,
-    longLivedBranchesCount: vcs.longLivedBranchesCount,
+    longLivedBranchesCount: vcs.longLivedBranchesCount ?? undefined,
     avgPipelineRunsPerPr: cicd.avgPipelineRunsPerPr ?? undefined,
     issueCycleTimeDays,
     leadTimeAvgDays: jira.leadTime.avgDays ?? undefined,

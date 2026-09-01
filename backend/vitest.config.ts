@@ -14,6 +14,17 @@ export default defineConfig({
       'tests/embeddings.test.ts',
       'tests/pinecone-reranker.test.ts',
     ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      // Report every source file, not just ones a test happened to import -
+      // that's what makes untested modules (risk-engines, connectors, ...)
+      // show up as 0% instead of being silently omitted from the total.
+      all: true,
+      include: ['apps/**/*.ts', 'libs/**/*.ts'],
+      exclude: ['**/*.test.ts', '**/*.d.ts'],
+    },
   },
   resolve: {
     alias: {
