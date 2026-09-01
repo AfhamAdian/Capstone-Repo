@@ -64,7 +64,7 @@ const pineconeRerankCandidateLimit = Math.min(100, positiveInteger(process.env.P
 const pineconeRerankTimeoutMs = positiveInteger(process.env.PINECONE_RERANK_TIMEOUT_MS, 10_000);
 
 // Frontend origin allowed to send credentialed (cookie) requests
-const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
+const frontendOrigin = process.env.FRONTEND_URL ?? 'http://localhost:5173';
 
 // Connector credentials (GitHub/Jira/SonarQube) live per-project in projecttoolintegration.config, not in env.
 
