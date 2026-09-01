@@ -31,7 +31,7 @@ export class GithubActionsConnector implements IConnector {
   private options: Required<GithubActionsConnectorOptions>;
   // Populated lazily; the same sampled runs are examined by both Test Failure Rate and
   // Flaky Test Count, so this avoids downloading/parsing each run's JUnit artifact twice.
-  private junitCasesCache = new Map<number, JUnitTestCase[]>();
+  private junitCasesCache = new Map<number, Promise<JUnitTestCase[]>>();
 
   constructor(input: CreateGithubActionsConnectorInput) {
     if (!input.credentials.token) {
@@ -86,14 +86,20 @@ export class GithubActionsConnector implements IConnector {
 
     const pipelineSuccessRatePercent = this.calcPipelineSuccessRate(workflowRuns, defaultBranch);
     const avgPipelineDurationMinutes = this.calcPipelineDuration(workflowRuns, defaultBranch);
-    const flakyTestCount = await this.calcFlakyTests(workflowRuns);
+    // These two metrics read the same JUnit artifacts. The promise cache below
+    // lets them run concurrently while downloading each run's reports only once.
+    const [flakyTestCount, testFailureRatePercent] = await Promise.all([
+      this.calcFlakyTests(workflowRuns),
+      this.calcTestFailureRate(workflowRuns),
+    ]);
     const testCoveragePercent = await this.calcTestCoverageRate(workflowRuns);
-    const testFailureRatePercent = await this.calcTestFailureRate(workflowRuns);
     const avgPipelineRunsPerPr = this.calcRunsPerPr(workflowRuns);
     const deploymentsPerWeek = this.calcDeploymentFrequency(deployments);
-    const deploymentFailureRatePercent = await this.calcDeploymentFailureRate(deployments);
+    const [deploymentFailureRatePercent, timeToProdHours] = await Promise.all([
+      this.calcDeploymentFailureRate(deployments),
+      this.calcTimeToProd(deployments, mergedPrs),
+    ]);
     const mttrHours = this.calcMttr(workflowRuns, defaultBranch);
-    const timeToProdHours = await this.calcTimeToProd(deployments, mergedPrs);
 
     const metrics: GithubActionsMetricsResponse = {
       generatedAt: now.toISOString(),
@@ -455,15 +461,27 @@ export class GithubActionsConnector implements IConnector {
     const cached = this.junitCasesCache.get(runId);
     if (cached) return cached;
 
-    const entries = await this.fetchArtifactEntries(runId, namePattern);
-    const cases: JUnitTestCase[] = [];
-    for (const entry of entries) {
-      if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
-      cases.push(...this.parseJUnitTestCases(entry.content));
-    }
+    const pending = (async () => {
+      const entries = await this.fetchArtifactEntries(runId, namePattern);
+      const cases: JUnitTestCase[] = [];
+      for (const entry of entries) {
+        if (!entry.entryName.toLowerCase().endsWith('.xml')) continue;
+        cases.push(...this.parseJUnitTestCases(entry.content));
+      }
+      return cases;
+    })();
 
-    this.junitCasesCache.set(runId, cases);
-    return cases;
+    this.junitCasesCache.set(runId, pending);
+
+    try {
+      return await pending;
+    } catch (error) {
+      // Allow a later metric to retry a transient failed artifact request.
+      if (this.junitCasesCache.get(runId) === pending) {
+        this.junitCasesCache.delete(runId);
+      }
+      throw error;
+    }
   }
 
   private async calcTestFailureRate(runs: any[]): Promise<number | null> {

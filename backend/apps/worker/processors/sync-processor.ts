@@ -5,14 +5,13 @@
 
 import type { SyncJobData } from '@libs/queue/index.js';
 import type { ConnectorOutput, SupportedTool } from '@libs/sync/index.js';
-import { createConnector } from '@libs/sync/index.js';
+import { createConnector, mapWithConcurrency } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
 import { persistConnectorMetrics } from '../../api/database/metrics.js';
 import { calculateAndSaveRiskScores } from '../../api/services/risk-calculation.service.js';
 import { blendAndSaveProjectHealthScore } from '../../api/services/health-score-blend.service.js';
 import { evaluateSurveyTrigger } from '../../api/services/survey-trigger.service.js';
 import { logger } from '@libs/logger.js';
-import { mapWithConcurrency } from '../utils/map-with-concurrency.js';
 
 const TOOL_FETCH_CONCURRENCY = 4;
 

@@ -7,6 +7,7 @@ import { IVcsConnector, VcsConnectorOutput } from '../connector.interface.js';
 import { CreateVcsConnectorInput, VcsConnectorOptions } from '../types.js';
 import { GitHubMetricsResponse } from '../github-metrics.types.js';
 import type { IConnector } from '@libs/sync/index.js';
+import { mapWithConcurrency } from '@libs/sync/map-with-concurrency.js';
 
 const RATE_LIMIT_THRESHOLD = 100;
 const RATE_LIMIT_PAUSE_MS = 60_000;
@@ -17,6 +18,7 @@ const DEFAULT_GRAPHQL_REVIEWS_PAGE_SIZE = 50;
 const DEFAULT_GRAPHQL_THREADS_PAGE_SIZE = 100;
 const DEFAULT_GRAPHQL_LABELS_PAGE_SIZE = 20;
 const DEFAULT_LONG_LIVED_BRANCH_THRESHOLD_DAYS = 30;
+const COMMIT_DETAIL_CONCURRENCY = 4;
 
 const STALE_THRESHOLD_MS = 14 * 24 * 60 * 60 * 1000;
 const BUG_VS_FEATURE_COVERAGE_THRESHOLD_PERCENT = 50;
@@ -205,7 +207,8 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const issueCycleTimeAvgDays = this.calculateIssueCycleTime(issues);
 		const issueReopenRatePercent = this.calculateIssueReopenRate(graphqlIssues);
 		const bugVsFeatureRatio = this.calculateBugVsFeatureRatio(graphqlIssues);
-		const codeChurn = await this.calculateCodeChurn(commits);
+		const commitDetails = await this.fetchCommitDetails(commits);
+		const codeChurn = this.calculateCodeChurn(commitDetails);
 		const prReviewCoverage = this.calculatePrReviewCoverage(reviewPrs);
 		const reviewIterationCountAvg = this.calculateReviewIterationCount(reviewPrs);
 		const selfMergedPrRate = this.calculateSelfMergedPrRate(reviewPrs);
@@ -221,9 +224,7 @@ export class GitHubConnector implements IVcsConnector<GitHubMetricsResponse>, IC
 		const staleIssuesCount = this.calculateStaleIssuesCount(graphqlIssues);
 		const longLivedBranches = await this.calculateLongLivedBranches(branches, defaultBranch);
 		const busFactor = this.calculateBusFactor(commits);
-		const codeOwnershipConcentration = await this.calculateCodeOwnershipConcentration(
-			commits,
-		);
+		const codeOwnershipConcentration = this.calculateCodeOwnershipConcentration(commitDetails);
 		const activeContributionsPerWeek = this.calculateActiveContributionsPerWeek(
 			commits,
 			reviewPrs,
@@ -447,31 +448,38 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 		return Math.round((avgMs / (24 * 60 * 60 * 1000)) * 10) / 10;
 	}
 
-	private async calculateCodeChurn(
-		commits: any[],
-	): Promise<{ filesModifiedGte10Times: number; filesModifiedByGte3People: number }> {
-		const fileStats: Map<string, { count: number; authors: Set<string> }> = new Map();
-
-		for (const commit of commits) {
+	private async fetchCommitDetails(commits: any[]): Promise<any[]> {
+		const details = await mapWithConcurrency(commits, COMMIT_DETAIL_CONCURRENCY, async (commit) => {
 			try {
 				await this.checkRateLimit();
-				const { data: fullCommit } = await this.octokit.repos.getCommit({
+				const { data } = await this.octokit.repos.getCommit({
 					owner: this.project.owner,
 					repo: this.project.repo,
 					ref: commit.sha,
 				});
-
-				const author = fullCommit.commit.author?.name || 'unknown';
-				for (const file of fullCommit.files || []) {
-					if (!fileStats.has(file.filename)) {
-						fileStats.set(file.filename, { count: 0, authors: new Set() });
-					}
-					const stats = fileStats.get(file.filename)!;
-					stats.count += 1;
-					stats.authors.add(author);
-				}
+				return data;
 			} catch {
-				// Skip on error
+				return null;
+			}
+		});
+
+		return details.filter((commit): commit is NonNullable<typeof commit> => commit !== null);
+	}
+
+	private calculateCodeChurn(
+		commitDetails: any[],
+	): { filesModifiedGte10Times: number; filesModifiedByGte3People: number } {
+		const fileStats: Map<string, { count: number; authors: Set<string> }> = new Map();
+
+		for (const fullCommit of commitDetails) {
+			const author = fullCommit.commit.author?.name || 'unknown';
+			for (const file of fullCommit.files || []) {
+				if (!fileStats.has(file.filename)) {
+					fileStats.set(file.filename, { count: 0, authors: new Set() });
+				}
+				const stats = fileStats.get(file.filename)!;
+				stats.count += 1;
+				stats.authors.add(author);
 			}
 		}
 
@@ -647,33 +655,22 @@ private async fetchCommits(daysBack: number): Promise<any[]> {
 		return sortedAuthors.length;
 	}
 
-	private async calculateCodeOwnershipConcentration(
-		commits: any[],
-	): Promise<{ directories: Array<{ path: string; topContributorPercent: number; isFlagged: boolean }> }> {
+	private calculateCodeOwnershipConcentration(
+		commitDetails: any[],
+	): { directories: Array<{ path: string; topContributorPercent: number; isFlagged: boolean }> } {
 		const dirStats: Map<string, Map<string, number>> = new Map();
 
-		for (const commit of commits) {
-			try {
-				await this.checkRateLimit();
-				const { data: fullCommit } = await this.octokit.repos.getCommit({
-					owner: this.project.owner,
-					repo: this.project.repo,
-					ref: commit.sha,
-				});
+		for (const fullCommit of commitDetails) {
+			const author = fullCommit.commit.author?.name || 'unknown';
+			for (const file of fullCommit.files || []) {
+				const slashIndex = file.filename.indexOf('/');
+				const dir = slashIndex === -1 ? 'root' : file.filename.slice(0, slashIndex);
 
-				const author = fullCommit.commit.author?.name || 'unknown';
-				for (const file of fullCommit.files || []) {
-					const slashIndex = file.filename.indexOf('/');
-					const dir = slashIndex === -1 ? 'root' : file.filename.slice(0, slashIndex);
-
-					if (!dirStats.has(dir)) {
-						dirStats.set(dir, new Map());
-					}
-					const authors = dirStats.get(dir)!;
-					authors.set(author, (authors.get(author) || 0) + 1);
+				if (!dirStats.has(dir)) {
+					dirStats.set(dir, new Map());
 				}
-			} catch {
-				// Skip on error
+				const authors = dirStats.get(dir)!;
+				authors.set(author, (authors.get(author) || 0) + 1);
 			}
 		}
 
