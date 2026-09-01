@@ -8,3 +8,4 @@ node_modules/
 # Claude Code local files
 .claude/
 CLAUDE.md
+future-work.md
