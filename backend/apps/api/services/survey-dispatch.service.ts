@@ -51,8 +51,7 @@ export interface DispatchSurveyResult {
 }
 
 export function buildSurveyUrl(token: string): string {
-  const base = process.env.SURVEY_FORM_BASE_URL ?? 'http://localhost:5173/survey';
-  return `${base.replace(/\/$/, '')}/${token}`;
+  return `${env.surveyFormBaseUrl}/${token}`;
 }
 
 export function publicSurveyUrlFor(survey: {

@@ -217,7 +217,9 @@ export const SURVEY_STATUS_CONFIG: Record<SurveyStatus, { c: string; l: string }
   failed:{c:"text-red-500",l:"Failed"},
 };
 
-export const SURVEY_HISTORY_COLS = "110px 120px minmax(0,1fr) 120px 88px 56px minmax(220px,max-content)";
+// Keep data and row actions in stable tracks. The table shell supplies horizontal
+// scrolling below this width instead of letting Grid collapse labels into each other.
+export const SURVEY_HISTORY_COLS = "110px 112px minmax(100px,1fr) 104px 88px 48px minmax(210px,max-content)";
 
 export const surveyResponseRate = (survey: Pick<Survey, "responseCount" | "targetCount">) =>
   survey.targetCount > 0 ? Math.min(100, Math.round((survey.responseCount / survey.targetCount) * 100)) : 0;

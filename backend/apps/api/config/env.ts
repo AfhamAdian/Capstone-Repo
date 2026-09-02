@@ -16,6 +16,10 @@ function isValidHttpUrl(value: string): boolean {
   }
 }
 
+function isLoopbackHttpUrl(value: string): boolean {
+  return /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/i.test(value);
+}
+
 const hasAnySupabaseValue = Boolean(supabaseUrl || supabaseServiceRoleKey);
 const hasBothSupabaseValues = Boolean(supabaseUrl && supabaseServiceRoleKey);
 const hasValidSupabaseUrl = supabaseUrl ? isValidHttpUrl(supabaseUrl) : false;
@@ -68,11 +72,23 @@ const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
 
 // Connector credentials (GitHub/Jira/SonarQube) live per-project in projecttoolintegration.config, not in env.
 
-// Email (Gmail SMTP via Nodemailer) + frontend base URL used to build password-reset links
+// Email (Gmail SMTP via Nodemailer) + frontend URLs used in public links.
 const smtpUser = process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASS;
 const smtpFrom = process.env.SMTP_FROM ?? smtpUser;
-const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+const defaultFrontendUrl = nodeEnv === 'production'
+  ? 'https://capstone-repo.vercel.app'
+  : 'http://localhost:5173';
+const configuredFrontendUrl = process.env.FRONTEND_URL?.replace(/\/+$/, '');
+const frontendUrl = nodeEnv === 'production' && configuredFrontendUrl && isLoopbackHttpUrl(configuredFrontendUrl)
+  ? defaultFrontendUrl
+  : configuredFrontendUrl ?? defaultFrontendUrl;
+const configuredSurveyFormBaseUrl = process.env.SURVEY_FORM_BASE_URL?.replace(/\/+$/, '');
+const surveyFormBaseUrl = nodeEnv === 'production'
+  && configuredSurveyFormBaseUrl
+  && isLoopbackHttpUrl(configuredSurveyFormBaseUrl)
+    ? `${frontendUrl}/survey`
+    : configuredSurveyFormBaseUrl ?? `${frontendUrl}/survey`;
 
 // Survey feature: AI question generation/analysis (Gemini)
 const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -153,6 +169,7 @@ export const env = {
   smtpPass,
   smtpFrom,
   frontendUrl,
+  surveyFormBaseUrl,
   geminiApiKey,
   geminiModel,
   slackBotToken,

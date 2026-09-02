@@ -82,8 +82,9 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
           </div>
         </div>
 
-        <div className="border border-border bg-card">
-          <div className="grid px-5 py-3 border-b border-border bg-muted"
+        <div className="border border-border bg-card overflow-x-auto">
+          <div className="min-w-[860px]">
+          <div className="grid gap-3 px-5 py-3 border-b border-border bg-muted"
             style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
             {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
               <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
@@ -99,7 +100,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
             return (
               <div key={s.id} className="border-b border-border last:border-b-0">
                 <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
-                  className={`w-full grid px-5 py-4 transition-colors text-left items-center gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                  className={`w-full grid gap-3 px-5 py-4 transition-colors text-left items-center ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                   style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
                   <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
@@ -190,6 +191,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
             );
           })}
           {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No surveys match your filter.</div>}
+          </div>
         </div>
       </div>
     </div>
@@ -257,13 +259,13 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
   },[ps,surveySearch,surveySort]);
   return (
     <div className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-4xl mx-auto px-8 py-8 space-y-7">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-7">
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
             <h2 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>Surveys</h2>
-            <div className="flex items-center gap-3 mt-1.5">
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
               {/* Quota - org-wide monthly cap, read-only (server-configured) */}
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground border border-border bg-card px-3 py-1.5">
                 <span className="font-medium text-foreground">Quota:</span>
@@ -277,19 +279,19 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
               </button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
             <button onClick={()=>onRefresh?.()} disabled={loading} title="Refresh surveys"
               className="flex items-center gap-2 border border-border px-3 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
               style={{fontFamily:"var(--font-display)"}}>
               <RefreshCw size={14} className={loading?"animate-spin":""}/>
             </button>
             <button onClick={()=>setShowGenerateDemo(true)}
-              className="flex items-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors whitespace-nowrap"
               style={{fontFamily:"var(--font-display)"}}>
               <Sparkles size={14}/> Test generate
             </button>
             <button onClick={()=>setShowSend(true)}
-              className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-5 py-2.5 hover:opacity-90 transition-opacity whitespace-nowrap"
               style={{fontFamily:"var(--font-display)"}}>
               <Send size={14}/> Send Survey Now
             </button>
@@ -508,11 +510,11 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
             <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>
               Survey History <span className="text-muted-foreground font-normal text-sm">({filteredPs.length})</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 bg-card border border-border px-3 py-2">
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex flex-1 sm:flex-none items-center gap-2 bg-card border border-border px-3 py-2 min-w-0">
                 <Search size={13} className="text-muted-foreground"/>
                 <input value={surveySearch} onChange={e=>setSurveySearch(e.target.value)} placeholder="Search…"
-                  className="bg-transparent text-sm outline-none w-36 placeholder:text-muted-foreground"/>
+                  className="bg-transparent text-sm outline-none min-w-0 w-full sm:w-36 placeholder:text-muted-foreground"/>
                 {surveySearch&&<button onClick={()=>setSurveySearch("")} className="text-muted-foreground hover:text-foreground"><X size={12}/></button>}
               </div>
               <div className="flex border border-border">
@@ -528,9 +530,10 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
           </div>
 
           {/* Table */}
-          <div className="border border-border bg-card">
+          <div className="border border-border bg-card overflow-x-auto">
+            <div className="min-w-[860px]">
             {/* Header */}
-            <div className="grid items-center border-b border-border bg-muted px-4 py-2.5"
+            <div className="grid gap-3 items-center border-b border-border bg-muted px-4 py-2.5"
               style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
               {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
                 <div key={h} className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{h}</div>
@@ -548,7 +551,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                 <div key={s.id} className="border-b border-border last:border-b-0">
                   {/* Row */}
                   <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
-                    className={`w-full grid items-center px-4 py-3.5 transition-colors text-left gap-2 ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
+                    className={`w-full grid gap-3 items-center px-4 py-3.5 transition-colors text-left ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                     style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
                     {/* Project */}
@@ -667,6 +670,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                 </div>
               );
             })}
+            </div>
           </div>
         </div>
       </div>
