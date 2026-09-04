@@ -8,6 +8,7 @@ import { createAction, deferActionReview, deleteAction, listActionEffectivenessR
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveys } from "./hooks/useProjectSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
+import { useTheme } from "./hooks/useTheme";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
 import { ProjectPageSkeleton } from "./components/ProjectPageSkeleton";
@@ -58,7 +59,7 @@ export function AppLayout() {
   const navigate=useNavigate();
   const location=useLocation();
   const {workspaceId:urlWorkspaceId,projectId}=useParams();
-  const [dark,setDark]=useState(false);
+  const {dark,toggle:toggleTheme}=useTheme();
   const [logOpen,setLogOpen]=useState(false);
   const [editingAction,setEditingAction]=useState<Action|null>(null);
   const [actions,setActions]=useState<Action[]>([]);
@@ -94,7 +95,6 @@ export function AppLayout() {
     });
   },[projects]);
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
-  useEffect(()=>{document.documentElement.classList.toggle("dark",dark);},[dark]);
   const {surveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
   const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
     setProjects(prev=>prev.map(p=>{
@@ -167,8 +167,8 @@ export function AppLayout() {
     content = (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center max-w-md">
-          <AlertTriangle size={28} className="mx-auto text-amber-500 mb-3"/>
-          <div className="text-lg font-bold mb-1" style={{fontFamily:"var(--font-display)"}}>Couldn’t load projects</div>
+          <AlertTriangle size={28} className="mx-auto text-attention mb-3"/>
+          <h1 className="text-lg font-semibold mb-1">Projects didn’t load</h1>
           <p className="text-sm text-muted-foreground mb-4">{projectsError}</p>
           <button onClick={()=>void refetchHealth()} className="bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold">Try again</button>
         </div>
@@ -191,8 +191,8 @@ export function AppLayout() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
-      <TopBar dark={dark} onToggle={()=>setDark(!dark)} projects={projects} activeId={projectId??null} onSelect={id=>navigate(paths.project(id))} onHome={()=>navigate(portfolioPath)}
+    <div className="flex flex-col bg-background text-foreground overflow-hidden" style={{height:"100dvh"}}>
+      <TopBar dark={dark} onToggle={toggleTheme} projects={projects} activeId={projectId??null} onSelect={id=>navigate(paths.project(id))} onHome={()=>navigate(portfolioPath)}
         pendingCount={unratedOwnerCount} onRatingOpen={()=>setRatingOpen(true)} onManageWorkspaces={()=>navigate(paths.workspaces)}/>
       {!projectId&&(/^\/workspaces\/\d+\/?$/.test(location.pathname)||location.pathname==="/")&&user&&reviewQueue&&<WeeklyReviewBanner queue={reviewQueue} userId={user.id} onReview={()=>setRatingOpen(true)}/>}
       <div className="flex-1 flex min-h-0">{content}</div>
@@ -270,7 +270,7 @@ export function ProjectShell() {
   if(!active) return <Navigate to={ctx.portfolioPath} replace/>;
   const pendingReviewCount=[...(ctx.reviewQueue?.fromLastWeek??[]),...(ctx.reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,active)).length;
   return (
-    <div className="flex flex-1 min-h-0">
+    <div className="flex flex-col lg:flex-row flex-1 min-h-0">
       <Sidebar project={active} onLogAction={ctx.onLogAction} pendingReviewCount={pendingReviewCount} onRatingOpen={ctx.onRatingOpen}/>
       <Outlet context={{...ctx,project:active}}/>
     </div>

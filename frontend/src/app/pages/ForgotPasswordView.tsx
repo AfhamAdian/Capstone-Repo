@@ -33,13 +33,13 @@ export function ForgotPasswordView({ onBackToLogin }: { onBackToLogin: () => voi
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-background text-foreground">
+    <div className="min-h-dvh flex items-center justify-center bg-background text-foreground py-10">
       <div className="w-full max-w-sm px-6">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-10 h-10 bg-primary flex items-center justify-center">
             <Activity size={20} className="text-primary-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-widest uppercase" style={{ fontFamily: "var(--font-display)" }}>
+          <span className="text-xl font-bold tracking-[0.18em] uppercase" style={{ fontFamily: "var(--font-display)" }}>
             Pulse
           </span>
           <p className="text-sm text-muted-foreground text-center">
@@ -49,14 +49,14 @@ export function ForgotPasswordView({ onBackToLogin }: { onBackToLogin: () => voi
 
         {sent ? (
           <div className="flex flex-col items-center gap-4 text-center">
-            <CheckCircle size={40} className="text-primary" />
+            <CheckCircle size={40} className="text-link" />
             <p className="text-sm text-muted-foreground">
               If an account exists for that email, a reset link has been sent. It expires in 1 hour.
             </p>
             <button
               type="button"
               onClick={onBackToLogin}
-              className="text-primary font-semibold hover:underline text-sm"
+              className="text-link font-semibold hover:underline text-sm"
             >
               Back to sign in
             </button>
@@ -77,12 +77,12 @@ export function ForgotPasswordView({ onBackToLogin }: { onBackToLogin: () => voi
                     setEmail(e.target.value);
                     if (errors.email) setErrors({ ...errors, email: "" });
                   }}
-                  className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-                    errors.email ? "border-red-500" : "border-border"
+                  className={`w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+                    errors.email ? "border-destructive/40" : "border-border"
                   }`}
                 />
                 {errors.email && (
-                  <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+                  <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
                     <AlertCircle size={13} />
                     {errors.email}
                   </p>
@@ -90,7 +90,7 @@ export function ForgotPasswordView({ onBackToLogin }: { onBackToLogin: () => voi
               </div>
 
               {errors.form && (
-                <p className="text-sm text-red-500 flex items-center gap-1">
+                <p className="text-sm text-destructive flex items-center gap-1">
                   <AlertCircle size={13} />
                   {errors.form}
                 </p>
@@ -99,7 +99,7 @@ export function ForgotPasswordView({ onBackToLogin }: { onBackToLogin: () => voi
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ fontFamily: "var(--font-display)" }}
               >
                 {isLoading ? "Sending…" : "Send Reset Link"}

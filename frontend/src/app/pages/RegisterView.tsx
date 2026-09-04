@@ -113,13 +113,13 @@ export function RegisterView({
   };
 
   const inputClass = (field: string) =>
-    `w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-      errors[field] ? "border-red-500" : "border-border"
+    `w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+      errors[field] ? "border-destructive/40" : "border-border"
     }`;
 
   const fieldError = (field: string) =>
     errors[field] ? (
-      <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+      <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
         <AlertCircle size={13} />
         {errors[field]}
       </p>
@@ -129,13 +129,13 @@ export function RegisterView({
   const labelStyle = { fontFamily: "var(--font-display)" };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background text-foreground py-10">
+    <div className="min-h-dvh flex items-center justify-center bg-background text-foreground py-10">
       <div className="w-full max-w-sm px-6">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-10 h-10 bg-primary flex items-center justify-center">
             <Activity size={20} className="text-primary-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-widest uppercase" style={labelStyle}>
+          <span className="text-xl font-bold tracking-[0.18em] uppercase" style={labelStyle}>
             Pulse
           </span>
           <p className="text-sm text-muted-foreground text-center">
@@ -170,7 +170,7 @@ export function RegisterView({
             </div>
 
             {errors.form && (
-              <p className="text-sm text-red-500 flex items-center gap-1">
+              <p className="text-sm text-destructive flex items-center gap-1">
                 <AlertCircle size={13} />
                 {errors.form}
               </p>
@@ -179,7 +179,7 @@ export function RegisterView({
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               style={labelStyle}
             >
               {isLoading ? "Verifying…" : "Verify & Create Account"}
@@ -189,7 +189,7 @@ export function RegisterView({
               <button type="button" onClick={() => setStep("form")} className="text-muted-foreground hover:text-foreground">
                 ← Edit details
               </button>
-              <button type="button" onClick={handleResend} disabled={isLoading} className="text-primary font-semibold hover:underline disabled:opacity-40">
+              <button type="button" onClick={handleResend} disabled={isLoading} className="text-link font-semibold hover:underline disabled:opacity-40">
                 Resend code
               </button>
             </div>
@@ -272,7 +272,7 @@ export function RegisterView({
           </div>
 
           {errors.form && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
+            <p className="text-sm text-destructive flex items-center gap-1">
               <AlertCircle size={13} />
               {errors.form}
             </p>
@@ -281,7 +281,7 @@ export function RegisterView({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             style={labelStyle}
           >
             {isLoading
@@ -297,7 +297,7 @@ export function RegisterView({
             <button
               type="button"
               onClick={onNavigateToLogin}
-              className="text-primary font-semibold hover:underline"
+              className="text-link font-semibold hover:underline"
             >
               Sign in
             </button>

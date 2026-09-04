@@ -10,7 +10,7 @@ import { getSurveyQuota, type SurveyQuota } from "../api-survey";
 import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
 import type { Project, Survey } from "../types";
 import {
-  fmtDate, hColor, SURVEY_CATEGORY_LABELS, SURVEY_HISTORY_COLS, surveyResponseRate, surveyDeliveryChannels,
+  fmtDate, hColor, SURVEY_CATEGORY_LABELS, SURVEY_HISTORY_COLS, SURVEY_HISTORY_MIN_WIDTH, surveyResponseRate, surveyDeliveryChannels,
   surveyHasResults, surveyCanExpand, surveyRowStatus, triggerColor, projectTagStyle, SURVEY_STATUS_CONFIG,
 } from "../format";
 import { Ring } from "../components/ScoreVisuals";
@@ -18,6 +18,7 @@ import {
   CopySurveyLinkButton, RemindSurveyButton, CloseSurveyFormButton,
   SurveyAskedQuestions, SurveyCategoryScores, SendSurveyModal, ReviewScheduledSurveyModal, SurveyRubricPanel,
 } from "../components/SurveyModals";
+import { PageShell, PageHeader, FieldShell } from "../components/PageShell";
 
 export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];projects:Project[];onBack:()=>void;onClosed?:()=>void;}) {
   const [q,setQ]=useState("");
@@ -37,31 +38,33 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
   },[surveys,q,filterProject,filterStatus,sortOrder]);
 
   return (
-    <div className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-6xl mx-auto px-8 py-8">
-        <div className="flex items-center gap-4 mb-7 flex-wrap">
-          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium">
-            <ChevronLeft size={15}/> Portfolio
-          </button>
-          <h1 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>All Surveys</h1>
-          <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{filtered.length} surveys</span>
-        </div>
+    <PageShell>
+        <PageHeader
+          title="All surveys"
+          breadcrumb={
+            <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors font-medium mb-2">
+              <ChevronLeft size={15}/> Portfolio
+            </button>
+          }
+          description={`${filtered.length} survey${filtered.length===1?"":"s"}`}
+        />
 
         {/* Filters */}
         <div className="flex items-center gap-3 mb-5 flex-wrap">
-          <div className="flex items-center gap-2 bg-card border border-border px-3 py-2.5 flex-1 max-w-sm">
-            <Search size={14} className="text-muted-foreground"/>
+          <FieldShell className="flex-1 min-w-[200px] max-w-sm">
+            <Search size={14} className="text-muted-foreground shrink-0"/>
             <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search surveys…"
-              className="bg-transparent text-sm outline-none flex-1 placeholder:text-muted-foreground"/>
-            {q&&<button onClick={()=>setQ("")} className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
-          </div>
+              aria-label="Search surveys"
+              className="bg-transparent text-sm flex-1 min-w-0 placeholder:text-muted-foreground"/>
+            {q&&<button onClick={()=>setQ("")} aria-label="Clear search" className="text-muted-foreground hover:text-foreground"><X size={13}/></button>}
+          </FieldShell>
           <select value={filterProject} onChange={e=>setFilterProject(e.target.value)}
-            className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
+            className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground focus:border-primary cursor-pointer">
             <option value="all">All Projects</option>
             {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
           <select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}
-            className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground outline-none focus:border-primary cursor-pointer">
+            className="bg-card border border-border px-3 py-2.5 text-sm font-medium text-foreground focus:border-primary cursor-pointer">
             <option value="all">All Statuses</option>
             <option value="draft">Draft</option>
             <option value="paused">Paused</option>
@@ -83,7 +86,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
         </div>
 
         <div className="border border-border bg-card overflow-x-auto">
-          <div className="min-w-[860px]">
+          <div style={{minWidth:SURVEY_HISTORY_MIN_WIDTH}}>
           <div className="grid gap-3 px-5 py-3 border-b border-border bg-muted"
             style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
             {["Project","Issue Date","Trigger","Response","Status","Score",""].map(h=>(
@@ -104,7 +107,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                   style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
                   <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[140px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
-                  <span className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</span>
+                  <span className={`text-sm font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</span>
                   <div className="min-w-0">
                     <div className="h-1.5 bg-muted mb-1">
                       <div className="h-full transition-all" style={{width:`${pct}%`,backgroundColor:pct>=70?"var(--health-good)":pct>=40?"var(--health-warn)":"var(--health-crit)"}}/>
@@ -117,7 +120,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                   <span className={`text-sm font-bold ${cfg.c}`} style={{fontFamily:"var(--font-display)"}}>{cfg.l}</span>
                   {avgScore!=null
                     ?<span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(avgScore)}}>{avgScore}</span>
-                    :s.status==="closed"?<span className="text-xs text-amber-500">…</span>
+                    :s.status==="closed"?<span className="text-xs text-attention">…</span>
                     :<span className="text-sm text-muted-foreground">—</span>}
                   <div className="flex items-center justify-end gap-2" onClick={e=>e.stopPropagation()}>
                     <div className="flex items-center gap-1.5">
@@ -138,23 +141,23 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                         {surveyHasResults(s)&&(
                           <>
                         <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                        {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                        {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)}, closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                         {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
                         {s.analysisError?.startsWith("insufficient_responses")
-                          ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
-                          :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                          ?<div className="border border-attention-border bg-attention-surface p-4 text-sm text-attention mb-4">Results are hidden because no responses were collected.</div>
+                          :s.aiInsight&&<p className="text-sm text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
                         {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
                         {s.themes.length>0&&<div className="border border-border divide-y divide-border mb-4">
                           {s.themes.map((t,i)=>(
                             <div key={i} className="flex gap-3 px-4 py-3 items-start">
                               <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                              <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
+                              <span className="text-sm text-foreground leading-relaxed">{t}</span>
                             </div>
                           ))}
                         </div>}
                         {s.rawResponses.length>0&&(
                           <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
-                            className="flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity">
+                            className="flex items-center gap-1.5 text-sm font-semibold text-link hover:opacity-75 transition-opacity">
                             <ChevronDown size={13} className={`transition-transform ${rawId===s.id?"rotate-180":""}`}/>
                             {rawId===s.id?"Hide":"Show"} raw responses ({s.rawResponses.length} questions)
                           </button>
@@ -167,13 +170,13 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                                   <div key={qi} className="border border-border">
                                     <div className="bg-muted px-4 py-2 border-b border-border flex items-center gap-2">
                                       <span className="text-xs font-bold text-muted-foreground">Q{qi+1}</span>
-                                      <span className="text-[14px] font-semibold text-foreground">{qr.question}</span>
+                                      <span className="text-sm font-semibold text-foreground">{qr.question}</span>
                                     </div>
                                     <div className="grid grid-cols-2 divide-x divide-border">
                                       {qr.answers.map((ans,ai)=>(
                                         <div key={ai} className={`flex gap-2.5 px-4 py-2.5 items-start ${ai>=2?"border-t border-border":""}`}>
                                           <span className="text-xs font-bold text-muted-foreground shrink-0 mt-0.5 w-5" style={{fontFamily:"var(--font-mono)"}}>R{ai+1}</span>
-                                          <span className="text-[13px] text-foreground leading-snug">{ans}</span>
+                                          <span className="text-sm text-foreground leading-snug">{ans}</span>
                                         </div>
                                       ))}
                                     </div>
@@ -195,8 +198,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
           {filtered.length===0&&<div className="text-center py-16 text-base text-muted-foreground">No surveys match your filter.</div>}
           </div>
         </div>
-      </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -261,34 +263,33 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
   },[ps,surveySearch,surveySort]);
   return (
     <div className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 space-y-7">
+      <div className="page-measure max-sm:px-4 py-8 max-sm:py-6 space-y-7">
 
         {/* ── Header ── */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <h2 className="text-3xl font-bold uppercase tracking-wide" style={{fontFamily:"var(--font-display)"}}>Surveys</h2>
+            <h1 className="text-3xl uppercase tracking-[0.03em] font-bold">Surveys</h1>
             <div className="flex items-center gap-3 mt-1.5 flex-wrap">
               {/* Quota - org-wide monthly cap, read-only (server-configured) */}
               <div className="flex items-center gap-1.5 text-sm text-muted-foreground border border-border bg-card px-3 py-1.5">
                 <span className="font-medium text-foreground">Quota:</span>
                 <span className="font-bold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{quotaLimit}</span>
                 <span className="text-muted-foreground">surveys/month</span>
-                <span className="text-muted-foreground">·</span>
-                <span className={quotaUsed>=quotaLimit?"text-red-500 font-semibold":"text-foreground"}>{quotaUsed} used</span>
+                <span className={quotaUsed>=quotaLimit?"text-destructive font-semibold":"text-foreground"}>{quotaUsed} used</span>
               </div>
-              <button onClick={()=>setShowRubric(true)} className="text-sm font-semibold text-primary hover:opacity-75 transition-opacity flex items-center gap-1">
-                Scoring rubric →
+              <button onClick={()=>setShowRubric(true)} className="text-sm font-semibold text-link hover:opacity-75 transition-opacity flex items-center gap-1">
+                Scoring rubric
               </button>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap w-full sm:w-auto">
             <button onClick={()=>onRefresh?.()} disabled={loading} title="Refresh surveys"
-              className="flex items-center gap-2 border border-border px-3 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 border border-border px-3 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-link transition-colors disabled:opacity-50"
               style={{fontFamily:"var(--font-display)"}}>
               <RefreshCw size={14} className={loading?"animate-spin":""}/>
             </button>
             <button onClick={()=>setShowGenerateDemo(true)}
-              className="flex flex-1 sm:flex-none items-center justify-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-primary transition-colors whitespace-nowrap"
+              className="flex flex-1 sm:flex-none items-center justify-center gap-2 border border-border px-4 py-2.5 text-base font-semibold text-foreground hover:border-primary hover:text-link transition-colors whitespace-nowrap"
               style={{fontFamily:"var(--font-display)"}}>
               <Sparkles size={14}/> Test generate
             </button>
@@ -302,7 +303,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
 
         {reviewBanners.map(upcoming=>(
           project.backendProjectId&&Number.isFinite(Number(upcoming.id))?(
-          <div key={upcoming.id} className="bg-card border border-violet-400/40">
+          <div key={upcoming.id} className="bg-card border border-chart-5/40">
             <div className="flex items-center justify-between gap-4 px-5 py-4 flex-wrap">
               <div>
                 <div className="flex items-center gap-2">
@@ -315,7 +316,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                     :upcoming.status==="failed"
                       ?`Delivery failed: ${upcoming.analysisError||"retry available"}.`
                       :`Auto-sends ${fmtDate(upcoming.reviewDeadlineAt||upcoming.scheduledSendAt||"")}.`}
-                  {" "}{upcoming.questions?.length??0} questions · edit until then
+                  {" "}{upcoming.questions?.length??0} questions, editable until then
                 </p>
               </div>
               <button onClick={()=>setReviewSurvey(upcoming)}
@@ -332,14 +333,14 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
           <div className="bg-card border border-border">
             <div className="flex items-center gap-4 px-5 py-3.5 border-b border-border flex-wrap">
               <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>Latest Survey Scores</div>
-              <span className="text-sm font-semibold px-2.5 py-1 bg-primary/10 text-primary" style={{fontFamily:"var(--font-mono)"}}>
+              <span className="text-sm font-semibold px-2.5 py-1 bg-primary/10 text-link" style={{fontFamily:"var(--font-mono)"}}>
                 Issue date: {fmtDate(latest.sentDate)}
               </span>
               <span className="text-sm text-muted-foreground">{latest.responseCount} of {latest.targetCount} responded</span>
             </div>
             <div className="grid grid-cols-4 sm:grid-cols-8 gap-0">
               <div className="flex flex-col items-center justify-center px-4 py-5 border-r border-border bg-muted/30">
-                <div className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Overall</div>
+                <div className="text-xs font-semibold text-muted-foreground mb-2">Overall</div>
                 <span className="text-5xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{project.score}</span>
               </div>
               {skeys.map((k,i)=>(
@@ -437,7 +438,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                 )}
 
                 {/* AI summary */}
-                <div className="text-[15px] text-foreground leading-relaxed mb-4 font-medium">
+                <div className="text-base text-foreground leading-relaxed mb-4 font-medium">
                   {completed[iIdx].aiInsight}
                 </div>
 
@@ -449,7 +450,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                     {completed[iIdx].themes.map((t,i)=>(
                       <div key={i} className="flex gap-3 px-4 py-3 items-start">
                         <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                        <span className="text-[15px] text-foreground leading-relaxed">{t}</span>
+                        <span className="text-base text-foreground leading-relaxed">{t}</span>
                       </div>
                     ))}
                   </div>
@@ -492,12 +493,12 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                       <div className="shrink-0 w-6 h-6 flex items-center justify-center border border-border text-xs font-bold text-muted-foreground mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
                       <textarea value={g.text} rows={2} placeholder="Describe what the AI should ask about…"
                         onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(x=>x.id===g.id?{...x,text:e.target.value}:x)}))}
-                        className="flex-1 bg-input-background border border-border px-3 py-2.5 text-[14px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                      <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(x=>x.id!==g.id)}))} className="mt-2 text-muted-foreground hover:text-red-500 transition-colors shrink-0"><X size={14}/></button>
+                        className="flex-1 bg-input-background border border-border px-3 py-2.5 text-sm placeholder:text-muted-foreground focus:border-primary resize-none transition-colors"/>
+                      <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(x=>x.id!==g.id)}))} className="mt-2 text-muted-foreground hover:text-destructive transition-colors shrink-0"><X size={14}/></button>
                     </div>
                   ))}
                   <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`g${Date.now()}`,text:""}]}))}
-                    className="flex items-center gap-1.5 text-sm text-primary font-semibold hover:opacity-75 transition-opacity mt-1">
+                    className="flex items-center gap-1.5 text-sm text-link font-semibold hover:opacity-75 transition-opacity mt-1">
                     <Plus size={13}/> Add instruction
                   </button>
                 </div>
@@ -513,12 +514,13 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
               Survey History <span className="text-muted-foreground font-normal text-sm">({filteredPs.length})</span>
             </div>
             <div className="flex items-center gap-2 w-full sm:w-auto">
-              <div className="flex flex-1 sm:flex-none items-center gap-2 bg-card border border-border px-3 py-2 min-w-0">
-                <Search size={13} className="text-muted-foreground"/>
+              <FieldShell className="flex-1 sm:flex-none px-3 py-2 min-w-0">
+                <Search size={13} className="text-muted-foreground shrink-0"/>
                 <input value={surveySearch} onChange={e=>setSurveySearch(e.target.value)} placeholder="Search…"
-                  className="bg-transparent text-sm outline-none min-w-0 w-full sm:w-36 placeholder:text-muted-foreground"/>
-                {surveySearch&&<button onClick={()=>setSurveySearch("")} className="text-muted-foreground hover:text-foreground"><X size={12}/></button>}
-              </div>
+                  aria-label="Search survey history"
+                  className="bg-transparent text-sm min-w-0 w-full sm:w-36 placeholder:text-muted-foreground"/>
+                {surveySearch&&<button onClick={()=>setSurveySearch("")} aria-label="Clear search" className="text-muted-foreground hover:text-foreground"><X size={12}/></button>}
+              </FieldShell>
               <div className="flex border border-border">
                 {(["newest","oldest"] as const).map(o=>(
                   <button key={o} onClick={()=>setSurveySort(o)}
@@ -533,7 +535,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
 
           {/* Table */}
           <div className="border border-border bg-card overflow-x-auto">
-            <div className="min-w-[860px]">
+            <div style={{minWidth:SURVEY_HISTORY_MIN_WIDTH}}>
             {/* Header */}
             <div className="grid gap-3 items-center border-b border-border bg-muted px-4 py-2.5"
               style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
@@ -563,7 +565,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                     <div className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</div>
 
                     {/* Trigger */}
-                    <div className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</div>
+                    <div className={`text-sm font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</div>
 
                     {/* Response bar */}
                     <div className="min-w-0">
@@ -585,7 +587,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                         <span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5))}}>
                           {Math.round((Object.values(s.scores).reduce((a,b)=>a+b,0))/5)}
                         </span>
-                      ):s.status==="closed"?<span className="text-xs text-amber-500">…</span>
+                      ):s.status==="closed"?<span className="text-xs text-attention">…</span>
                       :surveyHasResults(s)?<span className="text-sm text-muted-foreground">—</span>:<span className="text-sm text-muted-foreground">—</span>}
                     </div>
 
@@ -597,7 +599,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                         {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
                         {!s.questionsLocked&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&(
                           <button type="button" onClick={()=>setReviewSurvey(s)}
-                            className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary">
+                            className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-link">
                             Review
                           </button>
                         )}
@@ -616,17 +618,17 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                             {surveyHasResults(s)&&(
                               <>
                             <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
-                            {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)} · closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
+                            {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)}, closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                             {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
                             {s.analysisError?.startsWith("insufficient_responses")
-                              ?<div className="border border-amber-400/40 bg-amber-50 dark:bg-amber-950/20 p-4 text-sm text-amber-700 dark:text-amber-300 mb-4">Results are hidden because no responses were collected.</div>
-                              :s.aiInsight&&<p className="text-[14px] text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
+                              ?<div className="border border-attention-border bg-attention-surface p-4 text-sm text-attention mb-4">Results are hidden because no responses were collected.</div>
+                              :s.aiInsight&&<p className="text-sm text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
                             {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
                             {s.themes.length>0&&<div className="border border-border divide-y divide-border">
                               {s.themes.map((t,i)=>(
                                 <div key={i} className="flex gap-3 px-4 py-3 items-start">
                                   <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                                  <span className="text-[14px] text-foreground leading-relaxed">{t}</span>
+                                  <span className="text-sm text-foreground leading-relaxed">{t}</span>
                                 </div>
                               ))}
                             </div>}
@@ -637,9 +639,9 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                           {s.rawResponses.length>0&&(
                             <div className="px-5 py-3.5">
                               <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
-                                className="flex items-center gap-2 text-sm font-semibold text-primary hover:opacity-75 transition-opacity">
+                                className="flex items-center gap-2 text-sm font-semibold text-link hover:opacity-75 transition-opacity">
                                 <ChevronDown size={13} className={`transition-transform ${rawId===s.id?"rotate-180":""}`}/>
-                                {rawId===s.id?"Hide":"Show"} raw responses ({s.rawResponses.length} questions · {s.responseCount} respondents)
+                                {rawId===s.id?"Hide":"Show"} raw responses ({s.rawResponses.length} questions, {s.responseCount} respondents)
                               </button>
                               <AnimatePresence>
                                 {rawId===s.id&&(
@@ -649,13 +651,13 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                                         <div key={qi} className="border border-border">
                                           <div className="bg-muted px-4 py-2.5 border-b border-border flex items-center gap-2">
                                             <span className="text-xs font-bold text-muted-foreground">Q{qi+1}</span>
-                                            <span className="text-[14px] font-semibold text-foreground">{qr.question}</span>
+                                            <span className="text-sm font-semibold text-foreground">{qr.question}</span>
                                           </div>
                                           <div className="grid grid-cols-2 divide-x divide-border">
                                             {qr.answers.map((ans,ai)=>(
                                               <div key={ai} className={`flex items-start gap-2.5 px-4 py-2.5 ${ai>=2?"border-t border-border":""}`}>
                                                 <span className="shrink-0 text-xs font-bold text-muted-foreground mt-0.5 w-5" style={{fontFamily:"var(--font-mono)"}}>R{ai+1}</span>
-                                                <span className="text-[13px] text-foreground leading-snug">{ans}</span>
+                                                <span className="text-sm text-foreground leading-snug">{ans}</span>
                                               </div>
                                             ))}
                                           </div>

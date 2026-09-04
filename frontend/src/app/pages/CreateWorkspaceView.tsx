@@ -146,12 +146,12 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
   };
 
   const inputClass =
-    "w-full bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors";
+    "w-full bg-input-background border border-border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors";
   const labelClass = "block text-sm font-semibold text-foreground mb-1.5";
   const labelStyle = { fontFamily: "var(--font-display)" };
 
   return (
-    <div className="h-screen overflow-y-auto bg-background text-foreground">
+    <div className="min-h-dvh overflow-y-auto bg-background text-foreground">
       {/* Progress header */}
       <header className="border-b border-border bg-card flex items-center gap-6 px-6" style={{ height: 56 }}>
         <button onClick={onBack} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
@@ -161,7 +161,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
           <div className="w-7 h-7 bg-primary flex items-center justify-center">
             <Activity size={14} className="text-primary-foreground" />
           </div>
-          <span className="text-base font-bold tracking-widest uppercase" style={labelStyle}>Pulse</span>
+          <span className="text-base font-bold tracking-[0.18em] uppercase" style={labelStyle}>Pulse</span>
         </div>
         <div className="flex items-center gap-4 ml-4">
           <StepDot n={1} label="Workspace" state={stage === "form" ? "active" : "done"} />
@@ -178,12 +178,12 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
           <div className="flex items-center justify-center px-6 py-12" style={{ minHeight: "calc(100vh - 56px)" }}>
             <div className="w-full max-w-md">
               {error && (
-                <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+                <div className="mb-5 border border-destructive/40 bg-destructive/10 text-destructive px-4 py-3 text-sm flex items-center gap-2">
                   <AlertCircle size={14} className="shrink-0" />
                   {error}
                 </div>
               )}
-              <h1 className="text-3xl font-bold uppercase tracking-tight mb-1" style={labelStyle}>Create Workspace</h1>
+              <h1 className="text-3xl font-bold uppercase tracking-[0.03em] mb-1" style={labelStyle}>Create workspace</h1>
               <p className="text-base text-muted-foreground mb-8">Connect your version control to load projects automatically.</p>
 
               <form onSubmit={loadProjects} className="space-y-5">
@@ -218,7 +218,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                 <p className="text-xs text-muted-foreground mt-1.5">Your {providerName} organization name or username</p>
               </div>
 
-              <button type="submit" className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity" style={labelStyle}>
+              <button type="submit" className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity" style={labelStyle}>
                 Load Projects <ArrowRight size={16} />
               </button>
               </form>
@@ -229,7 +229,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
         {/* ── Step 2: Connecting ── */}
         {stage === "connecting" && (
           <div className="flex flex-col items-center justify-center text-center px-6" style={{ minHeight: "calc(100vh - 56px)" }}>
-            <Loader2 size={32} className="animate-spin text-primary mb-4" />
+            <Loader2 size={32} className="animate-spin text-link mb-4" />
             <h2 className="text-xl font-bold mb-1" style={labelStyle}>Connecting to {providerName}…</h2>
             <p className="text-sm text-muted-foreground">Validating your token and discovering repositories.</p>
           </div>
@@ -237,26 +237,26 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
 
         {/* ── Step 3: Projects ── */}
         {stage === "projects" && (
-          <div className="max-w-5xl mx-auto px-8 py-10">
+          <div className="page-measure max-sm:px-4 py-8 max-sm:py-6">
             {error && (
-              <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+              <div className="mb-5 border border-destructive/40 bg-destructive/10 text-destructive px-4 py-3 text-sm flex items-center gap-2">
                 <AlertCircle size={14} className="shrink-0" />
                 {error}
               </div>
             )}
             <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
               <div>
-                <h1 className="text-3xl font-bold uppercase tracking-tight" style={labelStyle}>
+                <h1 className="text-3xl font-bold uppercase tracking-[0.03em]" style={labelStyle}>
                   {repos.length} Repositor{repos.length === 1 ? "y" : "ies"} Found
                 </h1>
                 <p className="text-sm text-muted-foreground mt-1">
-                  <span className="font-semibold text-foreground">{selected.size}</span> selected via {providerName} · Check the repositories you want to track
+                  Check the repositories you want to track. <span className="font-semibold text-foreground">{selected.size}</span> selected from {providerName}.
                 </p>
               </div>
               <button
                 onClick={continueToApp}
                 disabled={creating || selected.size === 0}
-                className="flex items-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 style={labelStyle}
               >
                 {creating ? <Loader2 size={16} className="animate-spin" /> : null}
@@ -272,7 +272,7 @@ export function CreateWorkspaceView({ onBack, onCreated }: { onBack: () => void;
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search repositories…"
-                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-base placeholder:text-muted-foreground focus:border-primary transition-colors"
                 />
               </div>
             )}

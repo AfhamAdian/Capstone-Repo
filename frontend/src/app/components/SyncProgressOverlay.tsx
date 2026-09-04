@@ -37,7 +37,7 @@ export function SyncProgressOverlay() {
       aria-label="Sync progress notifications"
     >
       {visible.map((session) => (
-        <div key={session.sessionId} className="pointer-events-auto relative shadow-xl">
+        <div key={session.sessionId} className="pointer-events-auto relative shadow-overlay">
           <button
             type="button"
             onClick={() => setDismissed((current) => new Set(current).add(session.sessionId))}

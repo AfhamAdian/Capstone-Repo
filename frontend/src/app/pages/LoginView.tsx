@@ -58,13 +58,13 @@ export function LoginView({
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-background text-foreground">
+    <div className="min-h-dvh flex items-center justify-center bg-background text-foreground py-10">
       <div className="w-full max-w-sm px-6">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-10 h-10 bg-primary flex items-center justify-center">
             <Activity size={20} className="text-primary-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-widest uppercase" style={{ fontFamily: "var(--font-display)" }}>
+          <span className="text-xl font-bold tracking-[0.18em] uppercase" style={{ fontFamily: "var(--font-display)" }}>
             Pulse
           </span>
           <p className="text-sm text-muted-foreground text-center">Sign in to access your dashboard and insights</p>
@@ -72,7 +72,7 @@ export function LoginView({
 
         {inviteToken && (
           <div className="mb-5 flex items-start gap-2 border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-foreground">
-            <Mail size={15} className="mt-0.5 text-primary shrink-0"/>
+            <Mail size={15} className="mt-0.5 text-link shrink-0"/>
             <span>You've been invited to a project. Log in and you'll be added automatically.</span>
           </div>
         )}
@@ -92,12 +92,12 @@ export function LoginView({
                 setEmail(e.target.value);
                 if (errors.email) setErrors({ ...errors, email: "" });
               }}
-              className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-                errors.email ? "border-red-500" : "border-border"
+              className={`w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+                errors.email ? "border-destructive/40" : "border-border"
               }${isInvite ? " opacity-60 cursor-not-allowed" : ""}`}
             />
             {errors.email && (
-              <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+              <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
                 <AlertCircle size={13} />
                 {errors.email}
               </p>
@@ -117,12 +117,12 @@ export function LoginView({
                 setPassword(e.target.value);
                 if (errors.password) setErrors({ ...errors, password: "" });
               }}
-              className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-                errors.password ? "border-red-500" : "border-border"
+              className={`w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+                errors.password ? "border-destructive/40" : "border-border"
               }`}
             />
             {errors.password && (
-              <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+              <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
                 <AlertCircle size={13} />
                 {errors.password}
               </p>
@@ -130,7 +130,7 @@ export function LoginView({
           </div>
 
           {errors.form && (
-            <p className="text-sm text-red-500 flex items-center gap-1">
+            <p className="text-sm text-destructive flex items-center gap-1">
               <AlertCircle size={13} />
               {errors.form}
             </p>
@@ -139,7 +139,7 @@ export function LoginView({
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ fontFamily: "var(--font-display)" }}
           >
             {isLoading ? "Signing In…" : "Sign In"}
@@ -164,7 +164,7 @@ export function LoginView({
             <button
               type="button"
               onClick={onNavigateToRegister}
-              className="text-primary font-semibold hover:underline"
+              className="text-link font-semibold hover:underline"
             >
               Create one
             </button>

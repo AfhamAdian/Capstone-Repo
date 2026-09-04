@@ -72,7 +72,7 @@ export function AddProjectView({
   const cols = "auto minmax(200px,1fr) 120px 80px 130px";
 
   return (
-    <div className="h-screen overflow-y-auto bg-background text-foreground">
+    <div className="min-h-dvh overflow-y-auto bg-background text-foreground">
       <header className="border-b border-border bg-card flex items-center gap-6 px-6" style={{ height: 56 }}>
         <button onClick={onCancel} className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft size={14} /> Back
@@ -81,13 +81,13 @@ export function AddProjectView({
           <div className="w-7 h-7 bg-primary flex items-center justify-center">
             <Activity size={14} className="text-primary-foreground" />
           </div>
-          <span className="text-base font-bold tracking-widest uppercase" style={labelStyle}>Pulse</span>
+          <span className="text-base font-bold tracking-[0.18em] uppercase" style={labelStyle}>Pulse</span>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-8 py-10">
+      <main className="page-measure max-sm:px-4 py-8 max-sm:py-6">
         {error && (
-          <div className="mb-5 border border-red-500/30 bg-red-500/5 text-red-500 px-4 py-3 text-sm flex items-center gap-2">
+          <div className="mb-5 border border-destructive/40 bg-destructive/10 text-destructive px-4 py-3 text-sm flex items-center gap-2">
             <AlertCircle size={14} className="shrink-0" />
             {error}
           </div>
@@ -95,19 +95,19 @@ export function AddProjectView({
 
         <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
           <div>
-            <h1 className="text-3xl font-bold uppercase tracking-tight" style={labelStyle}>Add Project</h1>
+            <h1 className="text-3xl font-bold uppercase tracking-[0.03em]" style={labelStyle}>Add project</h1>
             <p className="text-sm text-muted-foreground mt-1">
               {loading
                 ? "Loading repositories from this workspace…"
                 : <>
-                    <span className="font-semibold text-foreground">{selected.size}</span> selected · {importedCount} already tracked · Check the repositories you want to add
+                    Check the repositories you want to add. <span className="font-semibold text-foreground">{selected.size}</span> selected, {importedCount} already tracked.
                   </>}
             </p>
           </div>
           <button
             onClick={add}
             disabled={adding || selected.size === 0}
-            className="flex items-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
             style={labelStyle}
           >
             {adding ? <Loader2 size={16} className="animate-spin" /> : null}
@@ -129,7 +129,7 @@ export function AddProjectView({
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search repositories…"
-                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors"
+                  className="w-full bg-input-background border border-border pl-9 pr-4 py-2.5 text-base placeholder:text-muted-foreground focus:border-primary transition-colors"
                 />
               </div>
             )}
@@ -173,7 +173,7 @@ export function AddProjectView({
                           {r.private ? <Lock size={13} className="text-muted-foreground shrink-0" /> : <Globe size={13} className="text-muted-foreground shrink-0" />}
                           <span className="font-semibold truncate" style={{ fontFamily: "var(--font-mono)" }}>{r.name}</span>
                           {r.imported && (
-                            <span className="ml-1 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 shrink-0">
+                            <span className="ml-1 inline-flex items-center gap-1 text-xs font-semibold text-health-good shrink-0">
                               <Check size={11} /> Tracked
                             </span>
                           )}

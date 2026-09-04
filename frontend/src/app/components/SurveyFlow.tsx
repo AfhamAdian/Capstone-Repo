@@ -56,7 +56,7 @@ export function SurveyFlow({onClose,form,token,standalone}:{onClose:()=>void;for
     return (
       <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="fixed inset-0 bg-background z-50 flex items-center justify-center p-6">
         <div className="text-center max-w-sm">
-          <AlertTriangle size={28} className="text-amber-500 mx-auto mb-4"/>
+          <AlertTriangle size={28} className="text-attention mx-auto mb-4"/>
           <p className="text-base text-muted-foreground">This survey has no questions to answer.</p>
         </div>
       </motion.div>
@@ -83,20 +83,20 @@ export function SurveyFlow({onClose,form,token,standalone}:{onClose:()=>void;for
             </motion.div>
           ):(
             <motion.div key={step} initial={{opacity:0,x:24}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-24}} transition={{duration:0.2}}>
-              {cur.projectName&&<div className="text-xs font-bold uppercase tracking-wide text-primary mb-2">{cur.projectName}</div>}
+              {cur.projectName&&<div className="text-sm font-semibold text-link mb-2">{cur.projectName}</div>}
               <h2 className="text-2xl font-bold text-foreground leading-tight mb-8" style={{fontFamily:"var(--font-display)"}}>{cur.q}</h2>
               {cur.t==="text"
                 ?<textarea aria-label={`Answer to question ${step+1}`} autoFocus rows={4} maxLength={4000} value={(ans[step] as string)||""} onChange={e=>{const u=[...ans];u[step]=e.target.value;setAns(u);}} placeholder="Your answer…"
-                    className="w-full bg-transparent border-b-2 border-border focus:border-primary outline-none text-foreground placeholder:text-muted-foreground text-base resize-none py-2 transition-colors"/>
+                    className="w-full bg-transparent border-b-2 border-border focus:border-primary text-foreground placeholder:text-muted-foreground text-base resize-none py-2 transition-colors"/>
                 :<div className="flex gap-3 py-4" role="radiogroup" aria-label={`Rating for question ${step+1}`}>{[1,2,3,4,5].map(n=>(
                   <button key={n} role="radio" aria-checked={ans[step]===n} onClick={()=>{const u=[...ans];u[step]=n;setAns(u);}}
                     className={`flex-1 h-16 border-2 text-xl font-bold transition-all ${ans[step]===n?"border-primary bg-primary text-primary-foreground":"border-border text-muted-foreground hover:border-foreground hover:text-foreground"}`}
                     style={{fontFamily:"var(--font-mono)"}}>{n}</button>
                 ))}</div>
               }
-              {submitError&&<div className="text-sm text-red-500 mt-3">{submitError}</div>}
+              {submitError&&<div className="text-sm text-destructive mt-3">{submitError}</div>}
               <div className="flex items-center justify-between mt-10">
-                <button onClick={next} disabled={submitting} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">Skip</button>
+                <button onClick={next} disabled={submitting} className="text-base text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">Skip</button>
                 <button onClick={next} disabled={submitting} className="flex items-center gap-2 bg-primary text-primary-foreground px-7 py-3 text-base font-semibold hover:opacity-90 transition-opacity disabled:opacity-60" style={{fontFamily:"var(--font-display)"}}>
                   {submitting?"Submitting…":step===qs.length-1?"Submit":"Next"} <ArrowRight size={14}/>
                 </button>

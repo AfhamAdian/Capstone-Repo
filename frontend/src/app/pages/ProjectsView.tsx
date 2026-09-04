@@ -43,13 +43,13 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-dvh bg-background text-foreground">
       <header className="flex items-center justify-between border-b border-border px-6 py-4">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-primary flex items-center justify-center">
             <Activity size={16} className="text-primary-foreground" />
           </div>
-          <span className="font-bold tracking-widest uppercase" style={{ fontFamily: "var(--font-display)" }}>
+          <span className="font-bold tracking-[0.18em] uppercase" style={{ fontFamily: "var(--font-display)" }}>
             Pulse
           </span>
         </div>
@@ -62,7 +62,7 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-6 py-10">
+      <main className="page-measure max-sm:px-4 py-8 max-sm:py-6">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold" style={{ fontFamily: "var(--font-display)" }}>
             Projects
@@ -80,13 +80,13 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
         </div>
 
         {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
-        {error && <p className="text-sm text-red-500">{error}</p>}
+        {error && <p className="text-sm text-destructive">{error}</p>}
 
         {!loading && !error && projects.length === 0 && (
           <div className="text-center py-16 border border-dashed border-border">
             <p className="text-muted-foreground text-sm mb-4">No projects yet.</p>
             {isAdmin ? (
-              <button onClick={onAddProject} className="text-primary font-semibold text-sm hover:underline">
+              <button onClick={onAddProject} className="text-link font-semibold text-sm hover:underline">
                 Create your first project
               </button>
             ) : (
@@ -117,7 +117,7 @@ export function ProjectsView({ onAddProject }: { onAddProject: () => void }) {
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right">
                     <div className="text-2xl font-bold text-muted-foreground">—</div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Score</div>
+                    <div className="text-xs text-muted-foreground">Score</div>
                   </div>
                   <ProjectSync projectId={p.id} onComplete={load} />
                 </div>

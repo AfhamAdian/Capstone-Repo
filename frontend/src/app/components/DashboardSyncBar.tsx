@@ -28,7 +28,7 @@ export function DashboardSyncBar({
           disabled={active || !backendProjectId}
           title={backendProjectId ? "Sync data" : "This project isn't linked to a backend project yet"}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 border text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-            active ? "border-primary text-primary bg-primary/5" : "border-border text-muted-foreground hover:border-primary hover:text-primary hover:bg-primary/5"
+            active ? "border-primary text-link bg-primary/5" : "border-border text-muted-foreground hover:border-primary hover:text-link hover:bg-primary/5"
           }`}
         >
           <RefreshCw size={13} className={active ? "animate-spin" : ""} />
