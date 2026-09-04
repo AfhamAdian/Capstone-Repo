@@ -39,6 +39,10 @@ const app = createApp();
 
 const server = app.listen(env.port, () => {
   console.log(`Server is running on port ${env.port} in ${env.nodeEnv} mode`);
+  // Never logs the value - just proves whether the platform actually injected it into this
+  // process, since a dashboard showing the var set is not proof the running process sees it
+  // (wrong service/environment, name typo or trailing whitespace in the key, a stale instance).
+  console.log(`ENCRYPTION_KEY configured: ${Boolean(process.env.ENCRYPTION_KEY)}`);
 });
 
 server.on('error', (error: NodeJS.ErrnoException) => {
