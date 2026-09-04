@@ -1,7 +1,13 @@
 // Per-project tool integrations. One row per tool; connection details live in `config` (jsonb).
+//
+// The credential fields inside config (a Jira/SonarQube token, the Jira account email paired with
+// its token) are encrypted at rest — this module is the only place that reads/writes this table, so
+// every caller above it always sees plaintext. Non-secret fields (owner, repo, baseUrl, projectKey,
+// ...) are left as-is since they're used for display/matching and aren't sensitive.
 
 import type { SupportedTool, ToolCategory } from '@libs/sync/types.js';
 import { assertSupabaseClient } from '../config/supabase.js';
+import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
 
 export interface ToolIntegrationRecord {
   id: number;
@@ -13,6 +19,35 @@ export interface ToolIntegrationRecord {
 }
 
 const INTEGRATION_COLUMNS = 'id, project_id, tool_category, tool_name, config, last_synced_at';
+
+// Config keys that hold credential material rather than plain identifiers.
+const SECRET_CONFIG_KEYS = new Set(['token', 'email']);
+
+function encryptConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...config };
+  for (const key of SECRET_CONFIG_KEYS) {
+    const value = out[key];
+    if (typeof value === 'string' && value.length > 0) {
+      out[key] = encryptSecret(value);
+    }
+  }
+  return out;
+}
+
+function decryptConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...config };
+  for (const key of SECRET_CONFIG_KEYS) {
+    const value = out[key];
+    if (typeof value === 'string' && value.length > 0) {
+      out[key] = decryptSecret(value);
+    }
+  }
+  return out;
+}
+
+function decryptRecord(record: ToolIntegrationRecord): ToolIntegrationRecord {
+  return { ...record, config: decryptConfig(record.config ?? {}) };
+}
 
 export async function addIntegration(input: {
   projectId: number;
@@ -29,7 +64,7 @@ export async function addIntegration(input: {
         project_id: input.projectId,
         tool_category: input.category,
         tool_name: input.toolName,
-        config: input.config,
+        config: encryptConfig(input.config),
       },
     ])
     .select(INTEGRATION_COLUMNS)
@@ -38,7 +73,7 @@ export async function addIntegration(input: {
   if (error || !data) {
     throw new Error(`Failed to add tool integration: ${error?.message ?? 'no row returned'}`);
   }
-  return data as ToolIntegrationRecord;
+  return decryptRecord(data as ToolIntegrationRecord);
 }
 
 // Integrations for many projects at once (used to annotate a project list with its vcs).
@@ -58,7 +93,7 @@ export async function listIntegrationsForProjects(
   if (error) {
     throw new Error(`Failed to list tool integrations: ${error.message}`);
   }
-  return (data as ToolIntegrationRecord[]) ?? [];
+  return ((data as ToolIntegrationRecord[]) ?? []).map(decryptRecord);
 }
 
 // All integrations for a project (used for the project detail view and sync).
@@ -83,10 +118,10 @@ export async function updateIntegrationConfig(
     throw new Error(`No ${toolName} integration exists for this project`);
   }
 
-  const merged = { ...((existing.config as Record<string, unknown>) ?? {}), ...patch };
+  const merged = { ...decryptConfig((existing.config as Record<string, unknown>) ?? {}), ...patch };
   const { error } = await client
     .from('projecttoolintegration')
-    .update({ config: merged })
+    .update({ config: encryptConfig(merged) })
     .eq('id', existing.id);
   if (error) {
     throw new Error(`Failed to update ${toolName} integration: ${error.message}`);
@@ -104,5 +139,5 @@ export async function listIntegrations(projectId: number): Promise<ToolIntegrati
   if (error) {
     throw new Error(`Failed to list tool integrations: ${error.message}`);
   }
-  return (data as ToolIntegrationRecord[]) ?? [];
+  return ((data as ToolIntegrationRecord[]) ?? []).map(decryptRecord);
 }

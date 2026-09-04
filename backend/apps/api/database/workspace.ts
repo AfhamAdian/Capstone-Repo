@@ -1,8 +1,12 @@
 // Workspace persistence: a named group of projects backed by one VCS connection (provider + org + PAT).
 // Scoped to a company; a company can have many workspaces. The access_token is sensitive — callers
 // (services) decide what to expose; this layer returns the full row.
+//
+// access_token is encrypted at rest (encryptSecret/decryptSecret) — this module is the only place
+// that reads/writes the `workspace` table, so every caller above it always sees plaintext.
 
 import { assertSupabaseClient } from '../config/supabase.js';
+import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
 
 export interface WorkspaceRecord {
   id: number;
@@ -15,6 +19,10 @@ export interface WorkspaceRecord {
 }
 
 const WORKSPACE_COLUMNS = 'id, company_id, name, vcs_provider, organization, access_token, created_at';
+
+function decryptRecord(record: WorkspaceRecord): WorkspaceRecord {
+  return { ...record, access_token: decryptSecret(record.access_token) };
+}
 
 export async function createWorkspace(input: {
   companyId: number;
@@ -33,7 +41,7 @@ export async function createWorkspace(input: {
         name: input.name.trim(),
         vcs_provider: input.vcsProvider,
         organization: input.organization.trim(),
-        access_token: input.accessToken,
+        access_token: encryptSecret(input.accessToken),
         created_at: new Date().toISOString(),
       },
     ])
@@ -43,7 +51,7 @@ export async function createWorkspace(input: {
   if (error || !data) {
     throw new Error(`Failed to create workspace: ${error?.message ?? 'no row returned'}`);
   }
-  return data as WorkspaceRecord;
+  return decryptRecord(data as WorkspaceRecord);
 }
 
 // Newest first; scoped to a single company.
@@ -59,7 +67,7 @@ export async function listWorkspacesByCompany(companyId: number): Promise<Worksp
   if (error) {
     throw new Error(`Failed to list workspaces: ${error.message}`);
   }
-  return (data as WorkspaceRecord[]) ?? [];
+  return ((data as WorkspaceRecord[]) ?? []).map(decryptRecord);
 }
 
 // Used to compensate a failed import (delete the workspace after its projects are cleaned up).
@@ -83,5 +91,5 @@ export async function getWorkspaceById(id: number): Promise<WorkspaceRecord | nu
   if (error) {
     throw new Error(`Failed to load workspace ${id}: ${error.message}`);
   }
-  return (data as WorkspaceRecord | null) ?? null;
+  return data ? decryptRecord(data as WorkspaceRecord) : null;
 }
