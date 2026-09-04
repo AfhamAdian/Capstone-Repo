@@ -31,6 +31,8 @@ import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 import { getWorkspaceById } from '../database/workspace.js';
 import { listProjectOpsMetricsHistory, type SnapshotOpsMetricsRow } from '../database/project-ops-metrics.js';
+import { parseDbTimestamp, toUtcIso } from '../utils/db-timestamp.js';
+import { env } from '../config/env.js';
 
 const log = logger.child({ component: 'project-service' });
 
@@ -408,8 +410,27 @@ export interface ProjectHealth {
   hasMetrics: boolean;
 }
 
+// Built once: constructing an Intl.DateTimeFormat per data point is measurably slow on
+// a 60-point series. Both render in APP_DISPLAY_TZ so a chart's calendar day means the
+// org's day, not whatever zone the API container happens to run in.
+const LABEL_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: env.appDisplayTz,
+  month: 'short',
+  day: 'numeric',
+});
+
+// en-CA renders as YYYY-MM-DD, which is what the frontend's lexicographic range filters expect.
+const DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: env.appDisplayTz,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
 function formatLabel(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const date = parseDbTimestamp(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return LABEL_FORMATTER.format(date);
 }
 
 function roundMetric(value: number, decimals = 0): number {
@@ -426,12 +447,9 @@ function lastKnown(rows: SnapshotOpsMetricsRow[], pick: (row: SnapshotOpsMetrics
 }
 
 function isoDate(iso: string): string {
-  const date = new Date(iso);
+  const date = parseDbTimestamp(iso);
   if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return DAY_FORMATTER.format(date);
 }
 
 function carryForwardSeries(
@@ -567,7 +585,7 @@ function buildProjectHealth(
     metricSeries: ops.metricSeries,
     pendingSurvey: project.pendingSurvey,
     pendingSurveyTrigger: project.pendingSurveyTrigger,
-    lastUpdated: latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null,
+    lastUpdated: toUtcIso(latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null),
     hasData: latest !== null,
     hasMetrics: ops.hasMetrics,
   };

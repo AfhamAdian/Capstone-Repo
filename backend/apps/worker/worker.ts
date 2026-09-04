@@ -5,12 +5,14 @@
 
 import dotenv from 'dotenv';
 import express from 'express';
-import { ActionEmbeddingQueue, QueueManager, SurveyQueueManager } from '@libs/queue/index.js';
+import { ActionEmbeddingQueue, QueueManager, SurveyQueueManager, SyncScheduleQueue } from '@libs/queue/index.js';
 import { processSyncJob } from './processors/sync-processor.js';
 import { processActionEmbeddingJob } from './processors/action-embedding.processor.js';
 import { processSurveySendJob } from './processors/survey-send-processor.js';
 import { processSurveyInsightJob } from './processors/survey-insight-processor.js';
 import { processSurveyDistributionJob } from './processors/survey-distribution-processor.js';
+import { processScheduledSyncTick } from './processors/scheduled-sync.processor.js';
+import { SyncService } from '../api/services/sync.service.js';
 import { logger } from '@libs/logger.js';
 import { updateSurveyStatus } from '../api/database/survey.js';
 import { env } from '../api/config/env.js';
@@ -59,6 +61,7 @@ healthServer.on('error', (error: NodeJS.ErrnoException) => {
 async function startWorker() {
   const queueManager = new QueueManager({ redisUrl: redisUrl! });
   const surveyQueueManager = new SurveyQueueManager({ redisUrl: redisUrl! });
+  const syncScheduleQueue = new SyncScheduleQueue({ redisUrl: redisUrl! });
   const embeddingQueue = env.isSemanticSearchConfigured
     ? new ActionEmbeddingQueue({ redisUrl: redisUrl! })
     : null;
@@ -156,6 +159,42 @@ async function startWorker() {
     await surveyQueueManager.scheduleSurveyDistribution('0 * * * *');
     distributionLog.info('survey-distribution worker is running (hourly tick, staggered per-project send)');
 
+    // Periodic sync: re-syncs every project's configured tools at each configured slot so
+    // the dashboard graphs keep gaining datapoints without anyone clicking Sync. The tick
+    // only fans out; the per-project work runs through the existing `sync` queue above.
+    const scheduledSyncLog = logger.child({ component: 'scheduled-sync-worker' });
+    const scheduledSyncWorker = syncScheduleQueue.createWorker(async (job) => {
+      const slot = job.data?.slot ?? 'unknown';
+      scheduledSyncLog.info({ slot }, 'processing scheduled sync tick');
+      const summary = await processScheduledSyncTick(new SyncService({ queueManager }), slot);
+      scheduledSyncLog.info(summary, 'completed scheduled sync tick');
+      return summary;
+    });
+    scheduledSyncWorker.on('failed', (job, error) => {
+      scheduledSyncLog.error({ jobId: job?.id, err: error }, 'scheduled sync tick failed');
+    });
+
+    // Reconciles against the env on every boot: registers the configured times and REMOVES
+    // any slot that was dropped (or all of them when SCHEDULED_SYNC_ENABLED=false), since a
+    // scheduler persisted in Redis keeps firing until it is explicitly deleted.
+    const schedules = await syncScheduleQueue.reconcileSchedules(
+      env.scheduledSyncTimes,
+      env.scheduledSyncTz,
+      env.scheduledSyncEnabled,
+    );
+    scheduledSyncLog.info(
+      {
+        enabled: env.scheduledSyncEnabled,
+        tz: env.scheduledSyncTz,
+        times: env.scheduledSyncTimes.map((t) => `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}`),
+        patSpacingMinutes: env.scheduledSyncPatSpacingMinutes,
+        maxSpreadMinutes: env.scheduledSyncMaxSpreadMinutes,
+        active: schedules.active,
+        removed: schedules.removed,
+      },
+      env.scheduledSyncEnabled ? 'scheduled sync is armed' : 'scheduled sync is disabled; schedules removed',
+    );
+
     // Graceful shutdown
     process.on('SIGTERM', async () => {
       log.info('received SIGTERM, shutting down gracefully');
@@ -164,9 +203,11 @@ async function startWorker() {
       await surveySendWorker.close();
       await surveyInsightWorker.close();
       await surveyDistributionWorker.close();
+      await scheduledSyncWorker.close();
       await queueManager.close();
       await embeddingQueue?.close();
       await surveyQueueManager.close();
+      await syncScheduleQueue.close();
       process.exit(0);
     });
 
@@ -177,9 +218,11 @@ async function startWorker() {
       await surveySendWorker.close();
       await surveyInsightWorker.close();
       await surveyDistributionWorker.close();
+      await scheduledSyncWorker.close();
       await queueManager.close();
       await embeddingQueue?.close();
       await surveyQueueManager.close();
+      await syncScheduleQueue.close();
       process.exit(0);
     });
   } catch (error) {

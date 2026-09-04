@@ -140,6 +140,53 @@ const surveyTokenEncKey = process.env.SURVEY_TOKEN_ENC_KEY;
 // Survey feature: manual "Send Survey Now" monthly cap per project
 const manualSurveyMonthlyLimit = boundedInteger(process.env.MANUAL_SURVEY_MONTHLY_LIMIT, 2, 1, 20);
 
+// Periodic sync: re-syncs every project's configured tools on a fixed schedule so the
+// dashboard graphs keep accumulating datapoints without anyone clicking Sync.
+// SCHEDULED_SYNC_TIMES is a comma-separated list of HH:MM in SCHEDULED_SYNC_TZ — the number
+// of entries is the daily frequency ("02:00,14:00" runs twice a day). Times are interpreted
+// in the named IANA zone, NOT the server's clock.
+const scheduledSyncEnabled = process.env.SCHEDULED_SYNC_ENABLED !== 'false';
+const scheduledSyncTz = process.env.SCHEDULED_SYNC_TZ ?? 'UTC';
+// Spacing between two projects that share the same VCS token, so a nightly run can't
+// burn one PAT's rate limit in a burst. Capped by MAX_SPREAD so a big workspace can't
+// stretch its run into the next scheduled slot.
+const scheduledSyncPatSpacingMinutes = boundedInteger(process.env.SCHEDULED_SYNC_PAT_SPACING_MINUTES, 10, 0, 240);
+const scheduledSyncMaxSpreadMinutes = boundedInteger(process.env.SCHEDULED_SYNC_MAX_SPREAD_MINUTES, 180, 0, 1440);
+
+export interface ScheduledSyncTime {
+  hour: number;
+  minute: number;
+}
+
+/** Parses "02:00,14:30" into distinct, sorted times. Throws on malformed input so a typo
+ *  fails at boot instead of silently never firing. */
+function parseScheduledSyncTimes(value: string | undefined): ScheduledSyncTime[] {
+  const raw = (value ?? '02:00').split(',').map((entry) => entry.trim()).filter(Boolean);
+  const byKey = new Map<string, ScheduledSyncTime>();
+
+  for (const entry of raw) {
+    const match = /^(\d{1,2}):(\d{2})$/.exec(entry);
+    if (!match) {
+      throw new Error(`Invalid SCHEDULED_SYNC_TIMES entry "${entry}" (expected HH:MM)`);
+    }
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour > 23 || minute > 59) {
+      throw new Error(`Out-of-range SCHEDULED_SYNC_TIMES entry "${entry}"`);
+    }
+    byKey.set(`${hour}:${minute}`, { hour, minute });
+  }
+
+  return [...byKey.values()].sort((a, b) => a.hour - b.hour || a.minute - b.minute);
+}
+
+const scheduledSyncTimes = parseScheduledSyncTimes(process.env.SCHEDULED_SYNC_TIMES);
+
+// Time zone used to render dashboard date labels/buckets. Defaults to the scheduling zone,
+// since both answer the same question: "what does a calendar day mean for this org?".
+// Left at UTC unless configured, which matches the historical behaviour.
+const appDisplayTz = process.env.APP_DISPLAY_TZ ?? scheduledSyncTz;
+
 export const env = {
   nodeEnv,
   port,
@@ -187,6 +234,12 @@ export const env = {
   surveyMinDaysBetweenSurveys,
   surveyTokenEncKey,
   manualSurveyMonthlyLimit,
+  scheduledSyncEnabled,
+  scheduledSyncTimes,
+  scheduledSyncTz,
+  scheduledSyncPatSpacingMinutes,
+  scheduledSyncMaxSpreadMinutes,
+  appDisplayTz,
 } as const;
 
 /**
@@ -201,6 +254,19 @@ export function validateEnv() {
 
   if (!env.redisUrl) {
     errors.push('REDIS_URL is required for queue processing');
+  }
+
+  // A bad zone would otherwise surface as a scheduled sync that simply never fires.
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: env.scheduledSyncTz });
+  } catch {
+    errors.push(`SCHEDULED_SYNC_TZ is not a valid IANA time zone: ${env.scheduledSyncTz}`);
+  }
+
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: env.appDisplayTz });
+  } catch {
+    errors.push(`APP_DISPLAY_TZ is not a valid IANA time zone: ${env.appDisplayTz}`);
   }
 
   if (errors.length > 0) {

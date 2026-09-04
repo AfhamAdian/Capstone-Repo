@@ -3,7 +3,7 @@
  * Handles enqueuing sync jobs and managing sync lifecycle
  */
 
-import type { QueueManager } from '@libs/queue/index.js';
+import type { EnqueueOptions, QueueManager } from '@libs/queue/index.js';
 import type { SyncRequestPayload, SyncJob } from '@libs/sync/index.js';
 import { getProjectIntegrationsForTools } from '../database/project.js';
 import { logger } from '@libs/logger.js';
@@ -28,8 +28,14 @@ export class SyncService {
    * @param payload - Sync request from frontend
    * @returns - Job ID and SSE stream information
    */
-  async enqueueSyncJob(payload: SyncRequestPayload): Promise<{ jobId: string; streamKey: string }> {
-    const jobId = this.generateJobId();
+  async enqueueSyncJob(
+    payload: SyncRequestPayload,
+    options: EnqueueOptions & { jobId?: string } = {},
+  ): Promise<{ jobId: string; streamKey: string }> {
+    // The periodic sync passes a deterministic jobId so a retried tick re-enqueuing the
+    // same project is a no-op; interactive syncs keep getting a fresh one every click.
+    const { jobId: providedJobId, ...enqueueOptions } = options;
+    const jobId = providedJobId ?? this.generateJobId();
     const startedAt = Date.now();
 
     this.log.info({ jobId, projectId: payload.projectId, sessionId: payload.sessionId, tools: payload.tools }, 'sync enqueue requested');
@@ -52,7 +58,7 @@ export class SyncService {
       tools: payload.tools,
       sessionId: payload.sessionId,
       integrations,
-    });
+    }, enqueueOptions);
 
     this.log.info(
       {
