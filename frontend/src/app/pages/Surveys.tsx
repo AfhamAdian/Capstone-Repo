@@ -102,7 +102,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                 <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
                   className={`w-full grid gap-3 px-5 py-4 transition-colors text-left items-center ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                   style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
-                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
+                  <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[140px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
                   <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</span>
                   <span className={`text-[14px] font-medium truncate pr-3 ${triggerColor(s.trigger)}`}>{s.trigger}</span>
                   <div className="min-w-0">
@@ -119,12 +119,14 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                     ?<span className="text-base font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(avgScore)}}>{avgScore}</span>
                     :s.status==="closed"?<span className="text-xs text-amber-500">…</span>
                     :<span className="text-sm text-muted-foreground">—</span>}
-                  <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
-                    {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
-                    {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onClosed}/>}
-                    {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed}/>}
-                    {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed} mode="score"/>}
-                    {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                  <div className="flex items-center justify-end gap-2" onClick={e=>e.stopPropagation()}>
+                    <div className="flex items-center gap-1.5">
+                      {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                      {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onClosed}/>}
+                      {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed}/>}
+                      {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onClosed} mode="score"/>}
+                    </div>
+                    {surveyCanExpand(s)?<ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
                   </div>
                 </div>
 
@@ -555,7 +557,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                     style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
                     {/* Project */}
-                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[102px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
+                    <div className={`text-xs font-bold px-2 py-1 w-fit max-w-[140px] truncate ${sTag.bg} ${sTag.text}`}>{project.name}</div>
 
                     {/* Issue date */}
                     <div className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{fmtDate(s.sentDate)}</div>
@@ -587,18 +589,20 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                       :surveyHasResults(s)?<span className="text-sm text-muted-foreground">—</span>:<span className="text-sm text-muted-foreground">—</span>}
                     </div>
 
-                    <div className="flex items-center justify-end gap-1" onClick={e=>e.stopPropagation()}>
-                      {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
-                      {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onSurveySent}/>}
-                      {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent}/>}
-                      {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
-                      {!s.questionsLocked&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&(
-                        <button type="button" onClick={()=>setReviewSurvey(s)}
-                          className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary">
-                          Review
-                        </button>
-                      )}
-                      {surveyCanExpand(s)?<ChevronDown size={14} className={`text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
+                    <div className="flex items-center justify-end gap-2" onClick={e=>e.stopPropagation()}>
+                      <div className="flex items-center gap-1.5">
+                        {s.status==="active"&&s.publicUrl&&<CopySurveyLinkButton url={s.publicUrl}/>}
+                        {s.status==="active"&&<RemindSurveyButton surveyId={s.id} onDone={onSurveySent}/>}
+                        {s.status==="active"&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent}/>}
+                        {s.status==="failed"&&!s.scores&&<CloseSurveyFormButton surveyId={s.id} onClosed={onSurveySent} mode="score"/>}
+                        {!s.questionsLocked&&["draft","paused","failed"].includes(s.status)&&(s.questions?.length??0)>0&&(
+                          <button type="button" onClick={()=>setReviewSurvey(s)}
+                            className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary">
+                            Review
+                          </button>
+                        )}
+                      </div>
+                      {surveyCanExpand(s)?<ChevronDown size={14} className={`shrink-0 text-muted-foreground transition-transform ${isEx?"rotate-180":""}`}/>:null}
                     </div>
                   </div>
 

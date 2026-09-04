@@ -245,14 +245,6 @@ export function ActionsTimeline({project,actions,currentUserId,onRateAction}:{pr
   },[ts,start,end]);
   const formatTick=(time:number)=>new Intl.DateTimeFormat(undefined,{month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(time));
   const selectedVisible=chartSelection&&visibleActions.some(action=>action.id===chartSelection.id)?chartSelection:null;
-  const latestMetric=(key:string)=>project.metricSeries[key]?.filter(point=>point.date&&point.date>=start&&point.date<=end).at(-1)?.v;
-  const scoreChange=filtered.length>1?filtered[filtered.length-1].score-filtered[0].score:null;
-  const contextStats=[
-    {label:"Health change",value:scoreChange===null?"—":`${scoreChange>0?"+":""}${scoreChange} pts`},
-    {label:"Commits / week",value:latestMetric("commits")??"—"},
-    {label:"Tickets closed / week",value:latestMetric("tickets")??"—"},
-    {label:"Deployments / week",value:latestMetric("deployments")??"—"},
-  ];
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-5xl mx-auto px-8 py-8">
@@ -282,9 +274,6 @@ export function ActionsTimeline({project,actions,currentUserId,onRateAction}:{pr
           </div>
         </div>
         {actionsError&&<div className="mb-5 flex items-center gap-2 border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><AlertCircle size={15}/>The database request failed. Showing the actions already loaded in this session. {actionsError}</div>}
-        <div className="grid grid-cols-2 lg:grid-cols-4 border border-border bg-card mb-4">
-          {contextStats.map((stat,index)=><div key={stat.label} className={`px-5 py-4 ${index%2===0?"border-r border-border":""} lg:border-r lg:last:border-r-0 ${index<2?"border-b border-border lg:border-b-0":""}`}><div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1" style={{fontFamily:"var(--font-display)"}}>{stat.label}</div><div className="text-xl font-bold text-foreground" style={{fontFamily:"var(--font-mono)"}}>{stat.value}</div></div>)}
-        </div>
         <div className="bg-card border border-border p-6 mb-7">
           <div className="text-base font-bold text-foreground mb-1" style={{fontFamily:"var(--font-display)"}}>Health Score Over Time</div>
           <div className="text-sm text-muted-foreground mb-5">Each orange vertical bar sits on the exact date an action was taken. Select a bar to inspect it.</div>

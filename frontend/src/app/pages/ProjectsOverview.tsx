@@ -88,13 +88,6 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
               style={{fontFamily:"var(--font-display)"}}>
               <Plus size={17}/> Log Action
             </button>
-            {isAdmin&&onAddProject&&(
-              <button onClick={onAddProject}
-                className="flex items-center gap-2.5 border border-primary text-primary text-[15px] font-bold px-7 py-3 hover:bg-primary hover:text-primary-foreground transition-colors"
-                style={{fontFamily:"var(--font-display)"}}>
-                <Plus size={17}/> Add Project
-              </button>
-            )}
           </div>
         </div>
 
@@ -113,6 +106,13 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
             <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search projects or teams…"
               className="bg-transparent text-[15px] outline-none flex-1 placeholder:text-muted-foreground"/>
           </div>
+          {isAdmin&&onAddProject&&(
+            <button onClick={onAddProject}
+              className="flex items-center gap-2.5 bg-primary text-primary-foreground text-[15px] font-bold px-6 py-2.5 hover:opacity-90 transition-opacity shadow-lg shrink-0"
+              style={{fontFamily:"var(--font-display)"}}>
+              <Plus size={17}/> Add Project
+            </button>
+          )}
         </div>
 
         <div className="border border-border bg-card overflow-x-auto">
@@ -141,22 +141,22 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
                   className="grid items-center px-6 py-4 border-b border-border hover:bg-muted/40 cursor-pointer group transition-colors"
                   style={{gridTemplateColumns:cols, borderLeft:`3px solid ${hColor(p.score)}`}}>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
                       <button
                         onClick={e=>{e.stopPropagation();onToggleTracked(p.id);}}
                         title={trackedIds.has(p.id)?"Untrack project":"Track project"}
-                        className={`shrink-0 p-0.5 transition-colors ${trackedIds.has(p.id)?"text-primary hover:text-primary/70":"text-muted-foreground/40 hover:text-primary"}`}>
-                        <Bookmark size={14} className={trackedIds.has(p.id)?"fill-primary":""} strokeWidth={2}/>
+                        aria-pressed={trackedIds.has(p.id)}
+                        className={`shrink-0 flex items-center justify-center w-7 h-7 border transition-colors ${trackedIds.has(p.id)?"bg-primary border-primary text-primary-foreground":"border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
+                        <Bookmark size={14} className={trackedIds.has(p.id)?"fill-current":""} strokeWidth={2}/>
                       </button>
                       <span className="text-[15px] font-bold group-hover:text-primary transition-colors" style={{fontFamily:"var(--font-display)"}}>{p.name}</span>
                     </div>
-                    <div className="text-sm text-muted-foreground mt-0.5 pl-5">
+                    <div className="text-sm text-muted-foreground mt-0.5 pl-[38px]">
                       {p.owner && p.repo ? `${p.owner}/${p.repo}` : p.owner || p.team || "No owner linked"}
                     </div>
-                    {(p.pendingSurvey||p.pendingReview>0)&&(
-                      <div className="flex gap-3 mt-1 pl-5">
-                        {p.pendingSurvey&&<span className="text-sm text-amber-500 flex items-center gap-1"><MessageSquare size={12}/>survey</span>}
-                        {p.pendingReview>0&&<span className="text-sm text-blue-500 flex items-center gap-1"><Star size={12}/>{p.pendingReview} review{p.pendingReview>1?"s":""}</span>}
+                    {p.pendingReview>0&&(
+                      <div className="flex gap-3 mt-1 pl-[38px]">
+                        <span className="text-sm text-blue-500 flex items-center gap-1"><Star size={12}/>{p.pendingReview} review{p.pendingReview>1?"s":""}</span>
                       </div>
                     )}
                   </div>

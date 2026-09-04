@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
+import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, RefreshCw, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
-import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { getProject, updateProjectIntegration, getIntegrationToken, inviteProjectMember, removeProjectMember, type ProjectMemberView } from "../api";
 
@@ -444,21 +443,19 @@ function TeamDirectory({backendProjectId,isAdmin}:{backendProjectId:string;isAdm
 }
 
 export function SettingsView({project}:{project:Project;}) {
-  const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
-  const {settings,update}=useProjectSurveySettings(project.id);
+  const [tab,setTab]=useState<"team"|"notifications"|"connectors">("team");
   const {user}=useWorkspace();
   const isAdmin=user?.role==="admin"; // connector + member management are admin-only (backend enforces 403)
-  const qi=settings.guidance;
   return (
     <div className="flex-1 overflow-y-auto bg-background">
       <div className="max-w-4xl mx-auto px-8 py-8">
         <h2 className="text-3xl font-bold uppercase tracking-wide mb-7" style={{fontFamily:"var(--font-display)"}}>Settings — {project.name}</h2>
         <div className="flex items-center border-b border-border mb-8">
-          {(["team","questions","notifications","connectors"] as const).map(t=>(
+          {(["team","notifications","connectors"] as const).map(t=>(
             <button key={t} onClick={()=>setTab(t)}
               className={`px-6 py-3 text-[15px] font-semibold capitalize transition-colors -mb-px ${tab===t?"border-b-2 border-primary text-primary":"text-foreground/70 hover:text-foreground"}`}
               style={{fontFamily:"var(--font-display)"}}>
-              {t==="questions"?"Question Guidance":t.charAt(0).toUpperCase()+t.slice(1)}
+              {t.charAt(0).toUpperCase()+t.slice(1)}
             </button>
           ))}
         </div>
@@ -466,26 +463,6 @@ export function SettingsView({project}:{project:Project;}) {
           project.backendProjectId
             ? <TeamDirectory backendProjectId={project.backendProjectId} isAdmin={isAdmin}/>
             : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so members can't be managed.</p>
-        )}
-        {tab==="questions"&&(
-          <div>
-            <div className="mb-6">
-              <div className="text-[15px] font-bold text-foreground mb-1">Question Generation Instructions</div>
-              <p className="text-[15px] text-muted-foreground leading-relaxed">These instructions are sent to Gemini when you generate a survey. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
-            </div>
-            <div className="space-y-3">
-              {qi.map((inst,idx)=>(
-                <div key={inst.id} className="bg-card border border-border p-4 flex items-start gap-3">
-                  <div className="shrink-0 w-7 h-7 flex items-center justify-center text-sm font-bold text-muted-foreground border border-border mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
-                  <textarea value={inst.text} rows={2} placeholder="Describe what the AI should ask about…"
-                    onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(i=>i.id===inst.id?{...i,text:e.target.value}:i)}))}
-                    className="flex-1 bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                  <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(i=>i.id!==inst.id)}))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
-                </div>
-              ))}
-            </div>
-            <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`qi${Date.now()}`,text:""}]}))} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
-          </div>
         )}
         {tab==="notifications"&&(
           <div className="space-y-3">
