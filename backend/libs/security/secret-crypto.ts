@@ -1,4 +1,5 @@
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
+import { hostname } from 'node:os';
 
 /**
  * Field-level encryption for credentials stored at rest: VCS PATs (workspace.access_token) and the
@@ -19,12 +20,15 @@ const ENC_PREFIX = 'enc:v1:';
 
 function getKey(): Buffer {
   const raw = process.env.ENCRYPTION_KEY;
+  // TEMPORARY: hostname is appended to pin down a suspected multi-instance/stale-deploy
+  // inconsistency (the boot log shows the var present, but a live request doesn't see it) -
+  // remove this suffix once that's confirmed and fixed.
   if (!raw) {
-    throw new Error('ENCRYPTION_KEY is not configured');
+    throw new Error(`ENCRYPTION_KEY is not configured [host=${hostname()}]`);
   }
   const key = Buffer.from(raw, 'base64url');
   if (key.length !== 32) {
-    throw new Error('ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256)');
+    throw new Error(`ENCRYPTION_KEY must decode to exactly 32 bytes (AES-256) [host=${hostname()}]`);
   }
   return key;
 }
