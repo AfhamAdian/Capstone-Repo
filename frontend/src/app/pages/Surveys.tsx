@@ -20,13 +20,81 @@ import {
 } from "../components/SurveyModals";
 import { PageShell, PageHeader, FieldShell } from "../components/PageShell";
 
+function SurveyResultsPanel({survey}:{survey:Survey}) {
+  const [showRaw,setShowRaw]=useState(false);
+  if(!surveyHasResults(survey)) return null;
+  return (
+    <>
+      <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
+      {survey.analysisError?.startsWith("insufficient_responses")&&(
+        <div className="border border-attention-border bg-attention-surface p-4 text-sm text-attention mb-4">Results are hidden because no responses were collected.</div>
+      )}
+      {survey.themes.length>0&&(
+        <div className="border border-border divide-y divide-border mb-4">
+          {survey.themes.map((t,i)=>(
+            <div key={i} className="flex gap-3 px-4 py-3 items-start">
+              <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
+              <span className="text-sm text-foreground leading-relaxed">{t}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {survey.questionSummaries.length>0&&(
+        <div className="mb-4">
+          <div className="text-sm font-bold text-muted-foreground mb-2">Question-wise Summary</div>
+          <div className="border border-border divide-y divide-border">
+            {survey.questionSummaries.map((q,i)=>(
+              <div key={i} className="px-4 py-3">
+                <div className="text-xs font-bold text-muted-foreground mb-1">Q{i+1} · {q.question}</div>
+                <div className="text-sm text-foreground leading-relaxed">{q.summary}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {survey.rawResponses.length>0&&(
+        <div>
+          <button onClick={()=>setShowRaw(v=>!v)}
+            className="flex items-center gap-2 text-sm font-semibold text-link hover:opacity-75 transition-opacity">
+            <ChevronDown size={13} className={`transition-transform ${showRaw?"rotate-180":""}`}/>
+            {showRaw?"Hide":"Show"} raw responses ({survey.rawResponses.length} questions, {survey.responseCount} respondents)
+          </button>
+          <AnimatePresence>
+            {showRaw&&(
+              <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden mt-4">
+                <div className="space-y-4">
+                  {survey.rawResponses.map((qr,qi)=>(
+                    <div key={qi} className="border border-border">
+                      <div className="bg-muted px-4 py-2.5 border-b border-border flex items-center gap-2">
+                        <span className="text-xs font-bold text-muted-foreground">Q{qi+1}</span>
+                        <span className="text-sm font-semibold text-foreground">{qr.question}</span>
+                      </div>
+                      <div className="grid grid-cols-2 divide-x divide-border">
+                        {qr.answers.map((ans,ai)=>(
+                          <div key={ai} className={`flex items-start gap-2.5 px-4 py-2.5 ${ai>=2?"border-t border-border":""}`}>
+                            <span className="shrink-0 text-xs font-bold text-muted-foreground mt-0.5 w-5" style={{fontFamily:"var(--font-mono)"}}>R{ai+1}</span>
+                            <span className="text-sm text-foreground leading-snug">{ans}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Survey[];projects:Project[];onBack:()=>void;onClosed?:()=>void;}) {
   const [q,setQ]=useState("");
   const [filterProject,setFilterProject]=useState("all");
   const [filterStatus,setFilterStatus]=useState("all");
   const [sortOrder,setSortOrder]=useState<"newest"|"oldest">("newest");
   const [exId,setExId]=useState<string|null>(null);
-  const [rawId,setRawId]=useState<string|null>(null);
 
   const filtered=useMemo(()=>{
     let list=[...surveys];
@@ -102,7 +170,7 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
             const sTag=proj?projectTagStyle(proj.score):{bg:"bg-muted",text:"text-foreground"};
             return (
               <div key={s.id} className="border-b border-border last:border-b-0">
-                <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);}}}
                   className={`w-full grid gap-3 px-5 py-4 transition-colors text-left items-center ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                   style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
                   <span className={`text-xs font-bold px-2 py-1 w-fit max-w-[140px] truncate ${sTag.bg} ${sTag.text}`}>{proj?.name??s.projectId}</span>
@@ -140,54 +208,11 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
                         <SurveyAskedQuestions questions={s.questions}/>
                         {surveyHasResults(s)&&(
                           <>
-                        <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                         {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)}, closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                         {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
-                        {s.analysisError?.startsWith("insufficient_responses")
-                          ?<div className="border border-attention-border bg-attention-surface p-4 text-sm text-attention mb-4">Results are hidden because no responses were collected.</div>
-                          :s.aiInsight&&<p className="text-sm text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
-                        {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
-                        {s.themes.length>0&&<div className="border border-border divide-y divide-border mb-4">
-                          {s.themes.map((t,i)=>(
-                            <div key={i} className="flex gap-3 px-4 py-3 items-start">
-                              <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                              <span className="text-sm text-foreground leading-relaxed">{t}</span>
-                            </div>
-                          ))}
-                        </div>}
-                        {s.rawResponses.length>0&&(
-                          <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
-                            className="flex items-center gap-1.5 text-sm font-semibold text-link hover:opacity-75 transition-opacity">
-                            <ChevronDown size={13} className={`transition-transform ${rawId===s.id?"rotate-180":""}`}/>
-                            {rawId===s.id?"Hide":"Show"} raw responses ({s.rawResponses.length} questions)
-                          </button>
-                        )}
-                        <AnimatePresence>
-                          {rawId===s.id&&s.rawResponses.length>0&&(
-                            <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden mt-4">
-                              <div className="space-y-3">
-                                {s.rawResponses.map((qr,qi)=>(
-                                  <div key={qi} className="border border-border">
-                                    <div className="bg-muted px-4 py-2 border-b border-border flex items-center gap-2">
-                                      <span className="text-xs font-bold text-muted-foreground">Q{qi+1}</span>
-                                      <span className="text-sm font-semibold text-foreground">{qr.question}</span>
-                                    </div>
-                                    <div className="grid grid-cols-2 divide-x divide-border">
-                                      {qr.answers.map((ans,ai)=>(
-                                        <div key={ai} className={`flex gap-2.5 px-4 py-2.5 items-start ${ai>=2?"border-t border-border":""}`}>
-                                          <span className="text-xs font-bold text-muted-foreground shrink-0 mt-0.5 w-5" style={{fontFamily:"var(--font-mono)"}}>R{ai+1}</span>
-                                          <span className="text-sm text-foreground leading-snug">{ans}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
                           </>
                         )}
+                        <SurveyResultsPanel survey={s}/>
                       </div>
                     </motion.div>
                   )}
@@ -204,12 +229,11 @@ export function GlobalSurveysView({surveys,projects,onBack,onClosed}:{surveys:Su
 
 export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,loading}:{project:Project;surveys:Survey[];onSurveySent?:()=>void;onRefresh?:()=>void;loadError?:string|null;loading?:boolean;}) {
   const ps=surveys.filter(s=>s.projectId===project.id);
-  const completed=ps.filter(s=>surveyHasResults(s)&&(s.themes.length>0||Boolean(s.scores)||Boolean(s.aiInsight)));
+  const completed=ps.filter(s=>surveyHasResults(s)&&(s.themes.length>0||Boolean(s.scores)||Boolean(s.aiInsight)||s.questionSummaries.length>0));
   const {settings,update,customGuidance,audienceSize}=useProjectSurveySettings(project.id);
   const guidance=settings.guidance;
   const [iIdx,setIIdx]=useState(0);
   const [exId,setExId]=useState<string|null>(null);
-  const [rawId,setRawId]=useState<string|null>(null);
   const [showRubric,setShowRubric]=useState(false);
   const [showSend,setShowSend]=useState(false);
   const [showGenerateDemo,setShowGenerateDemo]=useState(false);
@@ -437,24 +461,9 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                   </div>
                 )}
 
-                {/* AI summary */}
-                <div className="text-base text-foreground leading-relaxed mb-4 font-medium">
-                  {completed[iIdx].aiInsight}
-                </div>
-
                 <SurveyAskedQuestions questions={completed[iIdx].questions}/>
 
-                {/* Themes */}
-                {completed[iIdx].themes.length>0&&(
-                  <div className="border border-border divide-y divide-border">
-                    {completed[iIdx].themes.map((t,i)=>(
-                      <div key={i} className="flex gap-3 px-4 py-3 items-start">
-                        <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                        <span className="text-base text-foreground leading-relaxed">{t}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <SurveyResultsPanel survey={completed[iIdx]}/>
 
                 {completed.length>1&&(
                   <div className="flex items-center gap-2 mt-4">
@@ -554,7 +563,7 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
               return (
                 <div key={s.id} className="border-b border-border last:border-b-0">
                   {/* Row */}
-                  <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);setRawId(null);}}}
+                  <div role={surveyCanExpand(s)?"button":undefined} onClick={()=>{if(surveyCanExpand(s)){setExId(isEx?null:s.id);}}}
                     className={`w-full grid gap-3 items-center px-4 py-3.5 transition-colors text-left ${surveyCanExpand(s)?"hover:bg-muted/40 cursor-pointer":"cursor-default"}`}
                     style={{gridTemplateColumns:SURVEY_HISTORY_COLS}}>
 
@@ -617,58 +626,12 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
                             <SurveyAskedQuestions questions={s.questions}/>
                             {surveyHasResults(s)&&(
                               <>
-                            <div className="text-sm font-bold text-muted-foreground mb-3">AI Summary</div>
                             {surveyDeliveryChannels(s)&&<div className="text-xs text-muted-foreground mb-3">Delivered via {surveyDeliveryChannels(s)}, closed {s.closedAt?fmtDate(s.closedAt):`by ${fmtDate(s.delivery?.expiresAt||"")}`}</div>}
                             {s.scores&&<SurveyCategoryScores scores={s.scores}/>}
-                            {s.analysisError?.startsWith("insufficient_responses")
-                              ?<div className="border border-attention-border bg-attention-surface p-4 text-sm text-attention mb-4">Results are hidden because no responses were collected.</div>
-                              :s.aiInsight&&<p className="text-sm text-foreground leading-relaxed mb-4">{s.aiInsight}</p>}
-                            {s.analysisError?.startsWith("raw_responses_hidden")&&<div className="text-xs text-muted-foreground mb-3">Individual answers stay hidden until the anonymous minimum is reached. Category scores above are from AI analysis.</div>}
-                            {s.themes.length>0&&<div className="border border-border divide-y divide-border">
-                              {s.themes.map((t,i)=>(
-                                <div key={i} className="flex gap-3 px-4 py-3 items-start">
-                                  <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs font-bold mt-0.5">{i+1}</span>
-                                  <span className="text-sm text-foreground leading-relaxed">{t}</span>
-                                </div>
-                              ))}
-                            </div>}
                               </>
                             )}
+                            <SurveyResultsPanel survey={s}/>
                           </div>
-                          {/* Raw responses */}
-                          {s.rawResponses.length>0&&(
-                            <div className="px-5 py-3.5">
-                              <button onClick={()=>setRawId(rawId===s.id?null:s.id)}
-                                className="flex items-center gap-2 text-sm font-semibold text-link hover:opacity-75 transition-opacity">
-                                <ChevronDown size={13} className={`transition-transform ${rawId===s.id?"rotate-180":""}`}/>
-                                {rawId===s.id?"Hide":"Show"} raw responses ({s.rawResponses.length} questions, {s.responseCount} respondents)
-                              </button>
-                              <AnimatePresence>
-                                {rawId===s.id&&(
-                                  <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.14}} className="overflow-hidden mt-4">
-                                    <div className="space-y-4">
-                                      {s.rawResponses.map((qr,qi)=>(
-                                        <div key={qi} className="border border-border">
-                                          <div className="bg-muted px-4 py-2.5 border-b border-border flex items-center gap-2">
-                                            <span className="text-xs font-bold text-muted-foreground">Q{qi+1}</span>
-                                            <span className="text-sm font-semibold text-foreground">{qr.question}</span>
-                                          </div>
-                                          <div className="grid grid-cols-2 divide-x divide-border">
-                                            {qr.answers.map((ans,ai)=>(
-                                              <div key={ai} className={`flex items-start gap-2.5 px-4 py-2.5 ${ai>=2?"border-t border-border":""}`}>
-                                                <span className="shrink-0 text-xs font-bold text-muted-foreground mt-0.5 w-5" style={{fontFamily:"var(--font-mono)"}}>R{ai+1}</span>
-                                                <span className="text-sm text-foreground leading-snug">{ans}</span>
-                                              </div>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
                         </div>
                       </motion.div>
                     )}

@@ -1,5 +1,5 @@
 import { assertSupabaseClient } from '../config/supabase.js';
-import type { GeneratedSurveyQuestion, SurveyHealthContext, SurveyQuestionCategory } from '@libs/ai/index.js';
+import type { GeneratedSurveyQuestion, QuestionSummary, SurveyHealthContext, SurveyQuestionCategory } from '@libs/ai/index.js';
 import { formatSupabaseError, insertRow, updateMatching } from './supabase-write.js';
 
 export const RUBRIC_CATEGORIES = [
@@ -27,6 +27,7 @@ export interface SurveyDeliveryResults {
 export interface SurveyInsight {
   aiInsight: string | null;
   themes: string[];
+  questionSummaries: QuestionSummary[];
   scores: {
     security: number | null;
     reliability: number | null;

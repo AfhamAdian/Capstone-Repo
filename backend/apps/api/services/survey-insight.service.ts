@@ -49,6 +49,7 @@ export async function analyzeAndSaveSurveyInsight(surveyId: number): Promise<voi
   const analysis = await getAiClient().analyzeSurveyResponses({
     projectName,
     healthContext: survey.health_context ?? undefined,
+    totalRespondents: counts.responseCount,
     rawResponses: rawResponses.map((r) => ({
       question: r.question,
       category: categoryForAnalysis(r.category),
@@ -59,17 +60,13 @@ export async function analyzeAndSaveSurveyInsight(surveyId: number): Promise<voi
   await saveInsight(surveyId, {
     aiInsight: analysis.aiInsight,
     themes: analysis.themes,
+    questionSummaries: analysis.questionSummaries,
     scores: analysis.scores,
     aiModel: env.geminiApiKey ? env.geminiModel : 'stub',
     generatedAt: new Date().toISOString(),
   });
 
-  await updateSurveyStatus(surveyId, 'completed', {
-    completedAt: new Date(),
-    analysisError: counts.responseCount < env.surveyMinAnonymousResponses
-      ? `raw_responses_hidden:${counts.responseCount}/${env.surveyMinAnonymousResponses}`
-      : null,
-  });
+  await updateSurveyStatus(surveyId, 'completed', { completedAt: new Date() });
 
   log.info({ surveyId, responseCount: counts.responseCount }, 'survey insight generated');
 }

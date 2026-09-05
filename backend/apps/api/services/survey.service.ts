@@ -3,7 +3,7 @@
  * Admin-facing survey lifecycle: question generation, create+send, listing, detail, completion, quota.
  */
 
-import type { AiClient, GeneratedSurveyQuestion, ScoredSurveyQuestion } from '@libs/ai/index.js';
+import type { AiClient, GeneratedSurveyQuestion, QuestionSummary, ScoredSurveyQuestion } from '@libs/ai/index.js';
 import { dedupeQuestions } from '@libs/ai/index.js';
 import type { SurveyQueueManager } from '@libs/queue/index.js';
 import { logger } from '@libs/logger.js';
@@ -116,6 +116,7 @@ export interface SurveyListItem {
   scores: SurveyScores | null;
   themes: string[];
   aiInsight: string | null;
+  questionSummaries: QuestionSummary[];
   publicUrl: string | null;
 }
 
@@ -374,10 +375,7 @@ export class SurveyService {
 
     const projectName = await getProjectName(survey.project_id);
     const listItem = await this.toListItem(survey, projectName);
-    const rawResponses =
-      listItem.responseCount >= env.surveyMinAnonymousResponses
-        ? await getRawResponsesForSurvey(surveyId)
-        : [];
+    const rawResponses = await getRawResponsesForSurvey(surveyId);
 
     return {
       ...listItem,
@@ -556,6 +554,7 @@ export class SurveyService {
         : null,
       themes: insight?.themes ?? [],
       aiInsight: insight?.aiInsight ?? null,
+      questionSummaries: insight?.questionSummaries ?? [],
       publicUrl: survey.status === 'active' ? safePublicSurveyUrl(survey) : null,
     };
   }

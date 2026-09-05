@@ -20,6 +20,7 @@ function fakeAiClient(overrides: Partial<AiClient> = {}): AiClient {
       scores: { security: 0, reliability: 0, maintainability: 0, cicdDeploymentHealth: 0, teamHealth: 0, engineeringProcess: 0, planningExecution: 0 },
       themes: [],
       aiInsight: '',
+      questionSummaries: [],
     }),
     ...overrides,
   };
