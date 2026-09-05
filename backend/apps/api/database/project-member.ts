@@ -70,6 +70,23 @@ export async function countProjectsForUser(userId: number): Promise<number> {
   return count ?? 0;
 }
 
+/**
+ * Every project with its owning workspace. The periodic sync needs `workspace_id`
+ * to group projects that fall back to the same workspace PAT, so their external
+ * API calls can be spaced apart instead of bursting against one rate limit.
+ */
+export async function listAllProjectsWithWorkspace(): Promise<{ id: number; workspaceId: number | null }[]> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client.from('project').select('id, workspace_id');
+  if (error) {
+    throw new Error(`Failed to list projects: ${error.message}`);
+  }
+  return (data ?? []).map((p) => ({
+    id: p.id as number,
+    workspaceId: (p.workspace_id as number | null) ?? null,
+  }));
+}
+
 export async function getAllProjectIds(): Promise<number[]> {
   const client = assertSupabaseClient();
   const { data, error } = await client.from('project').select('id');

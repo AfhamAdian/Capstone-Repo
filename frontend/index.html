@@ -1,22 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pulse — engineering project health</title>
+    <meta name="description" content="Pulse tracks engineering project health across code quality, delivery, and team signals, and records the actions teams take in response." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
+    <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
+    <script>
+      // Applies the remembered theme before first paint so a dark-mode reload doesn't
+      // flash light. Mirrors readInitialTheme() in src/app/hooks/useTheme.ts.
+      (function () {
+        try {
+          var stored = localStorage.getItem('pulse.theme');
+          var dark = stored === 'dark' || (stored !== 'light' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (e) {}
+      })();
+    </script>
+  </head>
 
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>Implement Dual Theme Support</title>
-      <meta name="description" content="This web application offers users a seamless experience with dual theme support, allowing easy switching between light and dark modes while ensuring a consistent design across all components." />
-      <meta name="robots" content="noindex, nofollow" />
-      <style>html, body { height: 100%; margin: 0; } #root { height: 100%; }</style>
-      
-    </head>
-
-    <body>
-      
-      <div id="root"></div>
-      <script type="module" src="/src/main.tsx"></script>
-      
-    </body>
-  </html>
-  
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

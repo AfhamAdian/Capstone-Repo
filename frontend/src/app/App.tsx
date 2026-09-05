@@ -21,7 +21,7 @@ import { SyncProgressOverlay } from "./components/SyncProgressOverlay";
 function AuthLoadingGate() {
   const {isAuthLoading}=useWorkspace();
   if(isAuthLoading){
-    return <div className="h-screen flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
+    return <div className="min-h-dvh flex items-center justify-center bg-background text-muted-foreground text-sm">Loading…</div>;
   }
   return <Outlet/>;
 }

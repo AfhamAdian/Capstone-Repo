@@ -2,7 +2,14 @@
  * Queue module exports
  */
 
-export { QueueManager, type QueueConfig, type SyncJobData } from './queue-manager.js';
+export { QueueManager, type QueueConfig, type SyncJobData, type EnqueueOptions } from './queue-manager.js';
+export {
+  SyncScheduleQueue,
+  schedulerIdFor,
+  type SyncScheduleQueueConfig,
+  type ScheduledSyncTickData,
+  type ScheduledSyncTime,
+} from './sync-schedule-queue.js';
 export {
   ActionEmbeddingQueue,
   type ActionEmbeddingJobData,

@@ -47,7 +47,7 @@ export function CloseSurveyFormButton({surveyId,onClosed,mode}:{surveyId:string;
   const idleLabel=mode==="score"?"Retry scoring":"Close form";
   return (
     <button type="button" disabled={busy} onClick={event=>{void closeForm(event);}}
-      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-amber-500/50 text-amber-700 dark:text-amber-400 px-2 py-1 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50">
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-attention-border text-attention px-2 py-1 hover:bg-attention/10 disabled:opacity-50">
       {busy?"Closing…":idleLabel}
     </button>
   );
@@ -67,7 +67,7 @@ export function CopySurveyLinkButton({url}:{url:string}) {
   };
   return (
     <button type="button" title={copied?"Copied":"Copy survey link"} onClick={event=>{void copy(event);}}
-      className="shrink-0 border border-border px-1.5 py-1 text-muted-foreground hover:text-primary hover:border-primary">
+      className="shrink-0 border border-border px-1.5 py-1 text-muted-foreground hover:text-link hover:border-primary">
       {copied?<Check size={13}/>:<Link2 size={13}/>}
     </button>
   );
@@ -89,7 +89,7 @@ export function RemindSurveyButton({surveyId,onDone}:{surveyId:string;onDone?:()
   };
   return (
     <button type="button" disabled={busy} title="Post an anonymous reminder to team channels" onClick={event=>{void remind(event);}}
-      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-primary disabled:opacity-50">
+      className="shrink-0 whitespace-nowrap text-xs font-semibold border border-border px-2 py-1 text-foreground hover:border-primary hover:text-link disabled:opacity-50">
       {busy?"Sending…":"Remind"}
     </button>
   );
@@ -105,8 +105,8 @@ export function SurveyAskedQuestions({questions}:{questions?:GeneratedSurveyQues
           <div key={`${q.questionText}-${i}`} className="flex gap-3 px-4 py-3 items-start">
             <span className="shrink-0 w-5 h-5 flex items-center justify-center bg-muted text-xs font-bold mt-0.5">{i+1}</span>
             <div className="min-w-0">
-              <div className="text-[14px] font-semibold text-foreground">{q.questionText}</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{q.category} · {q.questionType==="scale"?"Scale 1–5":"Text"}</div>
+              <div className="text-sm font-semibold text-foreground">{q.questionText}</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{q.category}, {q.questionType==="scale"?"scale of 1 to 5":"free text"}</div>
             </div>
           </div>
         ))}
@@ -120,7 +120,7 @@ export function SurveyCategoryScores({scores}:{scores:NonNullable<Survey["scores
     <div className="grid grid-cols-4 sm:grid-cols-7 gap-2 mb-4">
       {SURVEY_CATEGORY_KEYS.map((k)=>(
         <div key={k} className="border border-border px-2 py-2 text-center">
-          <div className="text-[10px] font-semibold text-muted-foreground mb-1 leading-tight">{SURVEY_CATEGORY_LABELS[k]}</div>
+          <div className="text-xs font-semibold text-muted-foreground mb-1 leading-tight">{SURVEY_CATEGORY_LABELS[k]}</div>
           <div className="text-lg font-bold tabular-nums" style={{fontFamily:"var(--font-mono)",color:hColor(scores[k])}}>{scoreInt(scores[k])}</div>
         </div>
       ))}
@@ -194,7 +194,7 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
     <motion.div role="dialog" aria-modal="true" aria-labelledby="review-survey-title" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeReview();}}>
       <motion.div initial={{scale:0.97,opacity:0}} animate={{scale:1,opacity:1}} exit={{scale:0.97,opacity:0}}
-        onClick={event=>event.stopPropagation()} className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-card border border-border shadow-2xl">
+        onClick={event=>event.stopPropagation()} className="w-full max-w-2xl max-h-[88vh] flex flex-col bg-card border border-border shadow-overlay">
         <div className="flex items-start justify-between px-6 py-5 border-b border-border">
           <div>
             <h2 id="review-survey-title" className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Review Scheduled Survey</h2>
@@ -207,18 +207,18 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
             <div className="border border-border bg-muted/30 p-4">
               <div className="text-sm font-bold mb-1">AI health context</div>
               <p className="text-sm text-muted-foreground">
-                Captured {fmtDate(health.capturedAt)} · Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
-                {health.trend?.overall?.delta==null?"":` · Trend ${health.trend.overall.delta>0?"+":""}${health.trend.overall.delta.toFixed(1)}`}
+                Captured {fmtDate(health.capturedAt)}. Overall {health.overallScore==null?"unavailable":Math.round(health.overallScore)}
+                {health.trend?.overall?.delta==null?"":`, trending ${health.trend.overall.delta>0?"+":""}${health.trend.overall.delta.toFixed(1)}`}
               </p>
               {surveyIncidentLines(health).length>0&&(
                 <ul className="mt-3 space-y-1 text-sm text-foreground">
-                  {surveyIncidentLines(health).map(line=><li key={line}>· {line}</li>)}
+                  {surveyIncidentLines(health).map(line=><li key={line} className="list-disc ml-4">{line}</li>)}
                 </ul>
               )}
               <p className="text-xs text-muted-foreground mt-2">Gemini uses this snapshot and these incidents to focus questions, but scores responses independently.</p>
             </div>
           )}
-          {error&&<div className="border border-red-400/50 bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-600">{error}</div>}
+          {error&&<div className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
           <div className="space-y-3">
             {questions.map((question,index)=>(
               <div key={question.id} className="border border-border p-3">
@@ -248,7 +248,7 @@ export function ReviewScheduledSurveyModal({survey,onClose,onChanged}:{
               :survey.status==="paused"
               ?<button disabled={saving} onClick={()=>void transition("resume")} className="border border-border px-3 py-2 text-sm font-semibold">Resume</button>
               :<button disabled={saving||!canEdit} onClick={()=>void transition("pause")} className="border border-border px-3 py-2 text-sm font-semibold">Pause</button>}
-            <button disabled={saving||!canEdit} onClick={()=>void transition("cancel")} className="border border-red-400/50 text-red-600 px-3 py-2 text-sm font-semibold">Cancel</button>
+            <button disabled={saving||!canEdit} onClick={()=>void transition("cancel")} className="border border-destructive/40 text-destructive px-3 py-2 text-sm font-semibold">Cancel</button>
           </div>
           <button disabled={saving||!canEdit||questions.every(q=>!q.text.trim())} onClick={()=>void save()}
             className="bg-primary text-primary-foreground px-5 py-2 text-sm font-semibold disabled:opacity-40">{saving?"Saving…":"Save questions"}</button>
@@ -368,7 +368,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={()=>{void closeModal();}}>
       <motion.div initial={{scale:0.97,y:8,opacity:0}} animate={{scale:1,y:0,opacity:1}} exit={{scale:0.97,y:8,opacity:0}} transition={{duration:0.16}}
-        onClick={e=>e.stopPropagation()} className="w-full max-w-2xl bg-card border border-border shadow-2xl flex flex-col max-h-[88vh]">
+        onClick={e=>e.stopPropagation()} className="w-full max-w-2xl bg-card border border-border shadow-overlay flex flex-col max-h-[88vh]">
 
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
@@ -377,7 +377,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
             </div>
             <div className="text-sm text-muted-foreground mt-0.5">
               {project.name}
-              {scheduledSendAt&&step!=="sent"?` · Auto-sends ${fmtDate(scheduledSendAt)} unless you send now`:""}
+              {scheduledSendAt&&step!=="sent"?`. Auto-sends ${fmtDate(scheduledSendAt)} unless you send it now.`:""}
             </div>
           </div>
           <button onClick={()=>{void closeModal();}} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18}/></button>
@@ -385,25 +385,25 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
 
         {step==="generating"||step==="sending"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-3 p-10">
-            <RefreshCw size={24} className="animate-spin text-primary"/>
+            <RefreshCw size={24} className="animate-spin text-link"/>
             <div className="text-base text-muted-foreground text-center max-w-sm">{step==="generating"?"AI is drafting and scoring questions for this survey…":"Queuing delivery of your reviewed questions…"}</div>
           </div>
         ):step==="error"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
-            <AlertTriangle size={28} className="text-red-500"/>
+            <AlertTriangle size={28} className="text-destructive"/>
             <div className="text-base text-foreground text-center max-w-sm">{errorMessage}</div>
             <button onClick={()=>{if(isReal) void generate(true); else setStep("edit");}} className="bg-primary text-primary-foreground px-6 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Try again</button>
           </div>
         ):step==="sent"?(
           <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10">
-            <div className="w-14 h-14 bg-emerald-500 flex items-center justify-center"><Check size={26} className="text-white"/></div>
+            <div className="w-14 h-14 bg-health-good flex items-center justify-center"><Check size={26} className="text-white"/></div>
             <div className="text-2xl font-bold text-center" style={{fontFamily:"var(--font-display)"}}>{demoOnly?"Draft saved — nothing sent":isReal?"Survey queued":"Survey sent successfully"}</div>
             <div className="text-base text-muted-foreground text-center max-w-md">
               {demoOnly
                 ? `${questions.filter(q=>q.text.trim()).length} questions stored. You can keep editing until ${scheduledSendAt?fmtDate(scheduledSendAt):"the auto-send window"}, or use Send Survey Now to broadcast now.`
                 : isReal
                 ? `${sentResult?.questionCount??questions.length} reviewed questions will be posted to team channels in the background. Watch Survey History for Active status.`
-                :`Sent to ${project.name} team · ${questions.length} questions · responses due in 48h`}
+                :`Sent to the ${project.name} team. ${questions.length} questions, answers due within 48 hours.`}
             </div>
             <button onClick={()=>{void closeModal();}} className="mt-2 bg-primary text-primary-foreground px-8 py-2.5 text-base font-semibold hover:opacity-90 transition-opacity" style={{fontFamily:"var(--font-display)"}}>Done</button>
           </div>
@@ -412,17 +412,17 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
             {/* Preview banner */}
             <div className="bg-muted px-6 py-3 border-b border-border flex items-center justify-between">
               <span className="text-sm font-semibold text-muted-foreground">Preview — how recipients will see this survey</span>
-              <button onClick={()=>setStep("edit")} className="text-sm text-primary font-semibold hover:opacity-75">← Edit questions</button>
+              <button onClick={()=>setStep("edit")} className="text-sm text-link font-semibold hover:opacity-75">← Edit questions</button>
             </div>
             <div className="px-8 py-8 space-y-6">
               <div>
                 <div className="text-2xl font-bold mb-1" style={{fontFamily:"var(--font-display)"}}>Team Pulse — {project.name}</div>
-                <div className="text-sm text-muted-foreground">{questions.length} questions · ~3 minutes · Anonymous</div>
+                <div className="text-sm text-muted-foreground">{questions.length} questions, about 3 minutes, answered anonymously</div>
               </div>
               {questions.filter(q=>q.text.trim()).map((q,i)=>(
                 <div key={q.id} className="border border-border bg-muted/20 p-5">
                   <div className="text-sm font-bold text-muted-foreground mb-2">Q{i+1}</div>
-                  <div className="text-[15px] font-semibold text-foreground">{q.text}</div>
+                  <div className="text-base font-semibold text-foreground">{q.text}</div>
                   {q.questionType==="scale"?(
                     <div className="flex gap-2 mt-3">{[1,2,3,4,5].map(n=>(
                       <div key={n} className="w-10 h-10 border-2 border-border flex items-center justify-center text-sm font-bold text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{n}</div>
@@ -437,8 +437,8 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
         ):(
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
             {errorMessage&&(
-              <div className="flex items-start gap-3 px-4 py-3.5 border border-red-400/50 bg-red-50 dark:bg-red-950/20">
-                <AlertTriangle size={16} className="shrink-0 mt-0.5 text-red-500"/>
+              <div className="flex items-start gap-3 px-4 py-3.5 border border-destructive/40 bg-destructive/10">
+                <AlertTriangle size={16} className="shrink-0 mt-0.5 text-destructive"/>
                 <div className="text-sm font-semibold text-foreground">{errorMessage}</div>
               </div>
             )}
@@ -449,8 +449,8 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
                 <label className="text-sm font-semibold text-foreground mb-1 block" style={{fontFamily:"var(--font-display)"}}>Reason for sending</label>
                 <div className="flex items-center gap-2">
                   <input value={trigger} onChange={e=>setTrigger(e.target.value)} placeholder="e.g. Sprint retro follow-up"
-                    className="flex-1 bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary transition-colors"/>
-                  <button onClick={()=>{void generate(true);}} className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-primary hover:opacity-75 transition-opacity px-2">
+                    className="flex-1 bg-card border border-border px-3 py-2 text-sm focus:border-primary transition-colors"/>
+                  <button onClick={()=>{void generate(true);}} className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-link hover:opacity-75 transition-opacity px-2">
                     <RefreshCw size={13}/> Regenerate
                   </button>
                 </div>
@@ -460,21 +460,21 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
             {/* Quota warning */}
             {demoOnly?(
               <div className="flex items-start gap-3 px-4 py-3.5 border border-border bg-muted/30">
-                <Sparkles size={16} className="shrink-0 mt-0.5 text-primary"/>
+                <Sparkles size={16} className="shrink-0 mt-0.5 text-link"/>
                 <div className="text-sm text-muted-foreground">
                   Questions are saved as a draft{scheduledSendAt?` and auto-send ${fmtDate(scheduledSendAt)}`:""}. Edit until this window closes, then use Send Survey Now if you want to broadcast immediately.
                 </div>
               </div>
             ):quota&&(
-              <div className={`flex items-start gap-3 px-4 py-3.5 border ${remaining<=1?"border-amber-400/50 bg-amber-50 dark:bg-amber-950/20":"border-border bg-muted/30"}`}>
-                <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${remaining<=1?"text-amber-500":"text-muted-foreground"}`}/>
+              <div className={`flex items-start gap-3 px-4 py-3.5 border ${remaining<=1?"border-attention-border bg-attention-surface":"border-border bg-muted/30"}`}>
+                <AlertTriangle size={16} className={`shrink-0 mt-0.5 ${remaining<=1?"text-attention":"text-muted-foreground"}`}/>
                 <div>
                   <div className="text-sm font-semibold text-foreground">
                     Sending this uses 1 of your {remaining} remaining survey{remaining!==1?"s":""} this month
                   </div>
                   <div className="text-sm text-muted-foreground mt-0.5">
                     Quota: {quota.used} used / {quota.limit} per month
-                    {audienceSize?` · Settings team is ${audienceSize}. Response rate uses developers in projectmember.`:""}
+                    {audienceSize?`. The Settings team lists ${audienceSize}; the response rate counts developers on the project.`:""}
                   </div>
                 </div>
               </div>
@@ -489,22 +489,22 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
                   <div className="flex-1 space-y-1.5">
                     {q.category&&(
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold uppercase text-muted-foreground tracking-wide">{q.category}</span>
+                        <span className="text-xs font-semibold text-muted-foreground">{q.category}</span>
                         <select aria-label={`Type for question ${i+1}`} value={q.questionType}
                           onChange={e=>setQuestions(prev=>prev.map(item=>item.id===q.id?{...item,questionType:e.target.value as "text"|"scale"}:item))}
                           className="text-xs bg-card border border-border px-1.5 py-1">
                           <option value="text">Text</option><option value="scale">Scale 1–5</option>
                         </select>
-                        {q.score&&q.score.overall>0&&<span className="text-xs font-semibold text-primary" title="AI quality score">score {Math.round(q.score.overall)}</span>}
+                        {q.score&&q.score.overall>0&&<span className="text-xs font-semibold text-link" title="AI quality score">score {Math.round(q.score.overall)}</span>}
                       </div>
                     )}
                     <textarea value={q.text} rows={2} onChange={e=>updateQ(q.id,e.target.value)} placeholder="Enter question…"
-                      className="w-full bg-card border border-border px-3 py-2 text-[14px] outline-none focus:border-primary resize-none transition-colors"/>
+                      className="w-full bg-card border border-border px-3 py-2 text-sm focus:border-primary resize-none transition-colors"/>
                   </div>
-                  <button onClick={()=>removeQ(q.id)} className="text-muted-foreground hover:text-red-500 transition-colors mt-1 shrink-0"><X size={14}/></button>
+                  <button onClick={()=>removeQ(q.id)} className="text-muted-foreground hover:text-destructive transition-colors mt-1 shrink-0"><X size={14}/></button>
                 </div>
               ))}
-              <button onClick={addQ} className="flex items-center gap-1.5 text-sm text-primary font-semibold hover:opacity-75 transition-opacity mt-1">
+              <button onClick={addQ} className="flex items-center gap-1.5 text-sm text-link font-semibold hover:opacity-75 transition-opacity mt-1">
                 <Plus size={13}/> Add question
               </button>
             </div>
@@ -515,7 +515,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
           <div className="px-6 py-4 border-t border-border flex items-center justify-between">
             {step==="edit"?(
               <>
-                <button onClick={()=>setStep("preview")} className="text-[15px] font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
+                <button onClick={()=>setStep("preview")} className="text-base font-medium text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1.5">
                   <ChevronRight size={14}/> Preview
                 </button>
                 <button onClick={send} disabled={questions.filter(q=>q.text.trim()).length===0}
@@ -526,7 +526,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
               </>
             ):(
               <>
-                <button onClick={()=>setStep("edit")} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors">← Edit</button>
+                <button onClick={()=>setStep("edit")} className="text-base text-muted-foreground hover:text-foreground transition-colors">← Edit</button>
                 <button onClick={send}
                   className="flex items-center gap-2 bg-primary text-primary-foreground text-base font-semibold px-6 py-2.5 hover:opacity-90 transition-opacity"
                   style={{fontFamily:"var(--font-display)"}}>
@@ -542,13 +542,13 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
 }
 
 const RUBRIC_ROWS=[
-  {cat:"Security",icon:<Shield size={14}/>,color:"text-red-600 dark:text-red-400",what:"Dependency & secret vulnerabilities, dependency update lag, SonarQube security rating & hotspots",how:"AI-scored from survey answers tagged Security"},
-  {cat:"Reliability",icon:<Activity size={14}/>,color:"text-blue-600 dark:text-blue-400",what:"Issue reopen/revert rate, flaky tests, test failure rate & coverage, SonarQube reliability rating",how:"AI-scored from survey answers tagged Reliability"},
-  {cat:"Maintainability",icon:<CheckSquare size={14}/>,color:"text-emerald-600 dark:text-emerald-400",what:"SonarQube maintainability rating, code smells, cyclomatic complexity",how:"AI-scored from survey answers tagged Maintainability"},
-  {cat:"CI/CD & Deployment Health",icon:<Zap size={14}/>,color:"text-violet-600 dark:text-violet-400",what:"Deployment frequency, pipeline success rate, pipeline failures",how:"AI-scored from survey answers tagged CI/CD & Deployment Health"},
-  {cat:"Team Health",icon:<Users size={14}/>,color:"text-amber-600 dark:text-amber-400",what:"Bus factor, code ownership concentration, review network density, active contributors",how:"AI-scored from survey answers tagged Team Health"},
-  {cat:"Engineering Process",icon:<Workflow size={14}/>,color:"text-cyan-600 dark:text-cyan-400",what:"Review quality, commit message quality, stale tickets, flow bottlenecks",how:"AI-scored from survey answers tagged Engineering Process"},
-  {cat:"Planning & Execution",icon:<Target size={14}/>,color:"text-orange-600 dark:text-orange-400",what:"Sprint planning accuracy, delivery throughput & focus",how:"AI-scored from survey answers tagged Planning & Execution"},
+  {cat:"Security",icon:<Shield size={14}/>,color:"text-destructive",what:"Dependency & secret vulnerabilities, dependency update lag, SonarQube security rating & hotspots",how:"AI-scored from survey answers tagged Security"},
+  {cat:"Reliability",icon:<Activity size={14}/>,color:"text-link",what:"Issue reopen/revert rate, flaky tests, test failure rate & coverage, SonarQube reliability rating",how:"AI-scored from survey answers tagged Reliability"},
+  {cat:"Maintainability",icon:<CheckSquare size={14}/>,color:"text-health-good",what:"SonarQube maintainability rating, code smells, cyclomatic complexity",how:"AI-scored from survey answers tagged Maintainability"},
+  {cat:"CI/CD & Deployment Health",icon:<Zap size={14}/>,color:"text-chart-5",what:"Deployment frequency, pipeline success rate, pipeline failures",how:"AI-scored from survey answers tagged CI/CD & Deployment Health"},
+  {cat:"Team Health",icon:<Users size={14}/>,color:"text-attention",what:"Bus factor, code ownership concentration, review network density, active contributors",how:"AI-scored from survey answers tagged Team Health"},
+  {cat:"Engineering Process",icon:<Workflow size={14}/>,color:"text-link",what:"Review quality, commit message quality, stale tickets, flow bottlenecks",how:"AI-scored from survey answers tagged Engineering Process"},
+  {cat:"Planning & Execution",icon:<Target size={14}/>,color:"text-attention",what:"Sprint planning accuracy, delivery throughput & focus",how:"AI-scored from survey answers tagged Planning & Execution"},
 ];
 
 export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
@@ -556,7 +556,7 @@ export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <motion.div initial={{scale:0.97,y:8,opacity:0}} animate={{scale:1,y:0,opacity:1}} exit={{scale:0.97,y:8,opacity:0}} transition={{duration:0.16}}
-        onClick={e=>e.stopPropagation()} className="w-full max-w-3xl bg-card border border-border shadow-2xl">
+        onClick={e=>e.stopPropagation()} className="w-full max-w-3xl bg-card border border-border shadow-overlay">
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
             <div className="text-xl font-bold" style={{fontFamily:"var(--font-display)"}}>Survey Scoring Rubric</div>
@@ -573,17 +573,17 @@ export function SurveyRubricPanel({onClose}:{onClose:()=>void}) {
             </div>
             {RUBRIC_ROWS.map(r=>(
               <div key={r.cat} className="grid grid-cols-[190px_1fr_1fr] gap-0 px-4 py-4 items-start hover:bg-muted/30 transition-colors">
-                <div className={`flex items-center gap-2 font-semibold text-[15px] ${r.color}`}>
+                <div className={`flex items-center gap-2 font-semibold text-base ${r.color}`}>
                   {r.icon}{r.cat}
                 </div>
-                <div className="text-[14px] text-foreground leading-relaxed pr-4">{r.what}</div>
-                <div className="text-[14px] text-muted-foreground leading-relaxed">{r.how}</div>
+                <div className="text-sm text-foreground leading-relaxed pr-4">{r.what}</div>
+                <div className="text-sm text-muted-foreground leading-relaxed">{r.how}</div>
               </div>
             ))}
           </div>
           <div className="mt-5 bg-muted/40 border border-border px-5 py-4">
             <div className="text-sm font-bold text-foreground mb-2">Scoring method</div>
-            <div className="text-[14px] text-muted-foreground leading-relaxed">
+            <div className="text-sm text-muted-foreground leading-relaxed">
               These 7 categories mirror the automated risk engine's own scoring dimensions. Each survey question is
               tagged to one category; after the survey closes, AI scores every category 0–100 from the anonymous
               answers alone. This survey score is stored on the survey and kept independent of the automated

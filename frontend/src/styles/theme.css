@@ -1,10 +1,15 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --font-size: 15px;
+  /* 16px root keeps Tailwind's rem scale honest: text-xs 12 / text-sm 14 / text-base 16 / text-lg 18. */
+  --font-size: 16px;
   --font-sans: 'Barlow', sans-serif;
   --font-display: 'Barlow Condensed', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
+
+  /* One page measure, one gutter — every screen uses these via <PageShell>. */
+  --page-measure: 72rem;
+  --page-gutter: 2rem;
 
   --background: #F2F2EE;
   --foreground: #0A0A0E;
@@ -17,37 +22,55 @@
   --secondary: #E8E8E2;
   --secondary-foreground: #0A0A0E;
   --muted: #E4E4DE;
-  --muted-foreground: #6E6E7A;
+  /* 5.61:1 on --background, 6.30:1 on --card. */
+  --muted-foreground: #5F5F6B;
+  /* Dimmer than muted-foreground but still legible (4.0:1 on card) — for de-emphasised hints only. */
+  --muted-foreground-subtle: #76767F;
   --accent: #1A3FFF;
   --accent-foreground: #FFFFFF;
-  --destructive: #D0230C;
+  --destructive: #C41F0A;
   --destructive-foreground: #FFFFFF;
-  --border: rgba(10, 10, 14, 0.1);
+  --border: rgba(10, 10, 14, 0.14);
   --input: transparent;
   --input-background: #EAEAE4;
   --switch-background: #C4C4BE;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: rgba(26, 63, 255, 0.35);
+  --ring: #1A3FFF;
+
+  /* Inline links and accent text on a surface. Split from --primary so button fills
+     and text-on-surface can each hit 4.5:1 in both themes. */
+  --link: #1A3FFF;
+  /* "Needs your attention" accent (pending reviews, warnings). */
+  --attention: #A34A07;
+  --attention-surface: #FDF4E7;
+  --attention-border: rgba(163, 74, 7, 0.32);
+
   --chart-1: #1A3FFF;
-  --chart-2: #059669;
-  --chart-3: #D97706;
-  --chart-4: #D0230C;
-  --chart-5: #7C3AED;
-  --radius: 0.25rem;
+  --chart-2: #037051;
+  --chart-3: #A34A07;
+  --chart-4: #C41F0A;
+  --chart-5: #6D28D9;
+
+  /* The UI is deliberately square — hairline borders carry the structure, not radii. */
+  --radius: 0rem;
+
   --sidebar: #EAEAE4;
   --sidebar-foreground: #0A0A0E;
   --sidebar-primary: #1A3FFF;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #E0E0DA;
+  --sidebar-accent: #DEDED7;
   --sidebar-accent-foreground: #0A0A0E;
-  --sidebar-border: rgba(10, 10, 14, 0.1);
-  --sidebar-ring: rgba(26, 63, 255, 0.35);
+  --sidebar-border: rgba(10, 10, 14, 0.14);
+  --sidebar-ring: #1A3FFF;
 
-  /* Health colors */
-  --health-good: #059669;
-  --health-warn: #D97706;
-  --health-crit: #D0230C;
+  /* Health colors double as text, so all three clear 4.5:1 on card, background and muted. */
+  --health-good: #037051;
+  --health-warn: #A34A07;
+  --health-crit: #C41F0A;
+
+  /* Overlays are the only thing that floats; everything else is flat. */
+  --shadow-overlay: 0 12px 32px -8px rgba(10, 10, 14, 0.22), 0 2px 8px -2px rgba(10, 10, 14, 0.12);
 }
 
 .dark {
@@ -62,35 +85,53 @@
   --secondary: #1E1E26;
   --secondary-foreground: #EFEFEB;
   --muted: #1E1E26;
-  --muted-foreground: #8484A0;
+  /* 7.12:1 on --background, 6.70:1 on --card. */
+  --muted-foreground: #9A9AB4;
+  --muted-foreground-subtle: #7A7A92;
   --accent: #4460FF;
   --accent-foreground: #FFFFFF;
-  --destructive: #E5341C;
-  --destructive-foreground: #FFFFFF;
-  --border: rgba(239, 239, 235, 0.09);
+  --destructive: #F87171;
+  --destructive-foreground: #0C0C10;
+  --border: rgba(239, 239, 235, 0.14);
   --input: rgba(239, 239, 235, 0.06);
   --input-background: #1E1E26;
   --switch-background: #3A3A48;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
-  --ring: rgba(68, 96, 255, 0.4);
-  --chart-1: #5577FF;
+  --ring: #8AA0FF;
+
+  /* #4460FF only reaches 3.8:1 on the dark card, so text steps up a few stops. */
+  --link: #8AA0FF;
+  --attention: #F59E0B;
+  --attention-surface: #241A08;
+  --attention-border: rgba(245, 158, 11, 0.32);
+
+  --chart-1: #7C93FF;
   --chart-2: #10B981;
   --chart-3: #F59E0B;
   --chart-4: #F87171;
   --chart-5: #A78BFA;
+
   --sidebar: #111116;
   --sidebar-foreground: #EFEFEB;
   --sidebar-primary: #4460FF;
   --sidebar-primary-foreground: #FFFFFF;
-  --sidebar-accent: #1A1A22;
+  --sidebar-accent: #22222C;
   --sidebar-accent-foreground: #EFEFEB;
-  --sidebar-border: rgba(239, 239, 235, 0.08);
-  --sidebar-ring: rgba(68, 96, 255, 0.4);
+  --sidebar-border: rgba(239, 239, 235, 0.14);
+  --sidebar-ring: #8AA0FF;
 
   --health-good: #10B981;
   --health-warn: #F59E0B;
   --health-crit: #F87171;
+
+  --shadow-overlay: 0 12px 32px -8px rgba(0, 0, 0, 0.7), 0 2px 8px -2px rgba(0, 0, 0, 0.5);
+}
+
+@theme {
+  /* One extra stop below Tailwind's `sm`, for the point where the top bar has to
+     drop the wordmark to keep the account menu reachable. */
+  --breakpoint-xs: 26rem;
 }
 
 @theme inline {
@@ -106,6 +147,7 @@
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-muted-foreground-subtle: var(--muted-foreground-subtle);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
@@ -115,15 +157,22 @@
   --color-input-background: var(--input-background);
   --color-switch-background: var(--switch-background);
   --color-ring: var(--ring);
+  --color-link: var(--link);
+  --color-attention: var(--attention);
+  --color-attention-surface: var(--attention-surface);
+  --color-attention-border: var(--attention-border);
+  --color-health-good: var(--health-good);
+  --color-health-warn: var(--health-warn);
+  --color-health-crit: var(--health-crit);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
-  --radius-sm: calc(var(--radius) - 2px);
+  --radius-sm: var(--radius);
   --radius-md: var(--radius);
-  --radius-lg: calc(var(--radius) + 4px);
-  --radius-xl: calc(var(--radius) + 8px);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -135,11 +184,12 @@
   --font-family-sans: var(--font-sans);
   --font-family-display: var(--font-display);
   --font-family-mono: var(--font-mono);
+  --shadow-overlay: var(--shadow-overlay);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
 
   body {
@@ -151,10 +201,12 @@
     font-size: var(--font-size);
   }
 
+  /* Display type is condensed uppercase throughout; condensed caps need positive
+     tracking to stay readable, so the tracking lives here instead of per-heading. */
   h1, h2, h3, h4 {
     font-family: var(--font-display);
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.15;
   }
 
   label {
@@ -167,7 +219,7 @@
     font-weight: var(--font-weight-medium);
   }
 
-  input, textarea {
+  input, textarea, select {
     font-family: var(--font-sans);
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
@@ -188,4 +240,42 @@
   ::-webkit-scrollbar-thumb:hover {
     background: var(--muted-foreground);
   }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@utility page-measure {
+  width: 100%;
+  max-width: var(--page-measure);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+/* ── Focus, deliberately unlayered ──────────────────────────────────────────
+   Tailwind utilities live in the `utilities` cascade layer, so a rule inside
+   `@layer base` loses to `outline-none` no matter how specific it is. Unlayered
+   rules beat every layer, so these are what actually guarantee a visible ring. */
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* Search and filter fields wrap their <input> in a bordered box. The box is the
+   control a person sees, so the ring goes there and the inner input stays quiet. */
+.field-shell:focus-within {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.field-shell input:focus,
+.field-shell input:focus-visible {
+  outline: none;
 }

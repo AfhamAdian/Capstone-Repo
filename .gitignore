@@ -9,3 +9,9 @@ node_modules/
 .claude/
 CLAUDE.md
 future-work.md
+.agents/
+
+.codegraph/
+.nvmrc
+
+AGENTS.md

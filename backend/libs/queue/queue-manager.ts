@@ -31,6 +31,25 @@ export interface QueueConfig {
 }
 
 /**
+ * Per-job overrides. Used by the periodic sync, which must not crowd out the
+ * interactive syncs a user is watching in the UI.
+ */
+export interface EnqueueOptions {
+  /**
+   * BullMQ treats unset/0 as the HIGHEST priority, so interactive syncs are left
+   * alone and scheduled work is given a positive (lower) priority.
+   */
+  priority?: number;
+  /** Delay before the job becomes runnable — used to space out same-token projects. */
+  delayMs?: number;
+  /**
+   * Overrides `removeOnComplete: true`. Scheduled jobs retain their completed record
+   * so their deterministic jobId stays reserved and a retried tick can't double-sync.
+   */
+  removeOnCompleteAgeSeconds?: number;
+}
+
+/**
  * Queue manager for coordinating sync jobs
  */
 export class QueueManager {
@@ -49,7 +68,7 @@ export class QueueManager {
   /**
    * Enqueue a sync job for processing
    */
-  async enqueue(jobData: SyncJobData): Promise<string> {
+  async enqueue(jobData: SyncJobData, options: EnqueueOptions = {}): Promise<string> {
     try {
       const job = await this.queue.add('sync-request', jobData, {
         jobId: jobData.jobId,
@@ -58,8 +77,12 @@ export class QueueManager {
           type: 'exponential',
           delay: 2000,
         },
-        removeOnComplete: true,
+        removeOnComplete: options.removeOnCompleteAgeSeconds
+          ? { age: options.removeOnCompleteAgeSeconds }
+          : true,
         removeOnFail: false,
+        ...(options.priority !== undefined ? { priority: options.priority } : {}),
+        ...(options.delayMs ? { delay: options.delayMs } : {}),
       });
 
       return job.id || jobData.jobId;

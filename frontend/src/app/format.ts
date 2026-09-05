@@ -106,15 +106,15 @@ export function hColor(s: number) {
   return "var(--health-crit)";
 }
 export function hClass(s: number) {
-  if (s >= 80) return "text-emerald-600 dark:text-emerald-400";
-  if (s >= 60) return "text-amber-500 dark:text-amber-400";
-  return "text-red-500 dark:text-red-400";
+  if (s >= 80) return "text-health-good";
+  if (s >= 60) return "text-health-warn";
+  return "text-health-crit";
 }
 
 export const ttStyle = {
-  backgroundColor:"var(--card)", border:"1px solid var(--border)", borderRadius:0,
+  backgroundColor:"var(--popover)", border:"1px solid var(--border)", borderRadius:0,
   fontSize:12, color:"var(--foreground)", fontFamily:"var(--font-mono)",
-  boxShadow:"0 4px 20px rgba(0,0,0,0.15)",
+  boxShadow:"var(--shadow-overlay)",
 };
 
 /** Formats a date to YYYY-MM-DD in local time — used to key/compare series data by calendar day. */
@@ -150,15 +150,15 @@ export function actionIncludesProject(action: Pick<Action, "projectIds">, projec
 }
 
 export function triggerColor(trigger: string): string {
-  if (/threshold|exceeded|dropped|declined/i.test(trigger)) return "text-amber-600 dark:text-amber-500";
-  if (/manual|quarterly|pulse/i.test(trigger)) return "text-blue-600 dark:text-blue-400";
+  if (/threshold|exceeded|dropped|declined/i.test(trigger)) return "text-attention";
+  if (/manual|quarterly|pulse/i.test(trigger)) return "text-link";
   return "text-muted-foreground";
 }
 
 export function projectTagStyle(score: number): { bg: string; text: string } {
-  if (score >= 80) return { bg: "bg-emerald-100 dark:bg-emerald-900/30", text: "text-emerald-700 dark:text-emerald-400" };
-  if (score >= 60) return { bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-700 dark:text-amber-400" };
-  return { bg: "bg-red-100 dark:bg-red-900/30", text: "text-red-700 dark:text-red-400" };
+  if (score >= 80) return { bg: "bg-health-good/12", text: "text-health-good" };
+  if (score >= 60) return { bg: "bg-health-warn/12", text: "text-health-warn" };
+  return { bg: "bg-health-crit/12", text: "text-health-crit" };
 }
 
 export function actionSearchModeLabel(mode: ActionSearchMode | null): string {
@@ -208,18 +208,22 @@ export function actionMatchesKeywordSearch(
 }
 
 export const SURVEY_STATUS_CONFIG: Record<SurveyStatus, { c: string; l: string }> = {
-  draft:{c:"text-slate-500",l:"Draft"},
-  active:{c:"text-amber-500",l:"Active"},
-  paused:{c:"text-orange-500",l:"Paused"},
-  closed:{c:"text-slate-500",l:"Closed"},
-  completed:{c:"text-emerald-600 dark:text-emerald-400",l:"Completed"},
-  cancelled:{c:"text-slate-400",l:"Cancelled"},
-  failed:{c:"text-red-500",l:"Failed"},
+  draft:{c:"text-muted-foreground",l:"Draft"},
+  active:{c:"text-health-good",l:"Active"},
+  paused:{c:"text-attention",l:"Paused"},
+  closed:{c:"text-muted-foreground",l:"Closed"},
+  completed:{c:"text-health-good",l:"Completed"},
+  cancelled:{c:"text-muted-foreground",l:"Cancelled"},
+  failed:{c:"text-health-crit",l:"Failed"},
 };
 
 // Keep data and row actions in stable tracks. The table shell supplies horizontal
 // scrolling below this width instead of letting Grid collapse labels into each other.
-export const SURVEY_HISTORY_COLS = "110px 112px minmax(100px,1fr) 104px 88px 48px minmax(210px,max-content)";
+export const SURVEY_HISTORY_COLS = "150px 116px minmax(160px,1fr) 120px 96px 64px minmax(150px,max-content)";
+
+// The tracks above plus six 12px gaps and the row's 20px side padding. Kept next to
+// the track list so the two can't drift apart again.
+export const SURVEY_HISTORY_MIN_WIDTH = 968;
 
 export const surveyResponseRate = (survey: Pick<Survey, "responseCount" | "targetCount">) =>
   survey.targetCount > 0 ? Math.min(100, Math.round((survey.responseCount / survey.targetCount) * 100)) : 0;
@@ -236,7 +240,7 @@ export function surveyCanExpand(s: Survey) {
 }
 
 export function surveyRowStatus(s: Survey) {
-  if (s.status === "closed" && !s.scores) return { c: "text-amber-500", l: "Scoring" };
-  if (s.status === "draft" && (s.questions?.length ?? 0) === 0) return { c: "text-slate-500", l: "Generating" };
+  if (s.status === "closed" && !s.scores) return { c: "text-attention", l: "Scoring" };
+  if (s.status === "draft" && (s.questions?.length ?? 0) === 0) return { c: "text-muted-foreground", l: "Generating" };
   return SURVEY_STATUS_CONFIG[s.status];
 }

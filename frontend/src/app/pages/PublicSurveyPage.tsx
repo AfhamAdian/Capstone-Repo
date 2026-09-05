@@ -43,7 +43,7 @@ export function PublicSurveyPage({ token }: { token: string }) {
     return (
       <div className="fixed inset-0 bg-background flex items-center justify-center p-6">
         <div className="text-center max-w-sm">
-          <AlertTriangle size={28} className="text-red-500 mx-auto mb-4" />
+          <AlertTriangle size={28} className="text-destructive mx-auto mb-4" />
           <h2 className="text-xl font-bold text-foreground mb-2">Link not available</h2>
           <p className="text-base text-muted-foreground">{error ?? "This survey link is invalid or has expired."}</p>
         </div>

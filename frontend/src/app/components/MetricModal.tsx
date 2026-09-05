@@ -31,7 +31,7 @@ export function MetricModal({mk,series,val,onClose}:{mk:string;series:{v:number;
     <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
       className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6" onClick={onClose}>
       <motion.div initial={{scale:0.96,opacity:0,y:8}} animate={{scale:1,opacity:1,y:0}} exit={{scale:0.96,opacity:0,y:8}} transition={{duration:0.16}}
-        onClick={e=>e.stopPropagation()} className="w-full max-w-3xl bg-card border border-border shadow-2xl">
+        onClick={e=>e.stopPropagation()} className="w-full max-w-3xl bg-card border border-border shadow-overlay">
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div className="flex items-center gap-3">
             <span style={{color:meta.color}}>{meta.icon}</span>

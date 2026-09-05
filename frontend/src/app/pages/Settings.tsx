@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
-import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, Plus, RefreshCw, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
+import { ShieldCheck, GitBranch, Workflow, Check, ChevronDown, Link2, X, RefreshCw, AlertCircle, Eye, EyeOff, Mail } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import type { Project } from "../types";
-import { useProjectSurveySettings } from "../hooks/useProjectSurveySettings";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { getProject, updateProjectIntegration, getIntegrationToken, inviteProjectMember, removeProjectMember, type ProjectMemberView } from "../api";
+import { PageShell, PageHeader } from "../components/PageShell";
+import { Switch } from "../components/Switch";
 
 // Presentational metadata only — the editable fields/token/docs live in each connector's RealConnectorSpec.
 interface ConnectorDef { id:string; name:string; icon:React.ReactNode; color:string; description:string; }
 
 const CONNECTORS:ConnectorDef[]=[
   {
-    id:"jira", name:"Jira", color:"text-blue-600",
+    id:"jira", name:"Jira", color:"text-link",
     icon:<svg viewBox="0 0 32 32" width={20} height={20} fill="currentColor"><path d="M15.88 0C9.8 0 4.86 4.94 4.86 11.03c0 3.33 1.5 6.32 3.88 8.3L15.88 32l7.14-12.67c2.38-1.98 3.88-4.97 3.88-8.3C26.9 4.94 21.96 0 15.88 0zm0 15.57a4.54 4.54 0 1 1 0-9.08 4.54 4.54 0 0 1 0 9.08z"/></svg>,
     description:"Pull sprint velocity, ticket closure rate, and open blockers directly from your Jira board.",
   },
   {
-    id:"sonarqube", name:"SonarQube", color:"text-violet-600",
+    id:"sonarqube", name:"SonarQube", color:"text-chart-5",
     icon:<ShieldCheck size={20}/>,
     description:"Track code quality score, code smells, coverage, and technical debt from SonarQube or SonarCloud.",
   },
@@ -105,7 +106,7 @@ function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backend
     finally{ setSaving(false); }
   };
 
-  const inputClass="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground outline-none focus:border-primary transition-colors font-mono";
+  const inputClass="w-full bg-input-background border border-border px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary transition-colors font-mono";
 
   return (
     <div className="border border-border bg-card">
@@ -113,13 +114,13 @@ function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backend
         <div className="flex items-center gap-4">
           <span className={`shrink-0 ${def.color}`}>{def.icon}</span>
           <div>
-            <div className="text-[15px] font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>{def.name}</div>
+            <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>{def.name}</div>
             <div className="text-sm text-muted-foreground mt-0.5">{def.description}</div>
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0 ml-4">
           {configured
-            ? <span className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5"><Check size={13}/>Connected</span>
+            ? <span className="text-sm font-semibold text-health-good flex items-center gap-1.5"><Check size={13}/>Connected</span>
             : <span className="text-sm text-muted-foreground">Not configured</span>}
           <ChevronDown size={15} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
         </div>
@@ -164,12 +165,12 @@ function RealConnectorCard({def,backendProjectId,spec}:{def:ConnectorDef;backend
                     ))}
                   </div>
                   <div className="flex items-center justify-between pt-2 border-t border-border gap-3 flex-wrap">
-                    <a href={spec.docsUrl} target="_blank" rel="noreferrer" className="text-sm text-primary flex items-center gap-1 hover:opacity-75 transition-opacity">
+                    <a href={spec.docsUrl} target="_blank" rel="noreferrer" className="text-sm text-link flex items-center gap-1 hover:opacity-75 transition-opacity">
                       <Link2 size={12}/> View API docs
                     </a>
                     <div className="flex items-center gap-3">
-                      {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
-                      {status==="err"&&<span className="text-sm text-red-500 font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
+                      {status==="ok"&&<span className="text-sm text-health-good font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
+                      {status==="err"&&<span className="text-sm text-destructive font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
                       <button type="button" disabled title="Coming soon"
                         className="flex items-center gap-2 border border-border px-4 py-2 text-sm font-semibold text-foreground opacity-40 cursor-not-allowed"
                         style={{fontFamily:"var(--font-display)"}}>
@@ -236,15 +237,15 @@ function CicdConnectorCard({backendProjectId}:{backendProjectId:string;}) {
     <div className="border border-border bg-card">
       <button onClick={()=>setOpen(!open)} className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/30 transition-colors text-left">
         <div className="flex items-center gap-4">
-          <span className="shrink-0 text-orange-500"><Workflow size={20}/></span>
+          <span className="shrink-0 text-attention"><Workflow size={20}/></span>
           <div>
-            <div className="text-[15px] font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>CI/CD</div>
+            <div className="text-base font-bold text-foreground" style={{fontFamily:"var(--font-display)"}}>CI/CD</div>
             <div className="text-sm text-muted-foreground mt-0.5">Pull pipeline success rate, deployment frequency, and test results from your CI/CD provider.</div>
           </div>
         </div>
         <div className="flex items-center gap-3 shrink-0 ml-4">
           {configured
-            ? <span className="text-sm font-semibold text-emerald-500 flex items-center gap-1.5"><Check size={13}/>Connected</span>
+            ? <span className="text-sm font-semibold text-health-good flex items-center gap-1.5"><Check size={13}/>Connected</span>
             : <span className="text-sm text-muted-foreground">Not configured</span>}
           <ChevronDown size={15} className={`text-muted-foreground transition-transform ${open?"rotate-180":""}`}/>
         </div>
@@ -260,7 +261,7 @@ function CicdConnectorCard({backendProjectId}:{backendProjectId:string;}) {
                   <div>
                     <label className="block text-sm font-semibold text-foreground mb-1.5" style={{fontFamily:"var(--font-display)"}}>Provider</label>
                     <select value={provider} onChange={e=>setProvider(e.target.value)}
-                      className="w-full bg-input-background border border-border px-3 py-2.5 text-[14px] text-foreground outline-none focus:border-primary transition-colors">
+                      className="w-full bg-input-background border border-border px-3 py-2.5 text-sm text-foreground focus:border-primary transition-colors">
                       {CICD_PROVIDERS.map(p=><option key={p.value} value={p.value}>{p.label}</option>)}
                     </select>
                   </div>
@@ -268,8 +269,8 @@ function CicdConnectorCard({backendProjectId}:{backendProjectId:string;}) {
                     Runs on your GitHub connector's repository — no separate credentials needed.
                   </p>
                   <div className="flex items-center justify-end pt-2 border-t border-border gap-3">
-                    {status==="ok"&&<span className="text-sm text-emerald-500 font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
-                    {status==="err"&&<span className="text-sm text-red-500 font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
+                    {status==="ok"&&<span className="text-sm text-health-good font-medium flex items-center gap-1"><Check size={13}/>{msg}</span>}
+                    {status==="err"&&<span className="text-sm text-destructive font-medium flex items-center gap-1"><AlertCircle size={13}/>{msg}</span>}
                     <button onClick={save} disabled={saving}
                       className="flex items-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                       style={{fontFamily:"var(--font-display)"}}>
@@ -396,7 +397,7 @@ function TeamDirectory({backendProjectId,isAdmin}:{backendProjectId:string;isAdm
   return (
     <div>
       <div className="mb-5">
-        <div className="text-[15px] font-bold text-foreground">Team directory — {members.length} member{members.length===1?"":"s"}</div>
+        <div className="text-base font-bold text-foreground">Team directory — {members.length} member{members.length===1?"":"s"}</div>
         <p className="text-sm text-muted-foreground mt-1">{isAdmin
           ? "Invite people by email. They join once they accept the emailed link — new users register, existing users log in and accept. The public survey form stays anonymous."
           : "People assigned to this project. Only admins can invite or remove members."}</p>
@@ -409,14 +410,14 @@ function TeamDirectory({backendProjectId,isAdmin}:{backendProjectId:string;isAdm
         ):members.map(m=>(
           <div key={m.userId} className="flex items-center justify-between px-5 py-4 border-b border-border last:border-b-0 hover:bg-muted/30 transition-colors">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 bg-primary/15 text-primary flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{initials(m)}</div>
-              <div className="text-[15px] font-semibold text-foreground">{m.name??"—"}</div>
+              <div className="w-9 h-9 bg-primary/15 text-link flex items-center justify-center text-sm font-bold" style={{fontFamily:"var(--font-display)"}}>{initials(m)}</div>
+              <div className="text-base font-semibold text-foreground">{m.name??"—"}</div>
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-[15px] text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.email}</span>
+              <span className="text-base text-muted-foreground" style={{fontFamily:"var(--font-mono)"}}>{m.email}</span>
               {isAdmin&&(
                 <button onClick={()=>remove(m.userId)} disabled={removingId===m.userId} title="Remove member"
-                  className="text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-40">
+                  className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40">
                   {removingId===m.userId?<RefreshCw size={15} className="animate-spin"/>:<X size={15}/>}
                 </button>
               )}
@@ -429,36 +430,94 @@ function TeamDirectory({backendProjectId,isAdmin}:{backendProjectId:string;isAdm
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
             <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="Email" type="email"
               onKeyDown={e=>{if(e.key==="Enter") invite();}}
-              className="bg-card border border-border px-3 py-2 text-sm outline-none focus:border-primary"/>
+              className="bg-card border border-border px-3 py-2 text-sm focus:border-primary"/>
             <button onClick={invite} disabled={inviting}
               className="flex items-center justify-center gap-1.5 bg-primary text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed">
               {inviting?<><RefreshCw size={14} className="animate-spin"/>Inviting…</>:<><Mail size={14}/>Invite</>}
             </button>
           </div>
-          {status==="ok"&&<p className="text-sm text-emerald-500 font-medium mt-3 flex items-center gap-1.5"><Check size={13}/>{msg}</p>}
-          {status==="err"&&<p className="text-sm text-red-500 font-medium mt-3 flex items-center gap-1.5"><AlertCircle size={13}/>{msg}</p>}
+          {status==="ok"&&<p className="text-sm text-health-good font-medium mt-3 flex items-center gap-1.5"><Check size={13}/>{msg}</p>}
+          {status==="err"&&<p className="text-sm text-destructive font-medium mt-3 flex items-center gap-1.5"><AlertCircle size={13}/>{msg}</p>}
         </>
       )}
     </div>
   );
 }
 
+const NOTIFICATION_RULES = [
+  {id:"score-drop",     label:"Health score drops below 60",            detail:"As soon as a sync produces the new score",  on:true},
+  {id:"score-swing",    label:"Score moves more than 8 points in a week", detail:"Included in the weekly digest",           on:true},
+  {id:"low-response",   label:"Survey response rate stays under 50%",    detail:"48 hours after the survey goes out",       on:false},
+  {id:"review-due",     label:"An action is ready for its effectiveness review", detail:"Two weeks after the action is logged", on:true},
+  {id:"survey-results", label:"Survey results finish scoring",           detail:"When the AI analysis completes",           on:true},
+] as const;
+
+type NotificationPrefs = Record<string, boolean>;
+
+function prefsKey(projectId: string) {
+  return `pulse.notifications.${projectId}`;
+}
+
+function readPrefs(projectId: string): NotificationPrefs {
+  const defaults = Object.fromEntries(NOTIFICATION_RULES.map(r => [r.id, r.on]));
+  try {
+    const raw = localStorage.getItem(prefsKey(projectId));
+    return raw ? { ...defaults, ...(JSON.parse(raw) as NotificationPrefs) } : defaults;
+  } catch {
+    return defaults;
+  }
+}
+
+/**
+ * Delivery isn't wired to a backend yet, so these choices live on this device. The
+ * panel says so rather than implying alerts are already going out — the previous
+ * version rendered a hardcoded list whose switches did nothing at all.
+ */
+function NotificationSettings({projectId}:{projectId:string}) {
+  const [prefs,setPrefs]=useState<NotificationPrefs>(()=>readPrefs(projectId));
+  useEffect(()=>{setPrefs(readPrefs(projectId));},[projectId]);
+  const set=(id:string,next:boolean)=>{
+    setPrefs(current=>{
+      const updated={...current,[id]:next};
+      try{localStorage.setItem(prefsKey(projectId),JSON.stringify(updated));}catch{/* storage blocked */}
+      return updated;
+    });
+  };
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground border border-border bg-muted/30 px-5 py-3">
+        Choose what you want to hear about. These preferences are saved in this browser until alert delivery is connected.
+      </p>
+      {NOTIFICATION_RULES.map(rule=>(
+        <div key={rule.id} className="bg-card border border-border px-5 py-4 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-base font-semibold text-foreground">{rule.label}</div>
+            <div id={`${rule.id}-detail`} className="text-sm text-muted-foreground mt-0.5">{rule.detail}</div>
+          </div>
+          <Switch
+            checked={prefs[rule.id] ?? rule.on}
+            onChange={next=>set(rule.id,next)}
+            label={rule.label}
+            describedBy={`${rule.id}-detail`}/>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function SettingsView({project}:{project:Project;}) {
-  const [tab,setTab]=useState<"team"|"questions"|"notifications"|"connectors">("team");
-  const {settings,update}=useProjectSurveySettings(project.id);
+  const [tab,setTab]=useState<"team"|"notifications"|"connectors">("team");
   const {user}=useWorkspace();
   const isAdmin=user?.role==="admin"; // connector + member management are admin-only (backend enforces 403)
-  const qi=settings.guidance;
   return (
-    <div className="flex-1 overflow-y-auto bg-background">
-      <div className="max-w-4xl mx-auto px-8 py-8">
-        <h2 className="text-3xl font-bold uppercase tracking-wide mb-7" style={{fontFamily:"var(--font-display)"}}>Settings — {project.name}</h2>
+    <PageShell>
+        <PageHeader title="Settings" description={project.name}/>
         <div className="flex items-center border-b border-border mb-8">
-          {(["team","questions","notifications","connectors"] as const).map(t=>(
+          {(["team","notifications","connectors"] as const).map(t=>(
             <button key={t} onClick={()=>setTab(t)}
-              className={`px-6 py-3 text-[15px] font-semibold capitalize transition-colors -mb-px ${tab===t?"border-b-2 border-primary text-primary":"text-foreground/70 hover:text-foreground"}`}
+              className={`px-6 py-3 text-base font-semibold capitalize transition-colors -mb-px ${tab===t?"border-b-2 border-primary text-link":"text-muted-foreground hover:text-foreground"}`}
               style={{fontFamily:"var(--font-display)"}}>
-              {t==="questions"?"Question Guidance":t.charAt(0).toUpperCase()+t.slice(1)}
+              {t.charAt(0).toUpperCase()+t.slice(1)}
             </button>
           ))}
         </div>
@@ -467,43 +526,12 @@ export function SettingsView({project}:{project:Project;}) {
             ? <TeamDirectory backendProjectId={project.backendProjectId} isAdmin={isAdmin}/>
             : <p className="text-sm text-muted-foreground">This project isn't linked to a backend project yet, so members can't be managed.</p>
         )}
-        {tab==="questions"&&(
-          <div>
-            <div className="mb-6">
-              <div className="text-[15px] font-bold text-foreground mb-1">Question Generation Instructions</div>
-              <p className="text-[15px] text-muted-foreground leading-relaxed">These instructions are sent to Gemini when you generate a survey. Be specific about what topics, concerns, or dynamics you want surfaced.</p>
-            </div>
-            <div className="space-y-3">
-              {qi.map((inst,idx)=>(
-                <div key={inst.id} className="bg-card border border-border p-4 flex items-start gap-3">
-                  <div className="shrink-0 w-7 h-7 flex items-center justify-center text-sm font-bold text-muted-foreground border border-border mt-2" style={{fontFamily:"var(--font-mono)"}}>{idx+1}</div>
-                  <textarea value={inst.text} rows={2} placeholder="Describe what the AI should ask about…"
-                    onChange={e=>update(prev=>({...prev,guidance:prev.guidance.map(i=>i.id===inst.id?{...i,text:e.target.value}:i)}))}
-                    className="flex-1 bg-input-background border border-border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary resize-none transition-colors"/>
-                  <button onClick={()=>update(prev=>({...prev,guidance:prev.guidance.filter(i=>i.id!==inst.id)}))} className="shrink-0 mt-3 text-muted-foreground hover:text-red-500 transition-colors"><X size={15}/></button>
-                </div>
-              ))}
-            </div>
-            <button onClick={()=>update(prev=>({...prev,guidance:[...prev.guidance,{id:`qi${Date.now()}`,text:""}]}))} className="mt-4 flex items-center gap-2 text-[15px] text-primary font-semibold hover:opacity-75 transition-opacity"><Plus size={15}/>Add instruction</button>
-          </div>
-        )}
-        {tab==="notifications"&&(
-          <div className="space-y-3">
-            {[{l:"Health score drops below 60",s:"Immediate alert via email",on:true},{l:"Score change exceeds 8 points in 7 days",s:"Weekly digest email",on:true},{l:"Survey response rate below 50%",s:"Alert at 48h after send",on:false},{l:"Action effectiveness review due",s:"Reminder after 2 weeks",on:true},{l:"New survey results available",s:"In-app notification",on:true}].map((n,i)=>(
-              <div key={i} className="bg-card border border-border px-5 py-4 flex items-center justify-between">
-                <div><div className="text-[15px] font-semibold text-foreground">{n.l}</div><div className="text-sm text-muted-foreground mt-0.5">{n.s}</div></div>
-                <div className={`w-12 h-6 relative cursor-pointer border transition-colors ${n.on?"bg-primary border-primary":"bg-muted border-border"}`}>
-                  <div className={`absolute top-0.5 w-5 h-5 bg-white transition-transform ${n.on?"translate-x-6":"translate-x-0.5"}`}/>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {tab==="notifications"&&<NotificationSettings projectId={project.id}/>}
         {tab==="connectors"&&(
           <div>
             <div className="mb-6">
-              <div className="text-[15px] font-bold text-foreground mb-1">Data Connectors</div>
-              <p className="text-[15px] text-muted-foreground leading-relaxed">
+              <div className="text-base font-bold text-foreground mb-1">Data Connectors</div>
+              <p className="text-base text-muted-foreground leading-relaxed">
                 Connect external tools to automatically populate metrics. Once connected, Pulse pulls data on each sync — no manual entry needed.
               </p>
             </div>
@@ -522,7 +550,6 @@ export function SettingsView({project}:{project:Project;}) {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </PageShell>
   );
 }

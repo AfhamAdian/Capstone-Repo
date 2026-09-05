@@ -45,13 +45,13 @@ export function ResetPasswordView({
   // Missing token means the user reached this screen without a valid reset link.
   if (!token) {
     return (
-      <div className="h-screen flex items-center justify-center bg-background text-foreground">
+      <div className="min-h-dvh flex items-center justify-center bg-background text-foreground py-10">
         <div className="w-full max-w-sm px-6 flex flex-col items-center gap-4 text-center">
-          <AlertCircle size={40} className="text-red-500" />
+          <AlertCircle size={40} className="text-destructive" />
           <p className="text-sm text-muted-foreground">
             This reset link is missing or invalid. Please request a new one.
           </p>
-          <button type="button" onClick={onBackToLogin} className="text-primary font-semibold hover:underline text-sm">
+          <button type="button" onClick={onBackToLogin} className="text-link font-semibold hover:underline text-sm">
             Back to sign in
           </button>
         </div>
@@ -60,13 +60,13 @@ export function ResetPasswordView({
   }
 
   return (
-    <div className="h-screen flex items-center justify-center bg-background text-foreground">
+    <div className="min-h-dvh flex items-center justify-center bg-background text-foreground py-10">
       <div className="w-full max-w-sm px-6">
         <div className="flex flex-col items-center gap-3 mb-8">
           <div className="w-10 h-10 bg-primary flex items-center justify-center">
             <Activity size={20} className="text-primary-foreground" />
           </div>
-          <span className="text-xl font-bold tracking-widest uppercase" style={{ fontFamily: "var(--font-display)" }}>
+          <span className="text-xl font-bold tracking-[0.18em] uppercase" style={{ fontFamily: "var(--font-display)" }}>
             Pulse
           </span>
           <p className="text-sm text-muted-foreground text-center">Choose a new password for your account</p>
@@ -74,11 +74,11 @@ export function ResetPasswordView({
 
         {done ? (
           <div className="flex flex-col items-center gap-4 text-center">
-            <CheckCircle size={40} className="text-primary" />
+            <CheckCircle size={40} className="text-link" />
             <p className="text-sm text-muted-foreground">
               Your password has been reset. Please sign in with your new password.
             </p>
-            <button type="button" onClick={onSuccess} className="text-primary font-semibold hover:underline text-sm">
+            <button type="button" onClick={onSuccess} className="text-link font-semibold hover:underline text-sm">
               Go to sign in
             </button>
           </div>
@@ -97,12 +97,12 @@ export function ResetPasswordView({
                   setPassword(e.target.value);
                   if (errors.password) setErrors({ ...errors, password: "" });
                 }}
-                className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-                  errors.password ? "border-red-500" : "border-border"
+                className={`w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+                  errors.password ? "border-destructive/40" : "border-border"
                 }`}
               />
               {errors.password && (
-                <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+                <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
                   <AlertCircle size={13} />
                   {errors.password}
                 </p>
@@ -122,12 +122,12 @@ export function ResetPasswordView({
                   setConfirm(e.target.value);
                   if (errors.confirm) setErrors({ ...errors, confirm: "" });
                 }}
-                className={`w-full bg-input-background border px-4 py-3 text-[15px] placeholder:text-muted-foreground outline-none focus:border-primary transition-colors ${
-                  errors.confirm ? "border-red-500" : "border-border"
+                className={`w-full bg-input-background border px-4 py-3 text-base placeholder:text-muted-foreground focus:border-primary transition-colors ${
+                  errors.confirm ? "border-destructive/40" : "border-border"
                 }`}
               />
               {errors.confirm && (
-                <p className="text-sm text-red-500 flex items-center gap-1 mt-1.5">
+                <p className="text-sm text-destructive flex items-center gap-1 mt-1.5">
                   <AlertCircle size={13} />
                   {errors.confirm}
                 </p>
@@ -135,7 +135,7 @@ export function ResetPasswordView({
             </div>
 
             {errors.form && (
-              <p className="text-sm text-red-500 flex items-center gap-1">
+              <p className="text-sm text-destructive flex items-center gap-1">
                 <AlertCircle size={13} />
                 {errors.form}
               </p>
@@ -144,7 +144,7 @@ export function ResetPasswordView({
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-[15px] font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+              className="w-full flex items-center justify-center gap-2 bg-primary text-primary-foreground text-base font-semibold py-3 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ fontFamily: "var(--font-display)" }}
             >
               {isLoading ? "Resetting…" : "Reset Password"}

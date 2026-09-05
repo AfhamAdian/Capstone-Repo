@@ -15,11 +15,14 @@ type StreamState = {
 };
 
 // Set all required headers for Server-Sent Events.
+// CORS is not set here - the global cors() middleware in server.ts already sends the
+// origin-specific Access-Control-Allow-Origin + Access-Control-Allow-Credentials this route
+// needs. A wildcard '*' here would silently break the EventSource: browsers reject a wildcard
+// origin on any credentialed request (withCredentials: true), closing the connection immediately.
 function setSseHeaders(response: Response): void {
   response.setHeader('Content-Type', 'text/event-stream');
   response.setHeader('Cache-Control', 'no-cache');
   response.setHeader('Connection', 'keep-alive');
-  response.setHeader('Access-Control-Allow-Origin', '*');
 }
 
 // Send one SSE message to the connected client.
