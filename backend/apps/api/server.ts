@@ -7,7 +7,7 @@ import { router } from './routes/index.js';
 import { notFoundMiddleware } from './middlewares/not-found.middleware.js';
 import { errorMiddleware } from './middlewares/error.middleware.js';
 import { env } from './config/env.js';
-import { hostname } from 'node:os';
+// import { hostname } from 'node:os'; // only used by the disabled ENCRYPTION_KEY diagnostic log below
 
 function createApp() {
   const app = express();
@@ -40,10 +40,11 @@ const app = createApp();
 
 const server = app.listen(env.port, () => {
   console.log(`Server is running on port ${env.port} in ${env.nodeEnv} mode`);
+  // TEMPORARY: encryption disabled in production, so this no longer reads ENCRYPTION_KEY at all.
   // Never logs the value - just proves whether the platform actually injected it into this
   // process, since a dashboard showing the var set is not proof the running process sees it
   // (wrong service/environment, name typo or trailing whitespace in the key, a stale instance).
-  console.log(`ENCRYPTION_KEY configured: ${Boolean(process.env.ENCRYPTION_KEY)} [host=${hostname()}]`);
+  // console.log(`ENCRYPTION_KEY configured: ${Boolean(process.env.ENCRYPTION_KEY)} [host=${hostname()}]`);
 });
 
 server.on('error', (error: NodeJS.ErrnoException) => {

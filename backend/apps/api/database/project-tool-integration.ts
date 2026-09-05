@@ -4,10 +4,13 @@
 // its token) are encrypted at rest — this module is the only place that reads/writes this table, so
 // every caller above it always sees plaintext. Non-secret fields (owner, repo, baseUrl, projectKey,
 // ...) are left as-is since they're used for display/matching and aren't sensitive.
+//
+// TEMPORARY: encryption disabled in production (see encryptConfig/decryptConfig below) - do not
+// remove the encryptSecret/decryptSecret code, just re-enable the commented lines to restore it.
 
 import type { SupportedTool, ToolCategory } from '@libs/sync/types.js';
 import { assertSupabaseClient } from '../config/supabase.js';
-import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
+// import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
 
 export interface ToolIntegrationRecord {
   id: number;
@@ -24,25 +27,29 @@ const INTEGRATION_COLUMNS = 'id, project_id, tool_category, tool_name, config, l
 const SECRET_CONFIG_KEYS = new Set(['token', 'email']);
 
 function encryptConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...config };
-  for (const key of SECRET_CONFIG_KEYS) {
-    const value = out[key];
-    if (typeof value === 'string' && value.length > 0) {
-      out[key] = encryptSecret(value);
-    }
-  }
-  return out;
+  // TEMPORARY: encryption disabled - see note above.
+  return { ...config };
+  // const out = { ...config };
+  // for (const key of SECRET_CONFIG_KEYS) {
+  //   const value = out[key];
+  //   if (typeof value === 'string' && value.length > 0) {
+  //     out[key] = encryptSecret(value);
+  //   }
+  // }
+  // return out;
 }
 
 function decryptConfig(config: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...config };
-  for (const key of SECRET_CONFIG_KEYS) {
-    const value = out[key];
-    if (typeof value === 'string' && value.length > 0) {
-      out[key] = decryptSecret(value);
-    }
-  }
-  return out;
+  // TEMPORARY: encryption disabled - see note above.
+  return { ...config };
+  // const out = { ...config };
+  // for (const key of SECRET_CONFIG_KEYS) {
+  //   const value = out[key];
+  //   if (typeof value === 'string' && value.length > 0) {
+  //     out[key] = decryptSecret(value);
+  //   }
+  // }
+  // return out;
 }
 
 function decryptRecord(record: ToolIntegrationRecord): ToolIntegrationRecord {
