@@ -64,6 +64,7 @@ export interface Survey {
   scores?: { security: number; reliability: number; maintainability: number; cicdDeploymentHealth: number; teamHealth: number; engineeringProcess: number; planningExecution: number };
   themes: string[];
   aiInsight: string;
+  questionSummaries: { question: string; summary: string }[];
   rawResponses: { question: string; answers: string[] }[];
   questions?: GeneratedSurveyQuestion[];
   reviewDeadlineAt?: string | null;

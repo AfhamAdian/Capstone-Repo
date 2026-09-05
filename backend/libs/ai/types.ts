@@ -136,12 +136,19 @@ export interface AnalyzeSurveyResponsesInput {
   projectName: string;
   rawResponses: RawSurveyResponseForAnalysis[];
   healthContext?: SurveyHealthContext;
+  totalRespondents: number;
+}
+
+export interface QuestionSummary {
+  question: string;
+  summary: string;
 }
 
 export interface AnalyzeSurveyResponsesOutput {
   scores: SurveyCategoryScores;
   themes: string[];
   aiInsight: string;
+  questionSummaries: QuestionSummary[];
 }
 
 export interface AiClient {

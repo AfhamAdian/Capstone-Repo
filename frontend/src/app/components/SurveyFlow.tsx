@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { X, Check, ArrowRight, AlertTriangle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { X, Check, ArrowRight, ArrowLeft, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { submitPublicSurveyResponse, type PublicSurveyForm } from "../api-survey";
 
@@ -51,6 +51,27 @@ export function SurveyFlow({onClose,form,token,standalone}:{onClose:()=>void;for
     }
   };
   const next=()=>step<qs.length-1?setStep(step+1):void finish();
+  const prev=()=>setStep(s=>Math.max(0,s-1));
+  const selectScale=(n:number)=>{setAns(prev=>{const u=[...prev];u[step]=n;return u;});next();};
+
+  useEffect(()=>{
+    if(done||submitting||qs.length===0) return;
+    const handler=(e:KeyboardEvent)=>{
+      if(e.key==="Tab"){
+        e.preventDefault();
+        if(e.shiftKey) prev(); else next();
+      }else if(e.key==="Enter"&&!e.shiftKey&&(e.target as HTMLElement)?.tagName==="TEXTAREA"){
+        e.preventDefault();
+        next();
+      }else if(cur.t==="scale"&&/^[1-5]$/.test(e.key)){
+        e.preventDefault();
+        selectScale(Number(e.key));
+      }
+    };
+    window.addEventListener("keydown",handler);
+    return ()=>window.removeEventListener("keydown",handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[step,done,submitting,cur?.t,qs.length]);
 
   if(qs.length===0){
     return (
@@ -96,7 +117,14 @@ export function SurveyFlow({onClose,form,token,standalone}:{onClose:()=>void;for
               }
               {submitError&&<div className="text-sm text-red-500 mt-3">{submitError}</div>}
               <div className="flex items-center justify-between mt-10">
-                <button onClick={next} disabled={submitting} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">Skip</button>
+                <div className="flex items-center gap-4">
+                  {step>0&&(
+                    <button onClick={prev} disabled={submitting} aria-label="Previous question" className="flex items-center gap-1.5 text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">
+                      <ArrowLeft size={14}/> Back
+                    </button>
+                  )}
+                  <button onClick={next} disabled={submitting} className="text-[15px] text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40">Skip</button>
+                </div>
                 <button onClick={next} disabled={submitting} className="flex items-center gap-2 bg-primary text-primary-foreground px-7 py-3 text-base font-semibold hover:opacity-90 transition-opacity disabled:opacity-60" style={{fontFamily:"var(--font-display)"}}>
                   {submitting?"Submitting…":step===qs.length-1?"Submit":"Next"} <ArrowRight size={14}/>
                 </button>

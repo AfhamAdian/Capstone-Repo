@@ -42,6 +42,7 @@ export interface SurveyListItem {
   scores: SurveyScores | null;
   themes: string[];
   aiInsight: string | null;
+  questionSummaries: { question: string; summary: string }[];
   publicUrl: string | null;
 }
 
