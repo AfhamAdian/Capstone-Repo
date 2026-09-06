@@ -495,7 +495,9 @@ export function SurveysView({project,surveys,onSurveySent,onRefresh,loadError,lo
               <motion.div initial={{height:0,opacity:0}} animate={{height:"auto",opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.15}} className="overflow-hidden">
                 <div className="px-5 pb-5 pt-1 border-t border-border space-y-2">
                   <div className="text-sm text-muted-foreground py-2">
-                    Each instruction guides the AI on what to probe. Be specific — vague instructions produce generic questions.
+                    {guidance.length===0
+                      ?"No custom guidance — questions are generated purely from current risk scores. Add an instruction only if you want to steer the AI toward something specific."
+                      :"Each instruction guides the AI on what to probe. Be specific — vague instructions produce generic questions."}
                   </div>
                   {guidance.map((g,idx)=>(
                     <div key={g.id} className="flex items-start gap-3">

@@ -57,17 +57,17 @@ export async function listProjectDeveloperUserIds(projectId: number): Promise<nu
   return users.filter((u) => u.role === 'member').map((u) => u.id);
 }
 
-/** How many projects a user belongs to — used to decide if survey rotation across projects applies. */
-export async function countProjectsForUser(userId: number): Promise<number> {
+/** Every project a user belongs to — used to keep survey email rotation fair across a developer's projects. */
+export async function listProjectIdsForUser(userId: number): Promise<number[]> {
   const client = assertSupabaseClient();
-  const { count, error } = await client
+  const { data, error } = await client
     .from('projectmember')
-    .select('id', { count: 'exact', head: true })
+    .select('project_id')
     .eq('user_id', userId);
   if (error) {
-    throw new Error(`Failed to count projects for user ${userId}: ${error.message}`);
+    throw new Error(`Failed to list projects for user ${userId}: ${error.message}`);
   }
-  return count ?? 0;
+  return (data ?? []).map((row) => row.project_id as number);
 }
 
 /**

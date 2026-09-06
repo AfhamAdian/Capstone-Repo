@@ -113,9 +113,9 @@ export function buildSurveyQuestionsPrompt(input: GenerateSurveyQuestionsInput):
 
 Project: ${input.projectName}
 Reason this survey is being sent: ${input.trigger}
-${input.customGuidance ? `Additional guidance from the admin: ${input.customGuidance}` : ''}
 
 ${formatSurveyHealthContext(input.healthContext)}
+${input.customGuidance ? `\nOptional supplementary guidance from the admin (use only to steer emphasis within a category - the health context above is the primary signal for what to probe): ${input.customGuidance}` : ''}
 
 Generate 6-8 distinct survey questions covering these health categories: ${categories.join(', ')}.
 Use the health context to prioritize weak or declining areas and any listed incidents.

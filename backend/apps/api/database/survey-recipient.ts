@@ -24,19 +24,31 @@ export async function hasAnyRecipientRecordForSurvey(surveyId: number): Promise<
   return (count ?? 0) > 0;
 }
 
-/** True if this developer has ever been successfully emailed a survey for this specific project. */
-export async function hasEverSentToUserForProject(userId: number, projectId: number): Promise<boolean> {
+/**
+ * How many surveys this developer has ever been successfully emailed, per project
+ * (restricted to the given project IDs). Used to keep multi-project survey emails
+ * rotating fairly - a project is only skipped while it's ahead of a sibling project
+ * the developer is also on, never permanently.
+ */
+export async function getSentCountsByProjectForUser(userId: number, projectIds: number[]): Promise<Map<number, number>> {
+  const counts = new Map<number, number>(projectIds.map((id) => [id, 0]));
+  if (projectIds.length === 0) return counts;
+
   const client = assertSupabaseClient();
-  const { count, error } = await client
+  const { data, error } = await client
     .from('survey_recipient')
-    .select('id', { count: 'exact', head: true })
+    .select('project_id')
     .eq('user_id', userId)
-    .eq('project_id', projectId)
-    .eq('status', 'sent');
+    .eq('status', 'sent')
+    .in('project_id', projectIds);
   if (error) {
-    throw new Error(`Failed to check prior survey emails for user ${userId} in project ${projectId}: ${error.message}`);
+    throw new Error(`Failed to load survey send counts for user ${userId}: ${error.message}`);
   }
-  return (count ?? 0) > 0;
+  for (const row of data ?? []) {
+    const projectId = row.project_id as number;
+    counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** Most recent successful survey email sent to this developer, across every project. */

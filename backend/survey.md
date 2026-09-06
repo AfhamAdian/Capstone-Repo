@@ -1,445 +1,331 @@
-# Survey System Architecture
+# Survey System — Technical Reference
 
-This document describes the implemented survey system as it exists now. It is
-the source of truth for product behavior, data flow, privacy, AI usage,
-operations, and extension points.
+How Pulse's developer-survey feature works end to end: creation, question generation, dispatch (Slack/Telegram/Discord + per-developer email), response collection, and AI analysis. Written for engineering understanding and for demo/presentation prep.
 
-## 1. Product model
+> This file replaces an older version that described a since-removed design (a 5-category rubric, a raw-response anonymity gate, and a 60/40 blend into `projecthealthscore`). None of that exists in the current code — everything below is verified against the current source.
 
-The system uses one delivery model:
+---
 
-- one encrypted, reusable, anonymous link per survey distribution;
-- one survey per project;
-- one monthly automatic pulse per project, plus explicitly triggered manual
-  surveys;
-- one broadcast per link to the configured Slack channel, Telegram
-  group/channel, and Discord webhook;
-- no email delivery, direct messages, per-recipient links, Discord identities,
-  survey-bundle user fields, or single-use mode.
+## 1. Overview
 
-A shared channel cannot enforce a private 50/50 recipient cohort. Automatic
-distribution therefore schedules one monthly project pulse instead of
-pretending that a channel-wide post targets selected individuals.
+A survey is an **anonymous, shared-link questionnaire** sent to every developer on a project. One link is created per survey ("cycle"), broadcast to team chat channels, and optionally emailed individually to each developer. Anyone with the link can answer once per browser session; responses are stored with no identity attached. When the survey closes, Gemini analyzes all responses and writes back seven category health scores, a set of quantified insight bullets, and a one-line summary per question.
 
-Responses are anonymous by construction. The survey row holds the shared link
-fields (`cycle_id`, `expires_at`, `notified_at`, `delivery`) with no user or
-project-member relationship. `survey_response` stores only the survey id, an
-opaque client retry key, submission time, and answers JSON.
+Two independent scoring systems exist side by side and never mix:
 
-## 2. Runtime components
+| System | Source | Table | Feeds |
+|---|---|---|---|
+| **Risk engine** | Connector metrics (GitHub, CI/CD, Jira, etc.) | `riskscore` | Dashboard health tiles |
+| **Survey analysis** | Anonymous developer responses | `survey.insight` (jsonb) | Survey results page |
 
-The existing folder structure is preserved:
+The risk engine's latest scores + trend are handed to the survey system as *read-only background context* (to help the AI write better questions and interpret answers) — survey results are never written back into `riskscore` or `projecthealthscore`.
 
-- `apps/api/` exposes admin and public HTTP endpoints.
-- `apps/worker/` runs BullMQ send, scheduling, deadline-close, and insight jobs.
-- `libs/ai/` contains the Gemini/stub clients, prompts, deduplication, and
-  response validation.
-- `libs/notifications/` contains only channel-broadcast clients.
-- `libs/security/` encrypts and decrypts survey-link tokens.
-- `libs/queue/` owns deterministic BullMQ job creation.
-- `db/migrations/` contains numbered, executable changes.
-- `db/migrations/007_survey_compact.sql` is the compact two-table cutover.
-- `db/schema/005_surveys.sql` is the compact current-state survey schema.
-- `db/migration.sql` is the frozen 002–006 consolidation; do not edit it.
-- `new_frontend/src/app/` contains the admin and respondent experiences.
+---
 
-High-level flow:
+## 2. Data Model
 
-1. Capture project health context.
-2. Ask Gemini for candidate questions.
-3. Deduplicate, score, validate, and quality-gate the questions.
-4. Persist a reviewable survey draft.
-5. Auto-send at the review deadline unless paused or cancelled.
-6. Broadcast one anonymous link.
-7. Validate and atomically persist responses.
-8. Close at the deadline or by manager action.
-9. Analyze only when the anonymity threshold is met.
-10. Blend validated survey sentiment with metrics and display provenance.
+| Table | Purpose |
+|---|---|
+| `survey` | One row per survey/cycle: status, trigger, schedule, questions (jsonb), `insight` (jsonb), `health_context` (jsonb snapshot), delivery info |
+| `survey_response` | One row per anonymous submission: `submission_key` (client UUID), `answers` (jsonb array of `{questionId, answerText?, answerScale?}`) — **no identity column of any kind** |
+| `survey_recipient` | One row per (survey, developer) email attempt: `status` (`sent`/`skipped`/`failed`), `skip_reason`, `sent_at` — this is what the cooldown math reads |
+| `project.pending_survey` / `pending_survey_trigger` | A UI flag only — "this project looks like it needs a pulse check" — does **not** create a survey by itself |
 
-## 3. Database model
+The 7 rubric categories, used both by the risk engine and by survey questions/scores: `security`, `reliability`, `maintainability`, `cicdDeploymentHealth`, `teamHealth`, `engineeringProcess`, `planningExecution`.
 
-The core relationship is intentionally linear:
+---
 
-`project -> survey -> survey_response`
+## 3. Survey Lifecycle (states)
 
-`survey -> projecthealthscore` (optional pointer; health history, not survey plumbing)
-
-Core tables:
-
-- `survey`: one pulse. Lifecycle, trigger, questions JSON, anonymous link
-  fields, schedule (`period_month`, `scheduled_send_at`), delivery JSON,
-  health-context snapshot, and AI insight JSON.
-- `survey_response`: one anonymous submission. `submission_key` UUID retry
-  key and `answers` JSON `[{ questionId, answerText?, answerScale? }]`.
-- `projecthealthscore`: health history, including the metrics snapshot and
-  survey that contributed to a blended row.
-
-Questions live on the survey row as
-`[{ id, category, questionText, questionType }]`. Category keys are the five
-rubric buckets (`delivery`, `codeQuality`, `cicd`, `teamHealth`, `blockers`),
-enforced in application code. There is no category table or HTTP API.
-
-Dropped by `007_survey_compact.sql`: `surveyquestion`, `surveyanswer`,
-`surveybundle`, `surveyschedule`, `surveyinsight`, `surveycategory`.
-
-There is no survey-owned user table, recipient table, delivery-attempt table,
-or persisted raw token.
-
-The function `submit_survey_response(survey_id, submission_key, answers)`
-inserts one `survey_response` row. Unique `(survey_id, submission_key)` makes
-retries idempotent.
-
-## 4. Lifecycle
-
-Supported survey states:
-
-- `draft`: row created; questions may still be generated or edited.
-- `active`: the anonymous link has been broadcast and is accepting responses.
-- `paused`: automatic send is suspended before dispatch.
-- `closed`: response collection ended; insight work is queued.
-- `completed`: analysis finished or was intentionally skipped because the
-  privacy threshold was not met.
-- `cancelled`: stopped before dispatch.
-- `failed`: reserved for terminal operational failure.
-
-Question editing is allowed only before `sent_at`. Freezing at dispatch is
-stricter and safer than waiting for the first response: a respondent may have
-already loaded the form before any answer is stored.
-
-Managers can pause, resume, or cancel an unsent survey. They can manually close
-an active survey and retry failed delivery or analysis. Automatic surveys send at `scheduled_send_at` when still
-eligible; a paused survey remains pending until resumed.
-
-## 5. Automatic monthly scheduling
-
-The hourly `survey-distribution` job:
-
-1. Looks at the current and next month.
-2. Creates one auto-pulse `survey` row per project when the configured review
-   lead time begins, including send dates that fall near the previous month end.
-3. Chooses and persists one randomized send moment on
-   `survey.scheduled_send_at` inside `SURVEY_MONTHLY_START_DAY` plus
-   `SURVEY_MONTHLY_WINDOW_DAYS`.
-4. Generates and persists questions JSON at
-   `SURVEY_QUESTION_GEN_LEAD_DAYS` before the send moment.
-5. Leaves the survey in `draft` until send.
-6. Broadcasts at the persisted moment unless paused or cancelled.
-7. Expires due links, closes active surveys, and queues insight jobs.
-
-The unique project/month index for `auto_pulse`, unique `cycle_id`, and
-deterministic queue IDs make repeated hourly ticks safe.
-
-## 6. Manual surveys
-
-The manager flow:
-
-1. `POST /projects/:projectId/surveys/generate-questions`
-2. Review, edit, and preview Gemini-scored questions in the send modal.
-3. `POST /projects/:projectId/surveys` with the reviewed questions (queues a
-   background send job). Optional `targetCount` comes from Settings team size.
-4. Persist the survey, questions JSON, health-context snapshot, and target count.
-5. The send worker broadcasts one anonymous link, stores channel results on the
-   survey row, keeps the provided target count when set, and marks the survey
-   active. Active list items include a reconstructed `publicUrl`.
-6. `POST /api/v1/surveys/:surveyId/remind` re-broadcasts the same anonymous
-   link (`kind: reminder`) with a 15-minute cooldown. Identities are never
-   collected.
-
-`POST /projects/:projectId/surveys/send-now` still exists as a skip-review
-path (generate + send in one queued job) and is not used by the current UI.
-
-Manual creation is limited per project/calendar month by
-`MANUAL_SURVEY_MONTHLY_LIMIT`.
-
-## 7. Gemini integration
-
-`GEMINI_API_KEY` selects the real Gemini client. Without it, the stub client
-supports local development.
-
-Every generation and question-scoring request receives an immutable project
-health context containing:
-
-- capture timestamp;
-- overall health score;
-- delivery, code quality, CI/CD, team health, and blockers scores;
-- overall trend delta;
-- source metrics snapshot id.
-
-Gemini is instructed to prioritize weak or declining areas without exposing
-numeric scores in respondent-facing questions.
-
-The same captured health context is supplied during response analysis as
-background only. The analysis prompt explicitly requires sentiment scores to
-come from survey evidence, not to copy, average with, or anchor to the prior
-health score. This avoids a circular blend.
-
-Gemini responses use JSON mode and strict runtime validation:
-
-- question shape and type;
-- one score per candidate;
-- every quality/category score in `0..100`;
-- non-empty insight text;
-- string-only themes, capped at five.
-
-Invalid AI output throws, allowing BullMQ retry behavior instead of persisting
-untrusted partial data.
-
-## 8. Question quality pipeline
-
-The shared pipeline in
-`services/survey-question-generation.service.ts`:
-
-1. Generate candidates using project name, trigger, guidance, categories, and
-   health context.
-2. Remove normalized duplicates.
-3. Ask Gemini to score relevance, clarity, importance, diversity, and overall
-   quality.
-4. Drop questions below `SURVEY_QUESTION_MIN_SCORE`.
-5. Cap the final set with `SURVEY_QUESTION_MAX_COUNT`.
-6. Prefer category diversity when selecting the final questions.
-
-Admins may still edit wording and switch text/scale type during review.
-
-## 9. Anonymous link and response safety
-
-`survey-token.ts` uses AES-256-GCM. The encrypted payload contains:
-
-- survey id;
-- cycle id;
-- response deadline.
-
-The token is not stored. Public requests:
-
-1. decrypt and authenticate the token;
-2. reject payload expiry before database work;
-3. verify survey id, cycle id, and database expiry;
-4. verify the survey is active;
-5. verify every question belongs to that survey;
-6. reject duplicate question ids;
-7. enforce text length `1..4000`;
-8. enforce integer scale values `1..5`;
-9. require exactly one text or scale value;
-10. insert one `survey_response` row atomically.
-
-The frontend sends one random UUID per response attempt. Repeating the same
-request returns the original response id and does not duplicate answers. This
-protects against accidental retry/double-click without identifying a person.
-
-Public form loads are limited to 60 per IP/15 minutes. Submissions are limited
-to 10 per IP/15 minutes. These are abuse controls, not identity controls.
-
-## 10. Closing, privacy, and aggregation
-
-Shared links are reusable until closed. A survey closes:
-
-- automatically when `expires_at` passes; or
-- when a manager closes it.
-
-Closing updates the survey row and enqueues a background Gemini scoring job
-(stored on `survey.insight`, then blended into `projecthealthscore`). The
-same worker generates questions and delivers a "Send Survey Now" job.
-
-`SURVEY_MIN_ANONYMOUS_RESPONSES` defaults to 5 and is clamped to at least 3.
-With at least one response, Gemini produces five category scores, themes,
-and a narrative. Below the privacy threshold:
-
-- raw answers are suppressed from admin API responses;
-- the survey completes with `raw_responses_hidden:<count>/<minimum>`;
-- scores and the AI summary are still shown.
-
-With zero responses, analysis is skipped and the survey completes with
-`insufficient_responses:<count>/<minimum>`. Metrics health remains available.
-
-## 11. Health-score blending and provenance
-
-The metrics-only health score is produced during sync. Survey completion may
-create a new blended row:
-
-`blended = 60% latest metrics + 40% latest completed survey sentiment`
-
-If one side is unavailable, the available side is used rather than inventing
-neutral data.
-
-The blended `projecthealthscore` row stores both:
-
-- `project_snapshot_id` for the metrics source;
-- `survey_id` for the sentiment source.
-
-The health snapshot supplied to Gemini is input context only. It is not itself
-treated as new response evidence.
-
-## 12. Notifications
-
-`broadcast-survey-link.ts` fans out concurrently:
-
-- Slack `chat.postMessage`;
-- Telegram Bot API `sendMessage`;
-- Discord incoming webhook.
-
-Each client is best-effort, but the send job succeeds only when at least one
-channel accepted the broadcast. Otherwise the job throws and BullMQ retries.
-Successful channel booleans and `notified_at` are persisted on the survey so a
-retry does not broadcast the same link again.
-
-Provider delivery is still at-least-once at the narrow crash boundary between a
-channel accepting a message and the worker persisting that acceptance. Avoiding
-that final duplicate window would require provider idempotency keys or an
-outbox/receipt protocol.
-
-The current environment config points to one shared destination per channel.
-Per-project channel routing can be added later without adding recipient
-identity: store project-level channel destinations and keep the same broadcast
-interface.
-
-## 13. API surface
-
-Project/admin endpoints:
-
-- `POST /api/v1/projects/:projectId/surveys/generate-questions`
-- `POST /api/v1/projects/:projectId/surveys`
-- `POST /api/v1/projects/:projectId/surveys/send-now`
-- `GET /api/v1/projects/:projectId/surveys`
-- `GET /api/v1/projects/:projectId/surveys/quota`
-- `GET /api/v1/projects/:projectId/surveys/schedule`
-- `GET /api/v1/projects/:projectId/pending-survey`
-- `GET /api/v1/surveys`
-- `GET /api/v1/surveys/:surveyId`
-- `PATCH /api/v1/surveys/:surveyId/questions`
-- `PATCH /api/v1/surveys/:surveyId/lifecycle`
-- `POST /api/v1/surveys/:surveyId/close` (stop an active public form and queue analysis)
-- `POST /api/v1/surveys/:surveyId/remind` (anonymous channel reminder; same shared link)
-- `PATCH /api/v1/surveys/:surveyId/complete` (compatibility close endpoint)
-
-Public endpoints:
-
-- `GET /api/v1/public/surveys/:token`
-- `POST /api/v1/public/surveys/:token/responses`
-
-The admin APIs currently use interim `x-user-role` and `x-user-id` headers.
-This is not production authentication. Replace the requester helper with real
-session/JWT middleware before exposing admin endpoints outside a trusted
-environment.
-
-## 14. Frontend experience
-
-The existing frontend structure is retained.
-
-Admin experience:
-
-- generate → edit → preview before send (reviewed questions are queued);
-- Settings question guidance is passed into generation; Settings team size
-  is the send `targetCount`;
-- copy public survey URL and anonymous Remind on Active history rows;
-- live poll while Draft/Active/Closed-without-scores so response counts update;
-- score-over-time chart for the last scored pulses;
-- scheduled-survey review card;
-- captured health-context summary;
-- pause, resume, cancel, and save actions;
-- expanded lifecycle statuses (`draft`, `active`, `paused`, `closed`,
-  `completed`, `cancelled`, `failed`);
-- safe response-rate math when target count is zero;
-- insights, themes, category scores, delivery state, and privacy suppression.
-
-Respondent experience:
-
-- standalone token route;
-- project and question context;
-- keyboard-accessible text and scale controls;
-- progress semantics;
-- submit loading/error states;
-- idempotent retry key;
-- explicit anonymity confirmation.
-
-## 15. Configuration
-
-Required for full production behavior:
-
-- `REDIS_URL`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `GEMINI_API_KEY`
-- `SURVEY_TOKEN_ENC_KEY`
-- `SURVEY_FORM_BASE_URL`
-
-At least one broadcast destination must be configured:
-
-- `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID`
-- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`
-- `DISCORD_WEBHOOK_URL`
-
-Behavior controls:
-
-- `GEMINI_MODEL`
-- `SURVEY_QUESTION_MIN_SCORE`
-- `SURVEY_QUESTION_MAX_COUNT`
-- `SURVEY_MONTHLY_START_DAY`
-- `SURVEY_MONTHLY_WINDOW_DAYS`
-- `SURVEY_QUESTION_GEN_LEAD_DAYS`
-- `SURVEY_RESPONSE_DEADLINE_DAYS`
-- `SURVEY_MIN_ANONYMOUS_RESPONSES`
-- `MANUAL_SURVEY_MONTHLY_LIMIT`
-
-## 16. Migration and operations
-
-No automated migration runner exists. Numbered files `002`–`006` have already
-been applied (or written) against live Supabase and must not be edited.
-
-On a database that already has the older survey tables, apply only:
-
-```bash
-psql "$DATABASE_URL" -f db/migrations/007_survey_compact.sql
+```
+draft ──(dispatch succeeds)──▶ active ──(deadline OR manual close)──▶ closed ──(AI analysis)──▶ completed
+  │                                                                                                  ▲
+  └──(dispatch fails: no developers / all channels down)──▶ failed ──(admin retries)─────────────────┘
+draft ──(admin pauses/cancels)──▶ paused / cancelled
 ```
 
-`007` adds the compact columns, copies leftover questions/insights/links into
-the survey row, replaces `submit_survey_response`, and drops the unused
-tables. It is safe to rerun.
+- **draft** — created, questions may still be empty or under review.
+- **active** — link is live and broadcast; `expires_at` is set.
+- **closed** — no longer accepting responses; analysis pending.
+- **completed** — `survey.insight` has been written (scores/themes/question summaries).
+- **failed** — dispatch or analysis threw (e.g. zero developers, all broadcast channels unconfigured, malformed AI response). Admin can retry.
 
-On a brand-new environment that still needs 002–006:
+---
 
-```bash
-psql "$DATABASE_URL" -f db/migration.sql
-psql "$DATABASE_URL" -f db/migrations/007_survey_compact.sql
+## 4. How a Survey Gets Created
+
+There are three distinct triggers. Only two of them actually create a `survey` row.
+
+### 4.1 Manual — generate, review, then send (the normal admin flow)
+1. Admin clicks **"Send Survey Now"** on the Surveys page → `SendSurveyModal`, trigger text defaults to `"Manual team pulse check"`.
+2. **Generate**: `POST /projects/:id/surveys/generate-questions` → `SurveyService.generateQuestions` — captures health context, runs the full question-generation pipeline (§6), creates a `draft` survey (`source: 'manual'`) with a review deadline `now + SURVEY_QUESTION_GEN_LEAD_DAYS` (default 2 days).
+3. Admin reviews/edits the AI-generated questions in the modal (`PATCH /surveys/:id/questions`, blocked once the survey has actually been sent).
+4. **Send**: `POST /projects/:id/surveys` → `SurveyService.createAndSendSurvey` — re-validates everything, sets `scheduledSendAt = now`, and enqueues a `survey-send` job. The worker picks it up immediately and dispatches (§8).
+
+### 4.2 Manual — send now, skip review
+`POST /projects/:id/surveys/send-now` → `SurveyService.sendNow` creates a bare `draft` survey with **empty questions** and enqueues the same `survey-send` job — the worker generates questions AND dispatches in one pass. (Exists as an API capability; the current frontend modal uses the two-step flow above instead.)
+
+### 4.3 Auto-pulse — monthly recurring survey
+An hourly BullMQ cron (`survey-distribution`, pattern `0 * * * *`) does three things per project, every tick:
+1. **Assign a send moment**: once within `SURVEY_QUESTION_GEN_LEAD_DAYS` of the monthly window opening (window starts `SURVEY_MONTHLY_START_DAY` of the month, spans `SURVEY_MONTHLY_WINDOW_DAYS`), each project is assigned one **randomized** moment inside that window — done once and persisted, never re-rolled. Trigger text: `"Scheduled monthly pulse check"`, `source: 'auto_pulse'`.
+2. **Generate questions** for any auto-pulse survey now within its lead-time window.
+3. **Dispatch** any survey (manual or auto) whose `scheduled_send_at` has arrived.
+
+The randomization is deliberate — it avoids every project's monthly survey landing in every developer's inbox on the same predictable day.
+
+### 4.4 Metric-triggered — a UI hint, not a survey
+After every sync's risk-score calculation, `evaluateSurveyTrigger` checks (in priority order, first match wins):
+
+| Condition | Trigger string set on `project.pending_survey_trigger` |
+|---|---|
+| Blockers risk score < 50 | `"Open blockers exceeded threshold"` |
+| Team health score < 40 | `"Team health score dropped"` |
+| Planning & Execution score < 40 | `"Planning & Execution score dropped"` |
+
+This only flips a flag an admin sees as a banner/badge ("this project looks due for a check-in") — it never auto-creates a survey. A human still has to click Send. This check is wrapped in try/catch and is explicitly non-fatal to the sync pipeline.
+
+---
+
+## 5. Quotas & Gates at Creation
+
+| Gate | Default | Where enforced |
+|---|---|---|
+| Manual surveys per project per calendar month | **2** (`MANUAL_SURVEY_MONTHLY_LIMIT`, range 1–20) | `generateQuestions`, `createAndSendSurvey`, `sendNow` — throws `Monthly manual survey limit reached (N/month)` → HTTP 429. Skipped if an open unsent draft already exists (editing a draft doesn't count as a new one). |
+| Review window before an unsent manual draft is considered stale | **2 days** (`SURVEY_QUESTION_GEN_LEAD_DAYS`) | `keepOrAssignReviewWindow` |
+| Question count on send | 1–20 questions, 10–500 chars each, valid category/type, no near-duplicates | `validateSurveyQuestions` |
+| Trigger / guidance text length | trigger 3–500 chars, guidance ≤ 2000 chars | `normalizeSurveyText` |
+| Zero developers on the project | dispatch fails: `status: 'failed'`, `analysisError: 'no_project_developers'` | `dispatchAnonymousSurveyBroadcast` |
+| Concurrent double-send | atomic DB claim (`claimSurveyForSend`) — second concurrent attempt is a no-op | `dispatchAnonymousSurveyBroadcast` |
+
+---
+
+## 6. Question Generation Pipeline
+
+Same function (`generateQualityQuestions`) is shared by the manual flow, the auto-pulse flow, and the just-in-time generation in the send-worker — so the three paths can never silently drift apart.
+
+**Inputs**: project name, the fixed 7 rubric categories, `trigger`, optional admin-written `customGuidance`, and the captured health context (§7).
+
+**Guidance is opt-in and supplementary, not a default input.** It's a purely frontend concept — a per-browser (localStorage), per-project list of free-text instructions on the Surveys page, with no backend table backing it; the backend just stores whatever string arrives on the `survey.custom_guidance` column. It starts **empty** for every project until an admin explicitly adds an instruction — so by default, question generation is driven entirely by the health context (§7), not by any boilerplate text. When an admin does add guidance, the prompt frames it explicitly as secondary: *"Optional supplementary guidance from the admin (use only to steer emphasis within a category — the health context above is the primary signal for what to probe)"* — it can nudge emphasis, but the risk-score-driven health context still drives what gets asked about.
+
+**Steps**:
+1. **Generate** — Gemini is asked for 6–8 candidate questions, mixing `scale` (1–5) and `text` types, each tagged with exactly one category, weighted toward categories the health context shows as weak/declining.
+2. **Dedupe** (cheap, non-AI, runs before any paid scoring call) — tokenizes each question, computes Jaccard similarity against every question already kept, and drops anything ≥ 0.6 similar to one already kept. This is the first line of defense; the AI's own `diversity` score (below) is the second.
+3. **Score** — Gemini scores every surviving question 0–100 on four dimensions plus an overall verdict:
+   - *relevance* — fit to this project/trigger/health context
+   - *clarity* — unambiguous, not leading or double-barrelled
+   - *importance* — how actionable the answer would be to a manager
+   - *diversity* — how distinct it is from the other questions in this set
+   - *overall* — holistic judgement; **this is the only dimension used for gating**
+4. **Quality gate** — questions scoring below `SURVEY_QUESTION_MIN_SCORE` (default **60**) are dropped outright. If *zero* questions pass, generation fails with `No generated question met the minimum quality score of 60` — there is no automatic retry/regeneration.
+5. **Category-balanced selection**, capped at `SURVEY_QUESTION_MAX_COUNT` (default **6**): first pass takes at most one question per category (highest-scored first) to maximize topic spread; if that doesn't fill the cap, a second pass backfills with the next-highest-scoring leftovers regardless of category. There is no fixed "N per category" — it depends entirely on which categories cleared the quality gate.
+
+---
+
+## 7. Health Context & Trend (fed to the AI, read-only)
+
+`captureSurveyHealthContext` reads **only** the `riskscore` table (via `getLatestRiskScoreForProject`) — it never touches `projecthealthscore`. It captures the current 7 category scores, the overall score, and a **trend vs. the previous sync snapshot**:
+
+```
+delta = current_score − previous_score
+|delta| < 3         → steady
+3 ≤ |delta| < 15     → gradual_increase / gradual_decrease
+|delta| ≥ 15         → sharp_increase / sharp_decrease
 ```
 
-Run API and worker as separate processes. Redis and the worker are required for
-delivery, deadline closing, and insights.
+This produces prompt lines like *"CI/CD & Deployment: 62 (up 18.4 pts since last sync — sharp improvement)"*, so the AI can write questions that probe what's actively changing rather than restate a static snapshot. If there's no prior snapshot, trend is simply omitted — generation still proceeds.
 
-Operational checks:
+---
 
-- worker logs show the hourly distribution job;
-- `survey.delivery` shows channel acceptance;
-- `survey.sent_at` is the actual first successful broadcast time;
-- `survey.closed_at` and `close_reason` explain collection closure;
-- `survey.analysis_error` explains privacy skip/failure state;
-- `survey.insight.aiModel` records the model used;
-- `projecthealthscore.survey_id` proves blend provenance.
+## 8. Dispatch Mechanism
 
-## 17. Verification
+### 8.1 Queues (BullMQ + Redis)
 
-Current automated checks cover AI deduplication, quality selection, token
-encryption/expiry, schedule date utilities, and shared-link answer validation.
-Backend `npm test` passes (22 tests). Frontend production build passes.
+| Queue | Trigger | Worker processor | What it does |
+|---|---|---|---|
+| `survey-send` | Enqueued by the API on every manual send/send-now, and on retry | `survey-send-processor.ts` | Generates questions if still empty, then broadcasts + emails |
+| `survey-distribution` | Self-scheduling hourly cron (`0 * * * *`), registered once at worker boot | `survey-distribution-processor.ts` | Assigns auto-pulse send times, generates their questions, dispatches due surveys, closes expired surveys |
+| `survey-insight` | Enqueued on manual close, and automatically for every survey the hourly sweep just closed | `survey-insight-processor.ts` | Runs AI analysis, writes `survey.insight`, flips status to `completed` |
 
-Before production deployment, add integration tests against a temporary
-PostgreSQL/Supabase instance for:
+Job IDs are deterministic (`survey-send-<id>`, `survey-insight-<id>`), so a duplicate enqueue is a harmless no-op — this is the idempotency guard against double-processing. Both queues retry failed jobs 3× with exponential backoff.
 
-- idempotent migration on fresh and legacy survey schemas;
-- atomic duplicate submission;
-- close-versus-submit concurrency;
-- deterministic queue retries after partial channel failure;
-- anonymity-threshold raw-text suppression;
-- health-blend provenance;
-- pause/resume at the exact send boundary.
+**Note:** dispatch itself (`dispatchAnonymousSurveyBroadcast`) is never called synchronously from an API request — the API only ever *enqueues*. The worker is the sole executor of the actual broadcast/email send, for both manual and auto-pulse surveys.
 
-## 18. Deliberate extension points
+### 8.2 What dispatch actually does, in order
 
-Future features should preserve the anonymous broadcast core unless product
-requirements explicitly change:
+1. Load the survey; bail if it's missing, paused/cancelled, or already sent.
+2. Count developers on the project; if zero (and empty rosters aren't explicitly allowed), mark the survey `failed`.
+3. **Atomically claim** the survey for sending (a conditional UPDATE that only succeeds if nobody else claimed it first) — this is what makes concurrent worker retries safe.
+4. Mint **one shared anonymous link** for this cycle (`{surveyFormBaseUrl}/{signed token}` encoding survey id, cycle id, and deadline).
+5. If not yet broadcast: fan out in parallel to Slack, Telegram, and Discord (each independently best-effort — a channel failing doesn't fail the others). If **all three** fail or are unconfigured, the whole dispatch throws.
+6. Separately, run the per-developer email pass (§9) — wrapped so an email failure never fails the broadcast that already succeeded.
+7. Set the target respondent count and mark the survey `active`.
 
-- per-project broadcast channel configuration;
-- production identity/session middleware for admins;
-- an automated migration runner;
-- richer aggregate charts and CSV export above the privacy threshold;
-- optional multilingual questions/prompts;
-- a separately designed personal-delivery model, with its own privacy review
-  and migration, rather than dormant fields in the shared model.
+### 8.3 Auto-close (deadline sweep)
+
+There's no per-survey delayed job for closing — it's a **shared hourly sweep**, the same `survey-distribution` cron tick: any `active` survey whose `expires_at` has passed gets closed (`close_reason: 'deadline'`), and an insight job is enqueued for each one closed. This means an expired survey can sit closed for up to ~1 hour before the sweep catches it — not an exact-time trigger.
+
+---
+
+## 9. Per-Developer Email — Eligibility & Cooldown Calculations
+
+This is the part with the most "decision-making" logic in the whole feature. Run once per survey, per developer, in this exact order:
+
+1. **Idempotency gate** — if *any* `survey_recipient` row already exists for this survey, skip the entire function (a retried send job never re-emails everyone).
+2. **Who counts as a developer** — every `projectmember` row for the project, filtered to `User.role === 'member'` (role now lives on `User`, not on `projectmember`).
+3. For each developer, **in priority order**:
+   - **a. Cross-project rotation fairness** (checked first, only applies if the developer is on **more than one project**): compare how many surveys this developer has ever been successfully emailed for *this* project against every *other* project they're also on. If this project is already ahead of — has sent more than — the least-surveyed sibling project, skip them for now (`skip_reason: 'rotation_wait_for_other_projects'`) so that sibling gets its turn first. **This is not a permanent block** — as soon as every sibling project has caught up to (or passed) this project's count, it becomes eligible again. Rationale: without this, one project could monopolize a multi-project developer's attention and starve every other project they're on from ever reaching them; a purely permanent "only once, ever" rule would eventually go silent on every project once each had used its one shot.
+   - **b. 15-day global cooldown** (`SURVEY_MIN_DAYS_BETWEEN_SURVEYS`, default 15, range 1–60): if this developer received *any* successful survey email — for *any* project — less than 15 days ago, skip them (`skip_reason: 'cooldown_active'`).
+   - **c. Otherwise, send** — record `status: 'sent'`. If the send itself throws, record `status: 'failed'` with the error message (truncated to 200 chars) as the reason.
+
+```
+                 ┌─ this project's send-count > the lowest sibling project's send-count? ──▶ skip (wait for rotation)
+developer ──▶    │
+                 ├─ emailed for ANY project within last 15 days? ─────────────────────────▶ skip (cooldown)
+                 │
+                 └─ otherwise ──▶ send email, record status
+```
+
+Worked example: a developer is on Project A and Project B, both starting at 0 sends. Project A sends first (A=1, B=0) — Project A is now ahead of B, so the *next* time Project A tries, it's skipped in favor of B (B=0 is still behind). Once Project B sends (A=1, B=1), both are tied again and either project is eligible next, subject to the 15-day cooldown. If a third project C is added later with 0 sends, A and B (both at 1) each wait for C to catch up before sending again.
+
+Every outcome — sent, skipped (with reason), or failed — is written to `survey_recipient`, giving a full audit trail of who got what and why.
+
+---
+
+## 10. Backend vs. Worker — Task Distribution
+
+| Runs in **API** (synchronous, on HTTP request) | Runs in **Worker** (async, via queue job) |
+|---|---|
+| Question generation for the manual flow (calls Gemini directly on request) | Question generation for auto-pulse and send-now (same underlying function, called on a queue tick instead) |
+| Quota checks (monthly manual limit) | Actual Slack/Telegram/Discord broadcast |
+| Question validation/editing (admin review) | Actual per-developer email sends + cooldown calculations |
+| Enqueueing `survey-send` / `survey-insight` jobs | The hourly auto-pulse scheduling + question-gen-lead-time check |
+| Pause/resume/cancel lifecycle transitions | The hourly deadline sweep (auto-close) |
+| **Reminders** — fully synchronous, no queue at all: rebuilds the existing link, enforces its own 15-*minute* cooldown, re-broadcasts to chat channels only (no re-email) | AI analysis of closed surveys (`survey-insight` job) |
+| Read endpoints (quota, schedule, list, detail) | Retry logic (BullMQ's built-in exponential backoff, 3 attempts) |
+
+The dividing line is simple: **anything that must happen right when an admin clicks a button and needs an immediate response (validation, quota checks, reading state) is API; anything that actually talks to an external channel/AI or runs on a schedule is worker.**
+
+---
+
+## 11. Response Collection
+
+### 11.1 Public anonymous flow
+
+- `GET /public/surveys/:token` — loads the form (60 requests/15min per IP).
+- `POST /public/surveys/:token/responses` — submits answers (**10 requests/15min per IP**).
+
+Validation (`validateSurveyAnswers`):
+- Each `questionId` may appear at most once per submission, and must belong to this survey.
+- `scale` questions: integer 1–5, no `answerText` present.
+- `text` questions: 1–4000 trimmed characters, no `answerScale` present.
+- At least one answer is required overall — a fully blank submission is rejected.
+
+### 11.2 Anonymity model — what "anonymous" actually means here
+
+- The link is **reusable**, not single-use — it isn't consumed or invalidated after one response.
+- There is **no identity of any kind** stored: no cookie, no session, no fingerprint, no account link.
+- The client generates a random `submissionId` (UUID) per attempt, sent so a network retry doesn't create a duplicate row of the *same* answers — but this does **not** stop one person from submitting multiple times with genuinely different answers. This is a fully trust-based, best-effort anonymous design, by intent.
+
+### 11.3 Storage & aggregation
+
+Each submission is one row (`survey_response`), holding all of that respondent's answers as a jsonb array. When results are read, `getRawResponsesForSurvey` flattens every row's answers into "all answers for question 1", "all answers for question 2", etc. — this is a deliberate design choice: **respondent identity is discarded at aggregation time**, so even the raw-responses view in the UI shows "R1, R2, R3..." per question rather than a respondent-linked grid across questions (there's no way to tell whether "R1" on question 1 and "R1" on question 2 came from the same person).
+
+---
+
+## 12. Closing a Survey
+
+| Path | What happens |
+|---|---|
+| **Manual** — admin clicks Close | `status → closed`, `close_reason: 'manual'`, insight job enqueued immediately |
+| **Automatic** — deadline passes | Caught by the next hourly sweep (§8.3): `status → closed`, `close_reason: 'deadline'`, insight job enqueued |
+
+Both converge on the same `survey-insight` job — there's no behavioral difference in analysis quality based on how the survey closed.
+
+---
+
+## 13. Post-Close AI Analysis
+
+**Gating**: analysis is skipped (and the survey completes immediately with no scores) only if there are **zero responses**, or every question has zero answers. This is checked as a hard `responseCount < 1` — not any minimum-anonymity threshold (see the note in §15 about `SURVEY_MIN_ANONYMOUS_RESPONSES`).
+
+**What Gemini receives**: project name, the health-context snapshot captured at question-generation time (for interpretation only — explicitly instructed *not* to be copied/anchored/averaged into the survey's own scores), the total respondent count, and every question with all of its collected answers.
+
+**What it's asked to produce**:
+1. **Seven category scores (0–100)**, based only on survey evidence — if a category has no scale answers, infer from the tone of the free-text answers; if there's truly no signal, default to 50 (neutral).
+2. **3–5 quantified insight bullets** — each a full sentence citing an actual count, e.g. *"3 of 4 responses cite unclear sprint scope as a blocker."* This replaced an earlier version that just returned bare keyword labels ("Unclear Scope") with no evidence behind them.
+3. **A 2–4 sentence overall narrative** (still generated and stored, no longer shown as its own paragraph in the UI — superseded by the quantified bullets above for at-a-glance reading).
+4. **One-sentence summary per question** (`questionSummaries`) — a new field, e.g. *"Most respondents rated confidence low (2/5), citing unresolved dependencies."*
+
+**Fallback**: if `GEMINI_API_KEY` isn't configured, a stub client returns neutral 50s for every category, one placeholder theme, and one placeholder per-question summary — so the pipeline is fully exercisable in local dev without a real AI key.
+
+**Explicitly decoupled from the risk engine**: the insight service's own header comment states it is "kept independent of the risk engine — never blended into projecthealthscore." Nothing in this pipeline reads from or writes to `projecthealthscore`; the risk engine and survey analysis are two scores that live side by side and never combine.
+
+---
+
+## 14. Reminders
+
+A manager can nudge an active survey without creating a new one: `RemindSurveyButton` re-broadcasts the **existing** link to chat channels only (no new email round). It enforces its own separate 15-**minute** cooldown (distinct from the 15-*day* email cooldown) to stop accidental reminder-spam, and runs entirely synchronously in the API — no queue involved.
+
+---
+
+## 15. Reference: Environment Variables
+
+| Variable | Default | Range | Controls |
+|---|---|---|---|
+| `MANUAL_SURVEY_MONTHLY_LIMIT` | 2 | 1–20 | Manual surveys per project per calendar month |
+| `SURVEY_QUESTION_GEN_LEAD_DAYS` | 2 | 1–14 | Review window (manual) / lead time before auto-pulse send (auto) |
+| `SURVEY_QUESTION_MIN_SCORE` | 60 | 0–100 | Quality gate on generated questions (`overall` dimension) |
+| `SURVEY_QUESTION_MAX_COUNT` | 6 | 1–20 | Max questions per survey |
+| `SURVEY_MONTHLY_START_DAY` | 1 | 1–28 | Day of month the auto-pulse send window opens |
+| `SURVEY_MONTHLY_WINDOW_DAYS` | 3 | 1–7 | Width of that window |
+| `SURVEY_MIN_DAYS_BETWEEN_SURVEYS` | 15 | 1–60 | Global per-developer email cooldown (days) |
+| `SURVEY_MIN_ANONYMOUS_RESPONSES` | 5 | 3–100 | **Cosmetic only** — appears in the `insufficient_responses:<n>/<min>` message text; no longer gates raw-response visibility (that gate was removed) |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | — | — | If unset, all AI calls fall back to the deterministic stub client |
+
+---
+
+## 16. FAQ — for demo / presentation
+
+**Q: Why is one link shared by the whole team instead of a unique link per developer?**
+A: The design goal is honest, low-friction feedback. A per-developer link would make responses traceable back to a person (defeating anonymity) and adds sign-up/auth friction that suppresses response rates. The shared link is anonymous by construction; the email is just a *notification* that a survey exists, not an authentication mechanism.
+
+**Q: If the link is shared and anyone can open it without logging in, what stops someone outside the team, or a developer, from submitting many times to skew results?**
+A: Nothing at the protocol level — this is an intentional trust trade-off for genuine anonymity. The 10-submissions-per-15-minutes-per-IP rate limit bounds *automated* abuse, but a determined individual could still submit more than once by hand. This is a known, accepted limitation of anonymous pulse surveys generally, not a bug.
+
+**Q: Why does a developer on multiple projects sometimes not get emailed for a project they've been emailed for before, even though the 15-day cooldown has long passed?**
+A: By design — it's a temporary wait for fairness, not a permanent block. If someone works across multiple projects, giving each project an independent 15-day cooldown would let whichever project surveys them "first" each cycle monopolize their attention forever, since it always resets before the others get a turn. Instead, a project is only skipped while it's *ahead* of a sibling project the developer is also on (has sent them more surveys than that sibling has); once every sibling catches up, it's eligible again. So the developer's limited "survey attention" rotates fairly across every project they're on — it's never a permanent block on any one project.
+
+**Q: What happens if the AI (Gemini) is completely unreachable when a survey should send its questions?**
+A: Question generation throws, the survey is marked `failed` with a reason, and an admin can hit **Retry** once the issue clears — the retry re-enters the same pipeline (BullMQ also auto-retries transient failures 3× with backoff before it ever surfaces as `failed`).
+
+**Q: What happens if literally nobody responds before the deadline?**
+A: The survey still closes and completes on schedule (via the hourly sweep) — it just skips the AI call entirely and stores `analysisError: insufficient_responses:0/5`, so it shows as "no data" rather than hanging in `closed` forever.
+
+**Q: Are survey results and the Dashboard's health score the same number?**
+A: No — deliberately not. The Dashboard's score comes from the risk engine (connector metrics: commits, CI/CD runs, PR cycle time, etc.). The survey's 7 category scores come purely from what developers actually said in that survey. They can and often will disagree — e.g. CI/CD pipelines can look green on the dashboard while developers report high friction in the survey. The health-context snapshot is shown to the AI as background only, with explicit instructions not to let it influence the survey's own scores.
+
+**Q: Why "3 of 4 responses cite X" instead of just "unclear sprint scope" as a theme?**
+A: A bare keyword gives no sense of how many people actually felt that way — one outlier complaint reads the same as a near-unanimous one. Quantifying each insight lets a manager immediately judge whether something is a widespread pattern or a single loud voice.
+
+**Q: Can I see exactly what each person answered?**
+A: You can see every raw answer, but not who gave it — answers are grouped and displayed per-question, not per-respondent, and there is no way (by design) to link an answer on question 1 to an answer on question 3 from the same person.
+
+---
+
+## 17. Edge Cases & Demonstration Scenarios
+
+Useful to walk through live in a demo, or to have ready if asked "what if...?":
+
+1. **A developer is on 3 projects (A, B, C), all starting at zero sends.** Project A surveys them and they respond (A=1, B=0, C=0). Two weeks later, Project B tries to survey them → **blocked by the 15-day global cooldown** (skip_reason `cooldown_active`), even though Project B has never surveyed them before. A month after that, Project A's next monthly pulse tries to reach them again → **blocked by rotation** (skip_reason `rotation_wait_for_other_projects`) because A (1) is ahead of both B (0) and C (0), so it waits. Project B then successfully sends (A=1, B=1, C=0) — now B and C are tied as the least-surveyed, so Project A must wait for C too before it's eligible again. Only once every sibling project has caught up to Project A's count does Project A become eligible again — it's a rotation, never a permanent block.
+
+2. **A project has only 2 team members and 1 responds.** The survey closes with 1/2 response rate. AI analysis still runs (gate is `< 1` response, not any minimum), producing scores/themes/summaries from that single respondent's answers — worth noting in a demo that themes from very small samples ("1 of 1 responses...") are statistically thin even though the pipeline treats them the same as a 20-person survey.
+
+3. **Zero developers on a brand-new project.** Sending a survey immediately fails with `no_project_developers` — a clean, explicit failure rather than silently sending to nobody.
+
+4. **`GEMINI_API_KEY` removed mid-demo.** Question generation and response analysis both fall back to the deterministic stub — questions/scores become obviously placeholder-looking ("stub-ai-client: no real analysis performed"), which is a good way to show the system degrades predictably rather than crashing when the AI provider is unavailable.
+
+5. **An admin closes a survey manually one minute after sending it, with zero responses yet.** It closes immediately (`close_reason: 'manual'`) rather than waiting for the deadline, and completes with `insufficient_responses:0/5` — demonstrating that closing is always available as an override, not gated by minimum wait time.
+
+6. **All three broadcast channels (Slack/Telegram/Discord) are unconfigured or fail.** The email pass may still succeed independently (it's wrapped separately), but the overall dispatch throws because at least one broadcast channel is required — the survey ends up `failed` even if some developers did in fact receive an email, since the shared-link broadcast is treated as the primary distribution path.
+
+7. **Two admins click "Send Survey Now" on the same draft within the same second** (double-click / race). The atomic claim (`claimSurveyForSend`) ensures only one of the two requests actually dispatches — the second is a silent no-op, not a duplicate send.
+
+8. **A survey's deadline passes at 2:03pm.** It isn't necessarily closed at 2:03pm — the hourly sweep runs on the hour, so it could sit past-deadline-but-still-active for up to ~57 minutes before being caught and closed. Useful to mention if a demo timing looks "off" by up to an hour.
