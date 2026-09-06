@@ -49,44 +49,40 @@ async function loadSignalsForSnapshot(snapshotId: number, snapshotTime: string |
     commitsPerWeek: null,
   };
 
+  // Every tool metrics table stores its data as one `metrics` jsonb column
+  // (the connector's own camelCase output, verbatim) rather than per-metric
+  // columns - see db/schema/*.sql. Named columns were dropped by migration
+  // 02_metrics_tables_to_jsonb.sql, so we read the same values back out of
+  // the jsonb blob instead.
   const [pm, vcs, cicd] = await Promise.all([
-    client
-      .from('projectmanagementmetrics')
-      .select(
-        'spillover_ratio, consecutive_spillover_count, blocked_items_count, overdue_items_count, scope_churn_ratio, mid_sprint_additions',
-      )
-      .eq('snapshot_id', snapshotId)
-      .maybeSingle(),
-    client
-      .from('versioncontrolmetrics')
-      .select('stale_pr_count, time_to_first_review_avg_hours, active_contributions_per_week')
-      .eq('snapshot_id', snapshotId)
-      .maybeSingle(),
-    client
-      .from('cicdmetrics')
-      .select('deployments_per_week, deployment_failure_rate_percent, pipeline_success_rate_percent')
-      .eq('snapshot_id', snapshotId)
-      .maybeSingle(),
+    client.from('projectmanagementmetrics').select('metrics').eq('snapshot_id', snapshotId).maybeSingle(),
+    client.from('versioncontrolmetrics').select('metrics').eq('snapshot_id', snapshotId).maybeSingle(),
+    client.from('cicdmetrics').select('metrics').eq('snapshot_id', snapshotId).maybeSingle(),
   ]);
 
   if (pm.error) throw new Error(`Failed to load project-management signals: ${pm.error.message}`);
   if (vcs.error) throw new Error(`Failed to load version-control signals: ${vcs.error.message}`);
-  const cicdRow = cicd.error ? null : cicd.data;
+
+  const pmMetrics = (pm.data?.metrics ?? {}) as Record<string, unknown>;
+  const vcsMetrics = (vcs.data?.metrics ?? {}) as Record<string, unknown>;
+  const cicdMetrics = (cicd.error ? {} : cicd.data?.metrics ?? {}) as Record<string, unknown>;
+  const spillover = (pmMetrics.spillover ?? {}) as Record<string, unknown>;
+  const scopeChurn = (pmMetrics.scopeChurn ?? {}) as Record<string, unknown>;
 
   return {
     ...empty,
-    spilloverRatio: asNumber(pm.data?.spillover_ratio),
-    consecutiveSpilloverCount: asNumber(pm.data?.consecutive_spillover_count),
-    blockedItemsCount: asNumber(pm.data?.blocked_items_count),
-    overdueItemsCount: asNumber(pm.data?.overdue_items_count),
-    scopeChurnRatio: asNumber(pm.data?.scope_churn_ratio),
-    midSprintAdditions: asNumber(pm.data?.mid_sprint_additions),
-    deploymentsPerWeek: asNumber(cicdRow?.deployments_per_week),
-    deploymentFailureRatePercent: asNumber(cicdRow?.deployment_failure_rate_percent),
-    pipelineSuccessRatePercent: asNumber(cicdRow?.pipeline_success_rate_percent),
-    stalePrCount: asNumber(vcs.data?.stale_pr_count),
-    prCycleTimeHours: asNumber(vcs.data?.time_to_first_review_avg_hours),
-    commitsPerWeek: asNumber(vcs.data?.active_contributions_per_week),
+    spilloverRatio: asNumber(spillover.spilloverRatio),
+    consecutiveSpilloverCount: asNumber(spillover.consecutiveSpilloverCount),
+    blockedItemsCount: asNumber(pmMetrics.blockedItemsCount),
+    overdueItemsCount: asNumber(pmMetrics.overdueItemsCount),
+    scopeChurnRatio: asNumber(pmMetrics.scopeCreepRate),
+    midSprintAdditions: asNumber(scopeChurn.midSprintAdditions),
+    deploymentsPerWeek: asNumber(cicdMetrics.deploymentsPerWeek),
+    deploymentFailureRatePercent: asNumber(cicdMetrics.deploymentFailureRatePercent),
+    pipelineSuccessRatePercent: asNumber(cicdMetrics.pipelineSuccessRatePercent),
+    stalePrCount: asNumber(vcsMetrics.stalePrCount),
+    prCycleTimeHours: asNumber(vcsMetrics.timeToFirstReviewAvgHours),
+    commitsPerWeek: asNumber(vcsMetrics.activeContributionsPerWeek),
   };
 }
 

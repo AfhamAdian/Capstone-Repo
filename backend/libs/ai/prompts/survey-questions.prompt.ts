@@ -123,8 +123,8 @@ If an incident is listed for a category (spillover, failed deploys, blocked work
 Do not mention numeric scores, percentages, people, or ticket/PR identifiers in the questions.
 Do not assume the score is correct — treat incidents as the situation to explore.
 Do not repeat or lightly reword the same underlying question.
-Each question must be tagged with exactly one category. Mix "scale" (1-5 rating) and "text" (free response) question types.
-Keep questions short, neutral, and non-leading. Do not ask for names or identifying details - responses are anonymous.
+Each question must be tagged with exactly one category. Default to "text" (free response) questions that ask WHY something is happening, not just how someone feels about it - especially for any category with a listed incident or a declining trend. Use "scale" (1-5 rating) sparingly, only for a quick confidence/sentiment check, not as your default question type; most questions in the survey should be "text".
+Keep questions short, specific, and non-leading - prefer "What's the biggest reason X is happening?" over "How do you feel about X?" Do not ask for names or identifying details - responses are anonymous.
 
 Respond with ONLY a JSON array, no markdown fences, no commentary, matching this shape (category must be one of: ${categories.join(', ')}):
 [{"category": string, "questionText": string, "questionType": "text" | "scale"}]`;

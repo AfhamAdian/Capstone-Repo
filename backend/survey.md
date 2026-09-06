@@ -107,7 +107,7 @@ Same function (`generateQualityQuestions`) is shared by the manual flow, the aut
 **Guidance is opt-in and supplementary, not a default input.** It's a purely frontend concept — a per-browser (localStorage), per-project list of free-text instructions on the Surveys page, with no backend table backing it; the backend just stores whatever string arrives on the `survey.custom_guidance` column. It starts **empty** for every project until an admin explicitly adds an instruction — so by default, question generation is driven entirely by the health context (§7), not by any boilerplate text. When an admin does add guidance, the prompt frames it explicitly as secondary: *"Optional supplementary guidance from the admin (use only to steer emphasis within a category — the health context above is the primary signal for what to probe)"* — it can nudge emphasis, but the risk-score-driven health context still drives what gets asked about.
 
 **Steps**:
-1. **Generate** — Gemini is asked for 6–8 candidate questions, mixing `scale` (1–5) and `text` types, each tagged with exactly one category, weighted toward categories the health context shows as weak/declining.
+1. **Generate** — Gemini is asked for 6–8 candidate questions, each tagged with exactly one category, weighted toward categories the health context shows as weak/declining. The prompt defaults to detailed `text` questions that ask *why* something is happening, especially for a category with an incident or a declining trend — `scale` (1–5) is reserved for occasional quick confidence/sentiment checks, not the default type.
 2. **Dedupe** (cheap, non-AI, runs before any paid scoring call) — tokenizes each question, computes Jaccard similarity against every question already kept, and drops anything ≥ 0.6 similar to one already kept. This is the first line of defense; the AI's own `diversity` score (below) is the second.
 3. **Score** — Gemini scores every surviving question 0–100 on four dimensions plus an overall verdict:
    - *relevance* — fit to this project/trigger/health context
@@ -122,7 +122,7 @@ Same function (`generateQualityQuestions`) is shared by the manual flow, the aut
 
 ## 7. Health Context & Trend (fed to the AI, read-only)
 
-`captureSurveyHealthContext` reads **only** the `riskscore` table (via `getLatestRiskScoreForProject`) — it never touches `projecthealthscore`. It captures the current 7 category scores, the overall score, and a **trend vs. the previous sync snapshot**:
+`captureSurveyHealthContext` reads **only** the `riskscore` table (via `getLatestRiskScoreForProject`) for the 7 category scores and overall score — it never touches `projecthealthscore`. It also computes a **trend vs. the previous sync snapshot**:
 
 ```
 delta = current_score − previous_score
@@ -132,6 +132,8 @@ delta = current_score − previous_score
 ```
 
 This produces prompt lines like *"CI/CD & Deployment: 62 (up 18.4 pts since last sync — sharp improvement)"*, so the AI can write questions that probe what's actively changing rather than restate a static snapshot. If there's no prior snapshot, trend is simply omitted — generation still proceeds.
+
+**Raw connector metrics (`METRICS_IN_SURVEY`, default true).** Beyond the risk-engine scores, `captureSurveyHealthContext` also attaches each project's latest raw metrics from `cicdmetrics`, `codequalitymetrics`, `projectmanagementmetrics`, and `versioncontrolmetrics` (same `snapshot_id` join pattern as the risk score lookup) — spillover ratio, blocked/overdue ticket counts, scope-creep rate, mid-sprint additions, stale PRs, deployment failure rate, pipeline success rate, and commit activity. This is a **read-only, additive** input: it's rendered into the prompt as plain-English "recent incidents" lines (e.g. *"About 40% of committed sprint work spilled into the next sprint."*), never as raw numbers the AI could parrot back, and it never feeds the risk-score calculation itself. The fetch is wrapped so a failure (e.g. a project with no metrics synced yet) simply omits this section rather than blocking question generation. Set `METRICS_IN_SURVEY=false` to disable and fall back to risk-score-only context.
 
 ---
 
@@ -278,6 +280,7 @@ A manager can nudge an active survey without creating a new one: `RemindSurveyBu
 | `SURVEY_MONTHLY_WINDOW_DAYS` | 3 | 1–7 | Width of that window |
 | `SURVEY_MIN_DAYS_BETWEEN_SURVEYS` | 15 | 1–60 | Global per-developer email cooldown (days) |
 | `SURVEY_MIN_ANONYMOUS_RESPONSES` | 5 | 3–100 | **Cosmetic only** — appears in the `insufficient_responses:<n>/<min>` message text; no longer gates raw-response visibility (that gate was removed) |
+| `METRICS_IN_SURVEY` | true | boolean | Feed each project's latest raw CI/CD, version-control, and PM metrics into question generation, in addition to risk scores |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | — | — | If unset, all AI calls fall back to the deterministic stub client |
 
 ---
