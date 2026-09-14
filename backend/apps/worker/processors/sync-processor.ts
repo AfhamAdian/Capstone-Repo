@@ -7,7 +7,7 @@ import type { SyncJobData } from '@libs/queue/index.js';
 import type { ConnectorOutput, SupportedTool } from '@libs/sync/index.js';
 import { createConnector, mapWithConcurrency } from '@libs/sync/index.js';
 import { eventStore } from '@libs/queue/index.js';
-import { persistConnectorMetrics } from '../../api/database/metrics.js';
+import { createProjectSnapshot, persistConnectorMetrics } from '../../api/database/metrics.js';
 import { calculateAndSaveRiskScores } from '../../api/services/risk-calculation.service.js';
 import { evaluateSurveyTrigger } from '../../api/services/survey-trigger.service.js';
 import { logger } from '@libs/logger.js';
@@ -156,6 +156,16 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       },
     );
 
+    // Create the snapshot once, up front, for every tool in this job to share. Previously each
+    // tool's persist call created its own snapshot lazily (only when snapshotId was still unset),
+    // so if the *first* successful tool created the row but then failed its own metric insert,
+    // the job's local snapshotId never got set and the next tool created a second, orphaned
+    // snapshot - fragmenting one sync run's data across two rows. Creating it here, tied only to
+    // "at least one tool's data was fetched", removes that race entirely.
+    if (fetchResults.some((result) => !('error' in result))) {
+      snapshotId = await createProjectSnapshot(numericProjectId, new Date().toISOString());
+    }
+
     for (const result of fetchResults) {
       const { tool } = result;
       const toolLog = log.child({ tool });
@@ -167,17 +177,12 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
 
       try {
         const persistStartedAt = Date.now();
-        const persistedSnapshotId = await persistConnectorMetrics({
+        await persistConnectorMetrics({
           projectId: numericProjectId,
           tool,
           data: result.output.data,
           snapshotId: snapshotId ?? undefined,
         });
-
-        // Store snapshot ID for risk calculation
-        if (!snapshotId) {
-          snapshotId = persistedSnapshotId;
-        }
 
         toolLog.info({ elapsedMs: Date.now() - persistStartedAt }, 'persisted connector metrics');
 
@@ -210,8 +215,11 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       }
     }
 
-    // Determine overall status
-    const status = failedTools.length === 0 ? 'success' : failedTools.length === completedTools.length ? 'failed' : 'partial';
+    // Determine tool-fetch/persist status first; a failed risk calculation (below) can still
+    // downgrade a clean 'success' to 'partial', since the snapshot would otherwise report success
+    // while the score data the dashboard actually reads was never written.
+    const toolStatus = failedTools.length === 0 ? 'success' : failedTools.length === completedTools.length ? 'failed' : 'partial';
+    let riskCalculationError: string | undefined;
 
     // Calculate risk scores if at least one tool completed successfully
     if (completedTools.length > 0 && snapshotId) {
@@ -242,9 +250,15 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       } catch (riskError) {
         const message = riskError instanceof Error ? riskError.message : 'Unknown error';
         log.error({ err: riskError, snapshotId }, 'failed to calculate risk scores');
-        // Don't fail the sync job if risk calculation fails - risk is supplementary
+        // Don't fail the sync job if risk calculation fails - risk is supplementary - but the
+        // reported status must reflect that the score data wasn't actually persisted (see below).
+        riskCalculationError = message;
       }
     }
+
+    // A risk-calc failure means the snapshot has no usable score, so a would-be 'success' is
+    // downgraded to 'partial' rather than silently reporting success with no new datapoint.
+    const status = riskCalculationError && toolStatus === 'success' ? 'partial' : toolStatus;
 
     // TODO: Update job status to completed in database
     // await db.updateSyncJob(jobId, {
@@ -262,6 +276,7 @@ export async function processSyncJob(jobData: SyncJobData): Promise<void> {
       toolsFailed: failedTools,
       riskScore: finalRiskScore,
       riskScores: finalRiskScores,
+      error: riskCalculationError,
     });
 
     log.info(
