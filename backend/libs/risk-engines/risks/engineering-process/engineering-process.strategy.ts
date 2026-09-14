@@ -271,8 +271,8 @@ export class EngineeringProcessStrategy implements EngineeringProcessRiskCalcula
     } else {
       score = clamp(resultA.score * 0.5 + resultB.score * 0.5);
       weights = [
-        ...resultA.weights.map((w) => ({ key: `reviewQuality.${w.key}`, w: Math.round(w.w * 0.5 * 100) / 100 })),
-        ...resultB.weights.map((w) => ({ key: `flowBottleneck.${w.key}`, w: Math.round(w.w * 0.5 * 100) / 100 })),
+        ...resultA.weights.map((w) => ({ key: `reviewQuality.${w.key}`, w: Math.round(w.w * 0.5 * 100) / 100, score: w.score })),
+        ...resultB.weights.map((w) => ({ key: `flowBottleneck.${w.key}`, w: Math.round(w.w * 0.5 * 100) / 100, score: w.score })),
       ];
     }
 

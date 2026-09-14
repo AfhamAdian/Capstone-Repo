@@ -13,6 +13,7 @@ import type { Project, Action, Survey } from "../types";
 import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, ttStyle, type DisplaySubscores } from "../format";
 import { TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
+import { ScoreBreakdownModal, SCORE_BREAKDOWN_TYPES } from "../components/ScoreBreakdownModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { PageShell, SectionHeading, CardHeading } from "../components/PageShell";
 
@@ -46,8 +47,18 @@ function CodeQualityBreakdown({subscores,align}:{
   );
 }
 
+/** Latest snapshot behind a display category's trend - Code Quality has no series of its own
+ *  (it's a frontend-only merge of security/reliability/maintainability, which share the same
+ *  snapshot-history alignment), so it borrows security's. */
+function latestSnapshotId(project: Project, k: keyof DisplaySubscores): number | undefined {
+  const sourceKey = k === "codeQuality" ? "security" : k;
+  const series = project.subscoreSeries[sourceKey];
+  return series?.[series.length - 1]?.snapshotId;
+}
+
 export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
   const [expanded,setExpanded]=useState<string|null>(null);
+  const [breakdownKey,setBreakdownKey]=useState<keyof DisplaySubscores|null>(null);
   const display=toDisplaySubscores(project.subscores);
   const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
     codeQuality: computeCodeQualitySeries(project.subscoreSeries),
@@ -184,8 +195,13 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
             const trendGood = delta >= 0; // higher = better for all subscores
             const minV = scoreInt(series.length?Math.min(...series.map(d=>d.v)):val);
             const maxV = scoreInt(series.length?Math.max(...series.map(d=>d.v)):val);
+            const snapshotId = latestSnapshotId(project, k);
             return (
-              <div key={k} className="group relative bg-card border border-border p-4 flex flex-col" tabIndex={k==="codeQuality"?0:undefined}>
+              <div key={k} role="button" tabIndex={0}
+                onClick={()=>snapshotId&&setBreakdownKey(k)}
+                onKeyDown={e=>{if(snapshotId&&(e.key==="Enter"||e.key===" ")){e.preventDefault();setBreakdownKey(k);}}}
+                title={snapshotId?"See which metrics made up this score":undefined}
+                className={`group relative bg-card border border-border p-4 flex flex-col text-left ${snapshotId?"cursor-pointer hover:border-primary transition-colors":""}`}>
                 <div className="flex items-center gap-1.5 mb-3">
                   <span style={{color:strokeColor}} className="shrink-0">{SUBSCORE_ICONS[k]}</span>
                   <span className="text-xs font-semibold text-foreground leading-tight" style={{fontFamily:"var(--font-display)"}}>{SUBSCORE_LABELS[k]}</span>
@@ -348,6 +364,15 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
 
       <AnimatePresence>
         {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+        {breakdownKey&&(()=>{
+          const snapshotId=latestSnapshotId(project,breakdownKey);
+          if(!snapshotId) return null;
+          return (
+            <ScoreBreakdownModal key="sb" cardLabel={SUBSCORE_LABELS[breakdownKey]} projectId={project.backendProjectId??project.id}
+              snapshotId={snapshotId} scoreTypes={SCORE_BREAKDOWN_TYPES[breakdownKey]}
+              onClose={()=>setBreakdownKey(null)}/>
+          );
+        })()}
       </AnimatePresence>
     </PageShell>
   );

@@ -14,7 +14,7 @@ export interface BackendProject {
   score: number;
   scoreTrend: number;
   sparkline: { v: number }[];
-  timeSeries: { date: string; label: string; score: number }[];
+  timeSeries: { date: string; label: string; score: number; snapshotId: number }[];
   subscores: {
     security: number;
     reliability: number;
@@ -24,7 +24,7 @@ export interface BackendProject {
     engineeringProcess: number;
     planningExecution: number;
   };
-  subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
+  subscoreSeries: Record<string, { v: number; label: string; date?: string; snapshotId: number }[]>;
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
   metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
   pendingSurvey: boolean;

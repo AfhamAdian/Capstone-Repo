@@ -60,8 +60,8 @@ describe('renormalizedWeightedScore', () => {
     ]);
     expect(result?.score).toBe(50);
     expect(result?.weights).toEqual([
-      { key: 'a', w: 0.5 },
-      { key: 'b', w: 0.5 },
+      { key: 'a', w: 0.5, score: 100 },
+      { key: 'b', w: 0.5, score: 0 },
     ]);
   });
 
@@ -74,7 +74,7 @@ describe('renormalizedWeightedScore', () => {
       { key: 'c', score: undefined, weight: 0.25 },
     ]);
     expect(result?.score).toBe(80);
-    expect(result?.weights).toEqual([{ key: 'a', w: 1 }]);
+    expect(result?.weights).toEqual([{ key: 'a', w: 1, score: 80 }]);
   });
 
   it('excludes a present signal whose weight is 0', () => {
@@ -83,7 +83,7 @@ describe('renormalizedWeightedScore', () => {
       { key: 'b', score: 40, weight: 1 },
     ]);
     expect(result?.score).toBe(40);
-    expect(result?.weights).toEqual([{ key: 'b', w: 1 }]);
+    expect(result?.weights).toEqual([{ key: 'b', w: 1, score: 40 }]);
   });
 
   it('clamps the result even if an individual signal score is out of 0..100', () => {

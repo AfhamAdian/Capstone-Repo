@@ -52,13 +52,13 @@ describe('PlanningExecutionStrategy', () => {
   it('falls back to sub-group A alone, unhalved and unprefixed, when B has no data at all', () => {
     const result = new PlanningExecutionStrategy().calculate({ sprintCompletionRate: 100 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'sprintCompletionRate', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'sprintCompletionRate', w: 1, score: 100 }]);
   });
 
   it('falls back to sub-group B alone, unhalved and unprefixed, when A has no data at all', () => {
     const result = new PlanningExecutionStrategy().calculate({ throughputPerWeek: 15 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'throughputPerWeek', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'throughputPerWeek', w: 1, score: 100 }]);
   });
 
   it('caps throughput at 100 once the weekly target is reached', () => {

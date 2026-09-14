@@ -15,6 +15,7 @@ import {
   type PlanningExecutionMetrics,
 } from '@libs/risk-engines/types.js';
 import { renormalizedWeightedScore } from '@libs/risk-engines/scoring.js';
+import { describeSignal } from '@libs/risk-engines/signal-catalog.js';
 import { saveAllRiskScores } from '../database/risk-score.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { logger } from '@libs/logger.js';
@@ -29,39 +30,44 @@ function roundRiskScore(score: number | null): number | null {
   return typeof score === 'number' ? Math.round(score) : null;
 }
 
+type FetchedMetrics = {
+  versionControl: GitHubMetricsResponse['metrics'] | null;
+  projectManagement: JiraMetricsResponse['metrics'] | null;
+  codeOwnershipConcentrationPercent: number | undefined;
+  codeQuality: SonarQubeMetricsResponse['metrics'] | null;
+  cicd: GithubActionsMetricsResponse['metrics'] | null;
+};
+
+type AllRiskMetricsInputs = {
+  [RiskType.SECURITY]: SecurityMetrics;
+  [RiskType.RELIABILITY]: ReliabilityMetrics;
+  [RiskType.MAINTAINABILITY]: MaintainabilityMetrics;
+  [RiskType.CICD_DEPLOYMENT_HEALTH]: CicdDeploymentHealthMetrics;
+  [RiskType.TEAM_HEALTH]: TeamHealthMetrics;
+  [RiskType.ENGINEERING_PROCESS]: EngineeringProcessMetrics;
+  [RiskType.PLANNING_EXECUTION]: PlanningExecutionMetrics;
+};
+
 /**
- * Calculate and save all 7 health scores for a project snapshot.
- *
- * Metrics are read as-is from each tool's stored `metrics` jsonb column - same
- * camelCase shape the connector produced (see backend/libs/connectors/*).
- * Any table with no row for this snapshot (that tool wasn't part of this sync,
- * or hasn't been synced yet) resolves to `null` and its fields simply come
- * through as `undefined` below; RiskEngine's null-aware weighting handles the
- * rest (see backend/libs/risk-engines/risk-engines-reference.md).
+ * Shapes a snapshot's raw per-tool metrics into each score's typed input object - the single
+ * source of truth for "which raw field feeds which score", shared by calculateAndSaveRiskScores
+ * (persists the 7 scores at sync time) and getScoreBreakdown (recomputes one score on demand to
+ * show which metrics drove it, without persisting anything).
  */
-export async function calculateAndSaveRiskScores(projectSnapshotId: number): Promise<Record<string, number | null>> {
-  const startedAt = Date.now();
+function buildRiskMetricsInputs(metrics: FetchedMetrics): AllRiskMetricsInputs {
+  const { versionControl: vcs, projectManagement: jira, codeQuality: sonar, cicd, codeOwnershipConcentrationPercent } = metrics;
 
-  try {
-    log.info({ projectSnapshotId }, 'starting risk score calculation');
+  // Source-preference resolution (Jira primary / VCS fallback), same rule
+  // documented in risk-engines/types.ts and applied in test-risk-scores.ts.
+  const issueCycleTimeDays = jira?.issueCycleTimeAvgDays ?? vcs?.issueCycleTimeAvgDays ?? undefined;
+  const throughputPerWeek = jira?.throughputPerWeek ?? vcs?.issuesClosedPerWeek;
 
-    const metrics = await fetchMetricsForSnapshot(projectSnapshotId);
-    const { versionControl: vcs, projectManagement: jira, codeQuality: sonar, cicd, codeOwnershipConcentrationPercent } = metrics;
+  const commitMessageQualityPercent =
+    vcs?.commitMessageQuality.followingConventionPercent ??
+    (vcs ? (vcs.commitMessageQuality.withBodyPercent + vcs.commitMessageQuality.withIssueRefPercent) / 2 : undefined);
 
-    const riskEngine = new RiskEngine();
-    const scores: Record<string, number | null> = {};
-
-    // Source-preference resolution (Jira primary / VCS fallback), same rule
-    // documented in risk-engines/types.ts and applied in test-risk-scores.ts.
-    const issueCycleTimeDays = jira?.issueCycleTimeAvgDays ?? vcs?.issueCycleTimeAvgDays ?? undefined;
-    const throughputPerWeek = jira?.throughputPerWeek ?? vcs?.issuesClosedPerWeek;
-
-    const commitMessageQualityPercent =
-      vcs?.commitMessageQuality.followingConventionPercent ??
-      (vcs ? (vcs.commitMessageQuality.withBodyPercent + vcs.commitMessageQuality.withIssueRefPercent) / 2 : undefined);
-
-    // 1. Security
-    const securityMetrics: SecurityMetrics = {
+  return {
+    [RiskType.SECURITY]: {
       securityVulnerabilityCount: vcs?.securityVulnerabilityCount ?? undefined,
       linesOfCode: sonar?.linesOfCode ?? undefined,
       dependencyUpdateLagDays: vcs?.dependencyUpdateLagAvgDays ?? undefined,
@@ -70,13 +76,8 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       securityReviewRating: sonar?.securityReviewRating ?? undefined,
       securityRemediationEffort: sonar?.securityRemediationEffort ?? undefined,
       newVulnerabilities: sonar?.newVulnerabilities ?? undefined,
-    };
-    const securityResult = riskEngine.calculateRisk(RiskType.SECURITY, securityMetrics);
-    scores[RiskType.SECURITY] = roundRiskScore(securityResult.score);
-    log.info({ score: securityResult.score, level: securityResult.level }, 'calculated security score');
-
-    // 2. Reliability
-    const reliabilityMetrics: ReliabilityMetrics = {
+    },
+    [RiskType.RELIABILITY]: {
       issueReopenRatePercent: vcs?.issueReopenRatePercent ?? undefined,
       mrRevertRatePercent: vcs?.prRevertRatePercent,
       flakyTestCount: cicd?.flakyTestCount ?? undefined,
@@ -87,13 +88,8 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       qualityGatePassRatePercent: sonar?.qualityGatePassRatePercent ?? undefined,
       reliabilityRemediationEffort: sonar?.reliabilityRemediationEffort ?? undefined,
       newBugs: sonar?.newBugs ?? undefined,
-    };
-    const reliabilityResult = riskEngine.calculateRisk(RiskType.RELIABILITY, reliabilityMetrics);
-    scores[RiskType.RELIABILITY] = roundRiskScore(reliabilityResult.score);
-    log.info({ score: reliabilityResult.score, level: reliabilityResult.level }, 'calculated reliability score');
-
-    // 3. Maintainability
-    const maintainabilityMetrics: MaintainabilityMetrics = {
+    },
+    [RiskType.MAINTAINABILITY]: {
       maintainabilityRating: sonar?.maintainabilityRating ?? undefined,
       linesOfCode: sonar?.linesOfCode ?? undefined,
       codeSmells: sonar?.codeSmells ?? undefined,
@@ -106,37 +102,22 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       dependencyUpdateLagDays: vcs?.dependencyUpdateLagAvgDays ?? undefined,
       newTechnicalDebt: sonar?.newTechnicalDebt ?? undefined,
       newCodeSmells: sonar?.newCodeSmells ?? undefined,
-    };
-    const maintainabilityResult = riskEngine.calculateRisk(RiskType.MAINTAINABILITY, maintainabilityMetrics);
-    scores[RiskType.MAINTAINABILITY] = roundRiskScore(maintainabilityResult.score);
-    log.info({ score: maintainabilityResult.score, level: maintainabilityResult.level }, 'calculated maintainability score');
-
-    // 4. CI/CD & Deployment Health
-    const cicdDeploymentHealthMetrics: CicdDeploymentHealthMetrics = {
+    },
+    [RiskType.CICD_DEPLOYMENT_HEALTH]: {
       deploymentsPerWeek: cicd?.deploymentsPerWeek ?? undefined,
       deploymentFailureRatePercent: cicd?.deploymentFailureRatePercent ?? undefined,
       mttrHours: cicd?.mttrHours ?? undefined,
       timeToProdHours: cicd?.timeToProdHours ?? undefined,
       pipelineSuccessRatePercent: cicd?.pipelineSuccessRatePercent ?? undefined,
       avgPipelineDurationMinutes: cicd?.avgPipelineDurationMinutes ?? undefined,
-    };
-    const cicdResult = riskEngine.calculateRisk(RiskType.CICD_DEPLOYMENT_HEALTH, cicdDeploymentHealthMetrics);
-    scores[RiskType.CICD_DEPLOYMENT_HEALTH] = roundRiskScore(cicdResult.score);
-    log.info({ score: cicdResult.score, level: cicdResult.level }, 'calculated ci/cd deployment health score');
-
-    // 5. Team Health
-    const teamHealthMetrics: TeamHealthMetrics = {
+    },
+    [RiskType.TEAM_HEALTH]: {
       busFactor: vcs?.busFactor,
       codeOwnershipConcentrationPercent,
       reviewNetworkDensityPercent: vcs?.reviewNetworkDensity,
       activeContributionsPerWeek: vcs?.activeContributionsPerWeek,
-    };
-    const teamHealthResult = riskEngine.calculateRisk(RiskType.TEAM_HEALTH, teamHealthMetrics);
-    scores[RiskType.TEAM_HEALTH] = roundRiskScore(teamHealthResult.score);
-    log.info({ score: teamHealthResult.score, level: teamHealthResult.level }, 'calculated team health score');
-
-    // 6. Engineering Process
-    const engineeringProcessMetrics: EngineeringProcessMetrics = {
+    },
+    [RiskType.ENGINEERING_PROCESS]: {
       mrMergeTimeHours: undefined, // not yet persisted - see future-work.md #1
       timeToFirstReviewHours: vcs?.timeToFirstReviewAvgHours ?? undefined,
       reviewCommentsPerMrAvg: vcs?.reviewCommentsPerPrAvg ?? undefined,
@@ -160,16 +141,8 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       staleIssuesCount: vcs?.staleIssuesCount,
       staleMrsCount: vcs?.stalePrCount,
       staleTicketRatio: jira?.staleTickets.staleTicketRatio ?? undefined,
-    };
-    const engineeringProcessResult = riskEngine.calculateRisk(RiskType.ENGINEERING_PROCESS, engineeringProcessMetrics);
-    scores[RiskType.ENGINEERING_PROCESS] = roundRiskScore(engineeringProcessResult.score);
-    log.info(
-      { score: engineeringProcessResult.score, level: engineeringProcessResult.level },
-      'calculated engineering process score'
-    );
-
-    // 7. Planning & Execution
-    const planningExecutionMetrics: PlanningExecutionMetrics = {
+    },
+    [RiskType.PLANNING_EXECUTION]: {
       sprintCompletionRate: jira?.sprintCompletionRate ?? undefined,
       scopeCreepRate: jira?.scopeCreepRate ?? undefined,
       storyPointSayDoRatio: jira?.storyPointSayDoRatio ?? undefined,
@@ -182,8 +155,67 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
       epicCompletionRatePercent: jira?.epicCompletionRatePercent ?? undefined,
       throughputPerWeek,
       bugVsFeatureRatio: vcs?.bugVsFeatureRatio.ratio ?? undefined,
-    };
-    const planningExecutionResult = riskEngine.calculateRisk(RiskType.PLANNING_EXECUTION, planningExecutionMetrics);
+    },
+  };
+}
+
+/**
+ * Calculate and save all 7 health scores for a project snapshot.
+ *
+ * Metrics are read as-is from each tool's stored `metrics` jsonb column - same
+ * camelCase shape the connector produced (see backend/libs/connectors/*).
+ * Any table with no row for this snapshot (that tool wasn't part of this sync,
+ * or hasn't been synced yet) resolves to `null` and its fields simply come
+ * through as `undefined` below; RiskEngine's null-aware weighting handles the
+ * rest (see backend/libs/risk-engines/risk-engines-reference.md).
+ */
+export async function calculateAndSaveRiskScores(projectSnapshotId: number): Promise<Record<string, number | null>> {
+  const startedAt = Date.now();
+
+  try {
+    log.info({ projectSnapshotId }, 'starting risk score calculation');
+
+    const metrics = await fetchMetricsForSnapshot(projectSnapshotId);
+    const inputs = buildRiskMetricsInputs(metrics);
+
+    const riskEngine = new RiskEngine();
+    const scores: Record<string, number | null> = {};
+
+    // 1. Security
+    const securityResult = riskEngine.calculateRisk(RiskType.SECURITY, inputs[RiskType.SECURITY]);
+    scores[RiskType.SECURITY] = roundRiskScore(securityResult.score);
+    log.info({ score: securityResult.score, level: securityResult.level }, 'calculated security score');
+
+    // 2. Reliability
+    const reliabilityResult = riskEngine.calculateRisk(RiskType.RELIABILITY, inputs[RiskType.RELIABILITY]);
+    scores[RiskType.RELIABILITY] = roundRiskScore(reliabilityResult.score);
+    log.info({ score: reliabilityResult.score, level: reliabilityResult.level }, 'calculated reliability score');
+
+    // 3. Maintainability
+    const maintainabilityResult = riskEngine.calculateRisk(RiskType.MAINTAINABILITY, inputs[RiskType.MAINTAINABILITY]);
+    scores[RiskType.MAINTAINABILITY] = roundRiskScore(maintainabilityResult.score);
+    log.info({ score: maintainabilityResult.score, level: maintainabilityResult.level }, 'calculated maintainability score');
+
+    // 4. CI/CD & Deployment Health
+    const cicdResult = riskEngine.calculateRisk(RiskType.CICD_DEPLOYMENT_HEALTH, inputs[RiskType.CICD_DEPLOYMENT_HEALTH]);
+    scores[RiskType.CICD_DEPLOYMENT_HEALTH] = roundRiskScore(cicdResult.score);
+    log.info({ score: cicdResult.score, level: cicdResult.level }, 'calculated ci/cd deployment health score');
+
+    // 5. Team Health
+    const teamHealthResult = riskEngine.calculateRisk(RiskType.TEAM_HEALTH, inputs[RiskType.TEAM_HEALTH]);
+    scores[RiskType.TEAM_HEALTH] = roundRiskScore(teamHealthResult.score);
+    log.info({ score: teamHealthResult.score, level: teamHealthResult.level }, 'calculated team health score');
+
+    // 6. Engineering Process
+    const engineeringProcessResult = riskEngine.calculateRisk(RiskType.ENGINEERING_PROCESS, inputs[RiskType.ENGINEERING_PROCESS]);
+    scores[RiskType.ENGINEERING_PROCESS] = roundRiskScore(engineeringProcessResult.score);
+    log.info(
+      { score: engineeringProcessResult.score, level: engineeringProcessResult.level },
+      'calculated engineering process score'
+    );
+
+    // 7. Planning & Execution
+    const planningExecutionResult = riskEngine.calculateRisk(RiskType.PLANNING_EXECUTION, inputs[RiskType.PLANNING_EXECUTION]);
     scores[RiskType.PLANNING_EXECUTION] = roundRiskScore(planningExecutionResult.score);
     log.info(
       { score: planningExecutionResult.score, level: planningExecutionResult.level },
@@ -220,13 +252,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
  * this snapshot yields `null` for that tool, same as it never having been
  * synced.
  */
-async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
-  versionControl: GitHubMetricsResponse['metrics'] | null;
-  projectManagement: JiraMetricsResponse['metrics'] | null;
-  codeOwnershipConcentrationPercent: number | undefined;
-  codeQuality: SonarQubeMetricsResponse['metrics'] | null;
-  cicd: GithubActionsMetricsResponse['metrics'] | null;
-}> {
+async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<FetchedMetrics> {
   const client = assertSupabaseClient();
 
   const [
@@ -278,5 +304,72 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<{
     codeOwnershipConcentrationPercent,
     codeQuality: (cqRow?.metrics as SonarQubeMetricsResponse['metrics']) ?? null,
     cicd: (cicdRow?.metrics as GithubActionsMetricsResponse['metrics']) ?? null,
+  };
+}
+
+/** The 7 health-score types this feature covers - excludes RiskType.BLOCKERS, the legacy
+ *  survey-rubric score that isn't part of the dashboard's health-score model. */
+export type HealthScoreType = Exclude<RiskType, RiskType.BLOCKERS>;
+
+export type ScoreBreakdownSignal = {
+  key: string;
+  label: string;
+  /** The 0..100 score this metric contributed, before weighting. Null if the strategy had no
+   *  usable value for it in this snapshot (so it was excluded and renormalized around). */
+  score: number | null;
+  /** This signal's share of the score's total weight (0..1), after renormalizing around
+   *  whichever signals actually had data for this snapshot. */
+  weight: number;
+  /** Raw input field name(s) (from the score's typed metrics input) this signal is derived
+   *  from - e.g. "vulnerability density" comes from two raw fields, most signals from one. */
+  metricFields: string[];
+  /** Raw values for metricFields, in the same order, straight from this snapshot's stored
+   *  connector data - undefined/omitted fields mean that tool wasn't synced for this snapshot. */
+  metricValues: Array<number | string | boolean | null | undefined>;
+};
+
+export type ScoreBreakdown = {
+  type: HealthScoreType;
+  score: number;
+  level: 'LOW' | 'MEDIUM' | 'HIGH';
+  signals: ScoreBreakdownSignal[];
+};
+
+/**
+ * Recomputes a single score for an already-synced snapshot and returns which metrics drove it -
+ * the "click a score's graph, see what it was calculated from" feature. Deliberately not
+ * persisted anywhere: it re-derives from the same raw per-tool metrics rows
+ * calculateAndSaveRiskScores already reads, through the exact same typed-input mapping
+ * (buildRiskMetricsInputs), so it can never drift from how the score was actually calculated,
+ * and needs no schema change or migration.
+ */
+export async function getScoreBreakdown(projectSnapshotId: number, type: HealthScoreType): Promise<ScoreBreakdown> {
+  const metrics = await fetchMetricsForSnapshot(projectSnapshotId);
+  const inputs = buildRiskMetricsInputs(metrics);
+  const typedInput = inputs[type] as Record<string, unknown>;
+
+  const riskEngine = new RiskEngine();
+  const result = riskEngine.calculateRisk(type, inputs[type]);
+
+  const signals: ScoreBreakdownSignal[] = result.weights.map((w) => {
+    const info = describeSignal(type, w.key);
+    return {
+      key: w.key,
+      label: info.label,
+      score: w.score ?? null,
+      weight: w.w,
+      metricFields: info.metricFields,
+      metricValues: info.metricFields.map((field) => {
+        const value = typedInput[field];
+        return Array.isArray(value) ? value.length : (value as number | string | boolean | null | undefined);
+      }),
+    };
+  });
+
+  return {
+    type,
+    score: Math.round(result.score),
+    level: result.level,
+    signals,
   };
 }

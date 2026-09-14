@@ -19,12 +19,12 @@ describe('CicdDeploymentHealthStrategy', () => {
     expect(result.score).toBe(100);
     expect(result.level).toBe('HIGH');
     expect(result.weights).toEqual([
-      { key: 'deploymentFailureRate', w: 0.25 },
-      { key: 'mttr', w: 0.2 },
-      { key: 'changeLeadTime', w: 0.2 },
-      { key: 'deploymentFrequency', w: 0.15 },
-      { key: 'pipelineSuccessRate', w: 0.15 },
-      { key: 'pipelineDuration', w: 0.05 },
+      { key: 'deploymentFailureRate', w: 0.25, score: 100 },
+      { key: 'mttr', w: 0.2, score: 100 },
+      { key: 'changeLeadTime', w: 0.2, score: 100 },
+      { key: 'deploymentFrequency', w: 0.15, score: 100 },
+      { key: 'pipelineSuccessRate', w: 0.15, score: 100 },
+      { key: 'pipelineDuration', w: 0.05, score: 100 },
     ]);
   });
 
@@ -51,7 +51,7 @@ describe('CicdDeploymentHealthStrategy', () => {
   it('renormalizes around whatever signal is actually present', () => {
     const result = new CicdDeploymentHealthStrategy().calculate({ pipelineSuccessRatePercent: 80 });
     expect(result.score).toBe(80);
-    expect(result.weights).toEqual([{ key: 'pipelineSuccessRate', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'pipelineSuccessRate', w: 1, score: 80 }]);
   });
 
   it('returns a 0 score with no contributing weights when every signal is absent', () => {

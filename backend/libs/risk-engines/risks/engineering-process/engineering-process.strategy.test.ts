@@ -66,13 +66,13 @@ describe('EngineeringProcessStrategy', () => {
   it('falls back to sub-group A alone, unhalved and unprefixed, when B has no data at all', () => {
     const result = new EngineeringProcessStrategy().calculate({ selfMergedPrRatePercent: 0 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'selfMergedPrRate', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'selfMergedPrRate', w: 1, score: 100 }]);
   });
 
   it('falls back to sub-group B alone, unhalved and unprefixed, when A has no data at all', () => {
     const result = new EngineeringProcessStrategy().calculate({ blockedTicketPercent: 0 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'blockedTicketRatio', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'blockedTicketRatio', w: 1, score: 100 }]);
   });
 
   it('prefers leadTimeAvgDays over issueCycleTimeDays when both are present', () => {
