@@ -11,7 +11,7 @@ import { AnimatePresence } from "motion/react";
 import type { ActionReviewQueue, SyncRiskKey } from "../api";
 import type { Project, Action, Survey } from "../types";
 import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, ttStyle, type DisplaySubscores } from "../format";
-import { Spark, TrendIcon } from "../components/ScoreVisuals";
+import { TrendIcon } from "../components/ScoreVisuals";
 import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { PageShell, SectionHeading, CardHeading } from "../components/PageShell";
@@ -82,12 +82,12 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
         </button>
       )}
 
-      {/* Score + radar. The score column only becomes a fixed track once there's room
-          for the radar beside it; below that the two stack. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-6">
+      {/* Score summary row: overall score, category scores, and the (minimized) radar chart
+          side by side; below lg they stack. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_260px] gap-6">
         <section className="bg-card border border-border p-6">
           <CardHeading className="mb-4">Health score</CardHeading>
-          <div className="flex items-end gap-4 mb-5">
+          <div className="flex items-end gap-4">
             <span className="text-7xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{scoreInt(project.score)}</span>
             <div className="mb-2 flex flex-col gap-1.5">
               <TrendIcon t={project.scoreTrend} sz={18}/>
@@ -96,9 +96,10 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
               </span>
             </div>
           </div>
-          {/* Fills the card's content box so it shares a right edge with the bars below. */}
-          <Spark data={project.sparkline} color={hColor(project.score)} h={48}/>
-          <div className="mt-5 pt-5 border-t border-border space-y-3">
+        </section>
+        <section className="bg-card border border-border p-6">
+          <CardHeading className="mb-4">Category scores</CardHeading>
+          <div className="space-y-3">
             {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
               const row=(
                 <div className="flex items-center justify-between w-full text-left gap-3 px-1 py-0.5">
@@ -123,16 +124,50 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
         </section>
         <section className="bg-card border border-border p-6">
           <CardHeading className="mb-4">Category balance</CardHeading>
-          <ResponsiveContainer width="100%" height={240}>
-            <RadarChart data={radarData} margin={{top:4,right:28,bottom:4,left:28}}>
+          <ResponsiveContainer width="100%" height={180}>
+            <RadarChart data={radarData} margin={{top:4,right:8,bottom:4,left:8}}>
               <PolarGrid stroke="var(--border)"/>
-              <PolarAngleAxis dataKey="subject" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-display)",fontWeight:600}}/>
+              <PolarAngleAxis dataKey="subject" tick={{fill:"var(--foreground)",fontSize:9,fontFamily:"var(--font-display)",fontWeight:600}}/>
               <PolarRadiusAxis angle={30} domain={[0,100]} tick={false} axisLine={false}/>
               <Radar dataKey="value" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} strokeWidth={2}/>
             </RadarChart>
           </ResponsiveContainer>
         </section>
       </div>
+
+      {/* Health score over time, full width. Hover/scrub across the line the same way the
+          Category scores' mini trend charts work - the tooltip tracks the cursor and shows
+          the score + date at that point instead of a fixed drag handle. */}
+      <section className="bg-card border border-border p-6">
+        <CardHeading className="mb-4">Health score over time</CardHeading>
+        <ResponsiveContainer width="100%" height={220}>
+          <AreaChart data={project.timeSeries} margin={{top:8,right:8,bottom:0,left:8}}>
+            <defs>
+              <linearGradient id={`hs-${project.id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={hColor(project.score)} stopOpacity={0.25}/>
+                <stop offset="100%" stopColor={hColor(project.score)} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <ReTooltip
+              contentStyle={ttStyle}
+              itemStyle={{color:"var(--foreground)"}}
+              labelStyle={{color:"var(--muted-foreground)",fontSize:"11px"}}
+              formatter={(v:number)=>[v,"Score"]}
+              labelFormatter={(_:unknown,pl:unknown[])=>(pl as {payload:{label:string}}[])[0]?.payload?.label}
+            />
+            <Area
+              type="monotone"
+              dataKey="score"
+              stroke={hColor(project.score)}
+              strokeWidth={2}
+              fill={`url(#hs-${project.id})`}
+              dot={false}
+              activeDot={{r:4,fill:hColor(project.score),stroke:"var(--card)",strokeWidth:2}}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </section>
 
       {/* Five subscore trends. Steps 2 -> 3 -> 5 across so the labels never crush. */}
       <section>
