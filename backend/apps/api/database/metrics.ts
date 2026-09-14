@@ -84,30 +84,6 @@ async function insertVersionControlMetrics(snapshotId: number, data: GitHubMetri
   }
 }
 
-async function insertCodeOwnershipConcentration(snapshotId: number, data: GitHubMetricsResponse): Promise<void> {
-  const client = assertSupabaseClient();
-  const directories = data.metrics.codeOwnershipConcentration.directories;
-
-  if (!directories.length) {
-    return;
-  }
-
-  const rows = directories.map((directory) => ({
-    snapshot_id: snapshotId,
-    path: directory.path,
-    top_contributor_percent: directory.topContributorPercent,
-    is_flagged: directory.isFlagged,
-  }));
-
-  const { error } = await client
-    .from('codeownershipconcentration')
-    .insert(rows);
-
-  if (error) {
-    throw new Error(`Failed to save code ownership concentration: ${error.message}`);
-  }
-}
-
 async function insertProjectManagementMetrics(snapshotId: number, data: JiraMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
 
@@ -195,8 +171,9 @@ async function persistConnectorMetricsImpl(input: {
       throw new Error('Invalid GitHub metrics payload received from connector');
     }
 
+    // codeOwnershipConcentration is part of data.metrics and is persisted in the
+    // versioncontrolmetrics JSONB payload with the rest of the GitHub metrics.
     await insertVersionControlMetrics(snapshotId, input.data);
-    await insertCodeOwnershipConcentration(snapshotId, input.data);
     return snapshotId;
   }
 

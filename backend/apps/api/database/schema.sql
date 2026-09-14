@@ -14,15 +14,6 @@ CREATE TABLE public.User (
   CONSTRAINT User_pkey PRIMARY KEY (id),
   CONSTRAINT User_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.company(id)
 );
-CREATE TABLE public.codeownershipconcentration (
-  id integer NOT NULL DEFAULT nextval('codeownershipconcentration_id_seq'::regclass),
-  snapshot_id integer NOT NULL,
-  path text NOT NULL,
-  top_contributor_percent numeric,
-  is_flagged boolean,
-  CONSTRAINT codeownershipconcentration_pkey PRIMARY KEY (id),
-  CONSTRAINT codeownershipconcentration_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.projectsnapshot(id)
-);
 CREATE TABLE public.codequalitymetrics (
   id integer NOT NULL DEFAULT nextval('codequalitymetrics_id_seq'::regclass),
   snapshot_id integer NOT NULL UNIQUE,
