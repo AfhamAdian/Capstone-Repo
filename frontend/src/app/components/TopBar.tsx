@@ -54,7 +54,7 @@ export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingC
               aria-haspopup="listbox"
               className={`flex items-center gap-2.5 px-3 py-1.5 border transition-colors max-w-full ${open?"border-primary bg-primary/5":"border-border hover:border-primary/50 hover:bg-muted/40"}`}>
               {/* coloured health dot */}
-              <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:hColor(active.score)}}/>
+              <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:active.hasData ? hColor(active.score) : "var(--muted-foreground)"}}/>
               <div className="text-left min-w-0">
                 <div className="text-base font-bold leading-tight truncate" style={{fontFamily:"var(--font-display)"}}>{active.name}</div>
                 <div className="text-xs text-muted-foreground leading-none mt-0.5 truncate max-w-[220px]">
@@ -80,13 +80,13 @@ export function TopBar({dark,onToggle,projects,activeId,onSelect,onHome,pendingC
                     {filtered.map(p=>(
                       <button key={p.id} onClick={()=>{onSelect(p.id);setOpen(false);setQ("");}}
                         className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-muted transition-colors border-b border-border/50 last:border-b-0 text-left ${p.id===activeId?"bg-primary/5 border-l-2 border-l-primary":""}`}>
-                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:hColor(p.score)}}/>
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{backgroundColor:p.hasData ? hColor(p.score) : "var(--muted-foreground)"}}/>
                         <div className="flex-1 min-w-0">
                           <div className={`text-base font-semibold truncate ${p.id===activeId?"text-link":"text-foreground"}`} style={{fontFamily:"var(--font-display)"}}>{p.name}</div>
                           <div className="text-sm text-muted-foreground truncate">{p.team}</div>
                         </div>
                         <div className="text-right shrink-0">
-                          <div className={`text-base font-bold tabular-nums ${hClass(p.score)}`} style={{fontFamily:"var(--font-mono)"}}>{p.score}</div>
+                          <div className={`text-base font-bold tabular-nums ${p.hasData ? hClass(p.score) : "text-muted-foreground"}`} style={{fontFamily:"var(--font-mono)"}}>{p.hasData ? p.score : "—"}</div>
                           {p.id===activeId&&<div className="text-xs text-link font-medium">current</div>}
                         </div>
                       </button>

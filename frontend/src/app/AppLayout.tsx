@@ -4,7 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
-import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
+import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveys } from "./hooks/useProjectSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
@@ -60,14 +60,7 @@ export function AppLayout() {
   const [editingAction,setEditingAction]=useState<Action|null>(null);
   const [actions,setActions]=useState<Action[]>([]);
   const [reviewQueue,setReviewQueue]=useState<ActionReviewQueue|null>(null);
-  const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
-  // workspace_id per project (company-scoped) from our own API — used to filter the portfolio by workspace.
-  const [workspaceById,setWorkspaceById]=useState<Map<number,number>>(new Map());
-  useEffect(()=>{
-    listProjects()
-      .then(rows=>setWorkspaceById(new Map(rows.filter(r=>r.workspaceId!=null).map(r=>[r.id,r.workspaceId as number]))))
-      .catch(()=>{});
-  },[]);
+  const {projects,setProjects,workspaceById,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects(projectId??null);
   const activeWorkspaceId=urlWorkspaceId ?? activeWorkspace?.id ?? null;
   const portfolioPath=resolvePortfolioPath(activeWorkspaceId);
   // Keep the remembered workspace in sync with the URL; look up its name/vcs from the backend list.
@@ -108,7 +101,7 @@ export function AppLayout() {
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
     void refetchHealth({ silent: true });
-  },[refetchHealth]);
+  },[refetchHealth,setProjects]);
   const refreshActions=useCallback(async()=>{
     const rows=await listActions();
     setActions(rows);
@@ -158,7 +151,7 @@ export function AppLayout() {
         onSyncComplete={updateProjectRisk}
       />
     );
-  } else if(projectsError && projects.length===0){
+  } else if(projectsError){
     content = (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center max-w-md">

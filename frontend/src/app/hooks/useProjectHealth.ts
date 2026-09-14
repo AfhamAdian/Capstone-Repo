@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { listProjectsWithHealth, type ProjectHealth } from "../api-project";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getProjectHealth, listProjectsWithHealth, type ProjectHealth } from "../api-project";
+import { listProjects, type ProjectListItem } from "../api";
 
 export interface BackendProject {
   id: string;
@@ -160,41 +161,73 @@ export function mapHealthToProject(health: ProjectHealth, slug: string): Backend
   };
 }
 
-/**
- * Loads the live project list from GET /projects. Names, owners, scores, and
- * metric series all come from Supabase — the UI stays on a skeleton until the
- * first response so dummy rows never flash.
- */
-export function useBackendProjects() {
+/** Navigation metadata does not require downloading every project's history. */
+function mapProjectSummary(row: ProjectListItem, slug: string): BackendProject {
+  return {
+    id: slug, backendProjectId: String(row.id), name: row.name,
+    owner: null, repo: null, team: "", description: row.description ?? "",
+    status: "active", tracked: true,
+    score: Math.round(row.score?.overall ?? 0), scoreTrend: 0,
+    sparkline: [], timeSeries: [], subscores: EMPTY_SUBSCORES,
+    subscoreSeries: EMPTY_SUBSCORE_SERIES, metrics: EMPTY_METRICS,
+    metricSeries: EMPTY_METRIC_SERIES, pendingSurvey: false, pendingReview: 0,
+    lastUpdated: "", hasData: row.score?.overall != null, hasMetrics: false,
+  };
+}
+
+/** Fetch full health only for the route's project; the portfolio needs all projects. */
+export function useBackendProjects(pathId: string | null = null) {
   const [projects, setProjects] = useState<BackendProject[]>([]);
+  const [workspaceById, setWorkspaceById] = useState<Map<number, number>>(new Map());
   const [loading, setLoading] = useState(true);
+  const [loadedPath, setLoadedPath] = useState<string | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const directory = useRef<Promise<ProjectListItem[]> | null>(null);
+  const requestId = useRef(0);
 
   const refetch = useCallback(async (opts?: { silent?: boolean }) => {
+    const currentRequest = ++requestId.current;
     if (!opts?.silent) setLoading(true);
     setError(null);
     try {
-      const healthList = await listProjectsWithHealth();
-      setProjects((prev) => {
-        const used = new Set<string>();
-        const previousByBackend = new Map(prev.map((p) => [p.backendProjectId, p.id]));
-        return healthList.map((health) => {
-          const existing = previousByBackend.get(String(health.id));
-          if (existing) used.add(existing);
-          const slug = existing ?? uniqueSlug(health.name, health.id, used);
-          return mapHealthToProject(health, slug);
-        });
+      directory.current ??= listProjects().catch((err) => {
+        directory.current = null;
+        throw err;
       });
+      const rows = await directory.current;
+      if (currentRequest !== requestId.current) return;
+      const used = new Set<string>();
+      // The health feed is name-ordered; use the same order for canonical slugs.
+      const summaries = [...rows]
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id)
+        .map(row => mapProjectSummary(row, uniqueSlug(row.name, row.id, used)));
+      setWorkspaceById(new Map(rows.filter(row => row.workspaceId != null).map(row => [row.id, row.workspaceId!])));
+      const selected = findProjectByPath(summaries, pathId);
+      const healthList = pathId
+        ? selected ? [await getProjectHealth(selected.backendProjectId)] : []
+        : await listProjectsWithHealth();
+      if (currentRequest !== requestId.current) return;
+      const healthById = new Map(healthList.map(health => [String(health.id), health]));
+      setProjects(summaries.map(summary => {
+        const health = healthById.get(summary.backendProjectId);
+        return health ? mapHealthToProject(health, summary.id) : summary;
+      }));
     } catch (err) {
+      if (currentRequest !== requestId.current) return;
       setError(err instanceof Error ? err.message : "Failed to load projects");
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) {
+        setLoading(false);
+        setLoadedPath(pathId);
+      }
     }
-  }, []);
+  }, [pathId]);
 
+  const cancelPendingRequest = useCallback(() => { ++requestId.current; }, []);
   useEffect(() => {
     void refetch();
-  }, [refetch]);
+    return cancelPendingRequest;
+  }, [refetch, cancelPendingRequest]);
 
-  return { projects, setProjects, loading, error, refetch };
+  return { projects, setProjects, workspaceById, loading: loading || loadedPath !== pathId, error, refetch };
 }
