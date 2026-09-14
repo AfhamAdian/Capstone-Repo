@@ -114,8 +114,8 @@ The service maps database column names to expected metric names:
 - `blocked_items_count` → blockedItemsCount
 - And more...
 
-**Code Ownership** (codeownershipconcentration table):
-- Aggregated `top_contributor_percent` → codeOwnershipConcentrationPercent
+**Code Ownership** (`versioncontrolmetrics.metrics` JSONB):
+- Average of `codeOwnershipConcentration.directories[].topContributorPercent` → codeOwnershipConcentrationPercent
 
 ## Error Handling
 

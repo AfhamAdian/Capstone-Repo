@@ -33,7 +33,6 @@ function roundRiskScore(score: number | null): number | null {
 type FetchedMetrics = {
   versionControl: GitHubMetricsResponse['metrics'] | null;
   projectManagement: JiraMetricsResponse['metrics'] | null;
-  codeOwnershipConcentrationPercent: number | undefined;
   codeQuality: SonarQubeMetricsResponse['metrics'] | null;
   cicd: GithubActionsMetricsResponse['metrics'] | null;
 };
@@ -55,7 +54,7 @@ type AllRiskMetricsInputs = {
  * show which metrics drove it, without persisting anything).
  */
 function buildRiskMetricsInputs(metrics: FetchedMetrics): AllRiskMetricsInputs {
-  const { versionControl: vcs, projectManagement: jira, codeQuality: sonar, cicd, codeOwnershipConcentrationPercent } = metrics;
+  const { versionControl: vcs, projectManagement: jira, codeQuality: sonar, cicd } = metrics;
 
   // Source-preference resolution (Jira primary / VCS fallback), same rule
   // documented in risk-engines/types.ts and applied in test-risk-scores.ts.
@@ -65,6 +64,14 @@ function buildRiskMetricsInputs(metrics: FetchedMetrics): AllRiskMetricsInputs {
   const commitMessageQualityPercent =
     vcs?.commitMessageQuality.followingConventionPercent ??
     (vcs ? (vcs.commitMessageQuality.withBodyPercent + vcs.commitMessageQuality.withIssueRefPercent) / 2 : undefined);
+
+  const ownershipDirectories = vcs?.codeOwnershipConcentration?.directories ?? [];
+  const codeOwnershipConcentrationPercent = ownershipDirectories.length > 0
+    ? Math.round(
+        (ownershipDirectories.reduce((sum, directory) => sum + directory.topContributorPercent, 0)
+          / ownershipDirectories.length) * 100,
+      ) / 100
+    : undefined;
 
   return {
     [RiskType.SECURITY]: {
@@ -255,13 +262,7 @@ export async function calculateAndSaveRiskScores(projectSnapshotId: number): Pro
 async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<FetchedMetrics> {
   const client = assertSupabaseClient();
 
-  const [
-    { data: vcRow },
-    { data: pmRow },
-    { data: cqRow },
-    { data: codeOwnershipData },
-    { data: cicdRow },
-  ] = await Promise.all([
+  const [{ data: vcRow }, { data: pmRow }, { data: cqRow }, { data: cicdRow }] = await Promise.all([
     client
       .from('versioncontrolmetrics')
       .select('metrics')
@@ -278,30 +279,15 @@ async function fetchMetricsForSnapshot(projectSnapshotId: number): Promise<Fetch
       .eq('snapshot_id', projectSnapshotId)
       .maybeSingle(),
     client
-      .from('codeownershipconcentration')
-      .select('top_contributor_percent')
-      .eq('snapshot_id', projectSnapshotId),
-    client
       .from('cicdmetrics')
       .select('metrics')
       .eq('snapshot_id', projectSnapshotId)
       .maybeSingle(),
   ]);
 
-  let codeOwnershipConcentrationPercent: number | undefined;
-  if (codeOwnershipData && codeOwnershipData.length > 0) {
-    const avgTopContributor =
-      codeOwnershipData.reduce(
-        (sum, row) => sum + (typeof row.top_contributor_percent === 'number' ? row.top_contributor_percent : 0),
-        0
-      ) / codeOwnershipData.length;
-    codeOwnershipConcentrationPercent = Math.round(avgTopContributor * 100) / 100;
-  }
-
   return {
     versionControl: (vcRow?.metrics as GitHubMetricsResponse['metrics']) ?? null,
     projectManagement: (pmRow?.metrics as JiraMetricsResponse['metrics']) ?? null,
-    codeOwnershipConcentrationPercent,
     codeQuality: (cqRow?.metrics as SonarQubeMetricsResponse['metrics']) ?? null,
     cicd: (cicdRow?.metrics as GithubActionsMetricsResponse['metrics']) ?? null,
   };
