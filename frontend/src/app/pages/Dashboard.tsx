@@ -12,7 +12,6 @@ import type { ActionReviewQueue, SyncRiskKey } from "../api";
 import type { Project, Action, Survey } from "../types";
 import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, ttStyle, type DisplaySubscores } from "../format";
 import { TrendIcon } from "../components/ScoreVisuals";
-import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
 import { ScoreBreakdownModal, SCORE_BREAKDOWN_TYPES } from "../components/ScoreBreakdownModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { PageShell, SectionHeading, CardHeading } from "../components/PageShell";
@@ -57,7 +56,6 @@ function latestSnapshotId(project: Project, k: keyof DisplaySubscores): number |
 }
 
 export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
-  const [expanded,setExpanded]=useState<string|null>(null);
   const [breakdownKey,setBreakdownKey]=useState<keyof DisplaySubscores|null>(null);
   const display=toDisplaySubscores(project.subscores);
   const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
@@ -71,8 +69,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
   const pending=[...(reviewQueue?.fromLastWeek??[]),...(reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,project));
   const projectActions=actions.filter(a=>actionIncludesProject(a,project));
   const projectSurveys=surveys.filter(s=>s.projectId===project.id);
-  const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
-  const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
 
   return (
     <PageShell className="space-y-8">
@@ -249,51 +245,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
         </div>
       </section>
 
-      <section>
-        <SectionHeading>Delivery metrics</SectionHeading>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {mkeys.map(mk=>{
-            const meta=MMETA[mk];
-            const val=MVAL[mk](project.metrics);
-            const series=project.metricSeries[mseries[mk]]??[];
-            const isBad=meta.invertBad&&val>(mk==="blockers"?3:36);
-            const strokeColor=isBad?"var(--health-crit)":meta.color;
-            const gradId=`mg-${mk}-${project.id}`;
-            const last=series[series.length-1]?.v??val;
-            const prev=series[series.length-2]?.v??last;
-            const trendUp=last>=prev;
-            return (
-              <button key={mk} onClick={()=>setExpanded(mk)}
-                aria-label={`${meta.label}: ${val}${meta.unit??""}. Open full history.`}
-                className="bg-card border border-border p-4 text-left hover:border-primary transition-colors cursor-pointer overflow-hidden">
-                <div className="flex items-center gap-2 mb-2">
-                  <span style={{color:strokeColor}} className="shrink-0">{meta.icon}</span>
-                  <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{meta.label}</span>
-                  <span className="ml-auto text-xs font-medium shrink-0" style={{color:trendUp===!meta.invertBad?"var(--health-good)":"var(--health-crit)"}}>
-                    {trendUp?"↑":"↓"}{Math.abs(last-prev).toFixed(meta.unit==="h"?1:0)}{meta.unit??""}
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-1 mb-1">
-                  <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:isBad?"var(--health-crit)":"var(--foreground)"}}>{val}</span>
-                  {meta.unit&&<span className="text-sm text-muted-foreground">{meta.unit}</span>}
-                </div>
-                <ResponsiveContainer width="100%" height={52}>
-                  <AreaChart data={series} margin={{top:2,right:0,bottom:0,left:0}}>
-                    <defs>
-                      <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={strokeColor} stopOpacity={0.2}/>
-                        <stop offset="100%" stopColor={strokeColor} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <Area type="monotone" dataKey="v" stroke={strokeColor} strokeWidth={1.5} fill={`url(#${gradId})`} dot={false} activeDot={{r:3,fill:strokeColor,stroke:"var(--card)",strokeWidth:2}} isAnimationActive={false}/>
-                  </AreaChart>
-                </ResponsiveContainer>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
       {/* Recent actions + surveys */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="bg-card border border-border">
@@ -363,7 +314,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
       </div>
 
       <AnimatePresence>
-        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
         {breakdownKey&&(()=>{
           const snapshotId=latestSnapshotId(project,breakdownKey);
           if(!snapshotId) return null;
