@@ -5,7 +5,7 @@
 
 import type { EnqueueOptions, QueueManager } from '@libs/queue/index.js';
 import type { SyncRequestPayload, SyncJob } from '@libs/sync/index.js';
-import { getProjectIntegrationsForTools } from '../database/project.js';
+import { getProjectIntegrationsForTools, getProjectName } from '../database/project.js';
 import { logger } from '@libs/logger.js';
 
 /**
@@ -16,6 +16,13 @@ import { logger } from '@libs/logger.js';
 
 interface SyncServiceDependencies {
   queueManager: QueueManager;
+}
+
+interface SyncEnqueueOptions extends EnqueueOptions {
+  jobId?: string;
+  /** Internal metadata supplied by the scheduled fan-out, never by the HTTP request. */
+  projectName?: string;
+  syncType?: 'normal' | 'periodic';
 }
 
 export class SyncService {
@@ -30,18 +37,26 @@ export class SyncService {
    */
   async enqueueSyncJob(
     payload: SyncRequestPayload,
-    options: EnqueueOptions & { jobId?: string } = {},
+    options: SyncEnqueueOptions = {},
   ): Promise<{ jobId: string; streamKey: string }> {
     // The periodic sync passes a deterministic jobId so a retried tick re-enqueuing the
     // same project is a no-op; interactive syncs keep getting a fresh one every click.
-    const { jobId: providedJobId, ...enqueueOptions } = options;
+    const {
+      jobId: providedJobId,
+      projectName: providedProjectName,
+      syncType = 'normal',
+      ...enqueueOptions
+    } = options;
     const jobId = providedJobId ?? this.generateJobId();
     const startedAt = Date.now();
 
     this.log.info({ jobId, projectId: payload.projectId, sessionId: payload.sessionId, tools: payload.tools }, 'sync enqueue requested');
 
     const integrationLookupStartedAt = Date.now();
-    const integrations = await getProjectIntegrationsForTools(payload.projectId, payload.tools);
+    const [integrations, projectName] = await Promise.all([
+      getProjectIntegrationsForTools(payload.projectId, payload.tools),
+      providedProjectName ?? getProjectName(Number(payload.projectId)),
+    ]);
     this.log.info(
       {
         jobId,
@@ -55,6 +70,8 @@ export class SyncService {
     await this.deps.queueManager.enqueue({
       jobId,
       projectId: payload.projectId,
+      projectName,
+      syncType,
       tools: payload.tools,
       sessionId: payload.sessionId,
       integrations,

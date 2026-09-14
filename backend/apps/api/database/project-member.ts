@@ -75,14 +75,17 @@ export async function countProjectsForUser(userId: number): Promise<number> {
  * to group projects that fall back to the same workspace PAT, so their external
  * API calls can be spaced apart instead of bursting against one rate limit.
  */
-export async function listAllProjectsWithWorkspace(): Promise<{ id: number; workspaceId: number | null }[]> {
+export async function listAllProjectsWithWorkspace(): Promise<
+  { id: number; name: string; workspaceId: number | null }[]
+> {
   const client = assertSupabaseClient();
-  const { data, error } = await client.from('project').select('id, workspace_id');
+  const { data, error } = await client.from('project').select('id, name, workspace_id');
   if (error) {
     throw new Error(`Failed to list projects: ${error.message}`);
   }
   return (data ?? []).map((p) => ({
     id: p.id as number,
+    name: p.name as string,
     workspaceId: (p.workspace_id as number | null) ?? null,
   }));
 }

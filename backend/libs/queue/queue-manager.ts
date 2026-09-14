@@ -18,6 +18,8 @@ interface ToolIntegration {
 export interface SyncJobData {
   jobId: string;
   projectId: string;
+  projectName: string;
+  syncType: 'normal' | 'periodic';
   tools: SupportedTool[];
   sessionId: string;
   integrations: Record<string, ToolIntegration>;

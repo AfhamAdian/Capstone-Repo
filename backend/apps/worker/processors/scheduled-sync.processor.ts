@@ -73,6 +73,7 @@ export async function processScheduledSyncTick(
 
   const projects = await listAllProjectsWithWorkspace();
   const projectIds = projects.map((project) => project.id);
+  const projectNames = new Map(projects.map((project) => [project.id, project.name]));
   const integrations = await listIntegrationsForProjects(projectIds);
 
   // Same rule the dashboard uses: sync whichever tools are actually configured for the
@@ -133,6 +134,7 @@ export async function processScheduledSyncTick(
     for (const [index, projectId] of memberIds.entries()) {
       const delayMs = Math.min(index * spacingMs, maxDelayMs);
       const tools = toolsByProject.get(projectId)!;
+      const projectName = projectNames.get(projectId) ?? `Project ${projectId}`;
 
       try {
         await syncService.enqueueSyncJob(
@@ -143,6 +145,8 @@ export async function processScheduledSyncTick(
           },
           {
             jobId: `sync_sched_${projectId}_${slotDate}T${slot}`,
+            projectName,
+            syncType: 'periodic',
             priority: SCHEDULED_SYNC_PRIORITY,
             delayMs,
             removeOnCompleteAgeSeconds: SCHEDULED_JOB_RETENTION_SECONDS,
@@ -150,11 +154,26 @@ export async function processScheduledSyncTick(
         );
         summary.enqueued += 1;
         summary.maxDelayMinutes = Math.max(summary.maxDelayMinutes, Math.round(delayMs / 60_000));
+        log.info(
+          {
+            indicator: 'PERIODIC SYNC',
+            projectName,
+            projectId,
+            tools,
+            slot,
+            delayMinutes: Math.round(delayMs / 60_000),
+            credentialBucket: bucket,
+          },
+          'PERIODIC SYNC | project queued',
+        );
       } catch (error) {
         // getProjectIntegrationsForTools throws on a half-filled integration config.
         // One broken project must not abort the rest of the run.
         summary.failed += 1;
-        log.error({ err: error, projectId, bucket, tools }, 'failed to enqueue scheduled sync for project');
+        log.error(
+          { err: error, indicator: 'PERIODIC SYNC', projectName, projectId, bucket, tools },
+          'PERIODIC SYNC | failed to queue project',
+        );
       }
     }
   }

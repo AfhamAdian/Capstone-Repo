@@ -45,8 +45,8 @@ beforeEach(() => {
 describe('processScheduledSyncTick', () => {
   it('skips projects with no configured integrations', async () => {
     listAllProjectsWithWorkspace.mockResolvedValue([
-      { id: 1, workspaceId: 7 },
-      { id: 2, workspaceId: 7 },
+      { id: 1, name: 'Alpha', workspaceId: 7 },
+      { id: 2, name: 'Beta', workspaceId: 7 },
     ]);
     listIntegrationsForProjects.mockResolvedValue([integration(1, 'github')]);
 
@@ -61,7 +61,7 @@ describe('processScheduledSyncTick', () => {
   });
 
   it('derives the tool list from the configured integrations, deduped', async () => {
-    listAllProjectsWithWorkspace.mockResolvedValue([{ id: 1, workspaceId: null }]);
+    listAllProjectsWithWorkspace.mockResolvedValue([{ id: 1, name: 'Alpha', workspaceId: null }]);
     listIntegrationsForProjects.mockResolvedValue([
       integration(1, 'github'),
       integration(1, 'jira'),
@@ -76,7 +76,7 @@ describe('processScheduledSyncTick', () => {
 
   it('spaces projects sharing a workspace PAT, and clamps the spread', async () => {
     listAllProjectsWithWorkspace.mockResolvedValue(
-      [1, 2, 3, 4].map((id) => ({ id, workspaceId: 7 })),
+      [1, 2, 3, 4].map((id) => ({ id, name: `Project ${id}`, workspaceId: 7 })),
     );
     // No per-project token -> all four fall back to the same workspace PAT.
     listIntegrationsForProjects.mockResolvedValue([1, 2, 3, 4].map((id) => integration(id, 'github')));
@@ -91,8 +91,8 @@ describe('processScheduledSyncTick', () => {
 
   it('does not make different tokens wait for each other', async () => {
     listAllProjectsWithWorkspace.mockResolvedValue([
-      { id: 1, workspaceId: 7 },
-      { id: 2, workspaceId: 7 },
+      { id: 1, name: 'Alpha', workspaceId: 7 },
+      { id: 2, name: 'Beta', workspaceId: 7 },
     ]);
     listIntegrationsForProjects.mockResolvedValue([
       integration(1, 'github', { token: 'tok-aaa' }),
@@ -107,7 +107,7 @@ describe('processScheduledSyncTick', () => {
   });
 
   it('enqueues below interactive priority with a deterministic, slot-scoped job id', async () => {
-    listAllProjectsWithWorkspace.mockResolvedValue([{ id: 42, workspaceId: 7 }]);
+    listAllProjectsWithWorkspace.mockResolvedValue([{ id: 42, name: 'Answer', workspaceId: 7 }]);
     listIntegrationsForProjects.mockResolvedValue([integration(42, 'github')]);
 
     const { service, calls } = makeSyncService();
@@ -116,6 +116,8 @@ describe('processScheduledSyncTick', () => {
     const [payload, options] = calls[0]!;
     // Interactive syncs never set a priority; BullMQ treats unset as highest.
     expect(options.priority).toBe(10);
+    expect(options.syncType).toBe('periodic');
+    expect(options.projectName).toBe('Answer');
     expect(options.removeOnCompleteAgeSeconds).toBe(25 * 60 * 60);
     expect(options.jobId).toMatch(/^sync_sched_42_\d{4}-\d{2}-\d{2}T0200$/);
     expect(payload.sessionId).toMatch(/^scheduled:42:\d{4}-\d{2}-\d{2}T0200$/);
@@ -123,7 +125,7 @@ describe('processScheduledSyncTick', () => {
 
   it('keeps going when one project has a broken integration config', async () => {
     listAllProjectsWithWorkspace.mockResolvedValue(
-      [1, 2, 3].map((id) => ({ id, workspaceId: null })),
+      [1, 2, 3].map((id) => ({ id, name: `Project ${id}`, workspaceId: null })),
     );
     listIntegrationsForProjects.mockResolvedValue(
       [1, 2, 3].map((id) => integration(id, 'github', { token: `tok-${id}` })),

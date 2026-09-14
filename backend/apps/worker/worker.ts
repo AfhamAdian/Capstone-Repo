@@ -72,10 +72,30 @@ async function startWorker() {
 
     // Create and start the worker
     const worker = queueManager.createWorker(async (job) => {
-      const jobLog = log.child({ jobId: job.data.jobId, projectId: job.data.projectId, sessionId: job.data.sessionId });
-      jobLog.info({ tools: job.data.tools }, 'processing sync job');
+      // The session-prefix fallback keeps jobs queued before syncType was introduced
+      // correctly classified while a rolling deployment drains the old queue.
+      const isPeriodic = job.data.syncType === 'periodic' || job.data.sessionId.startsWith('scheduled:');
+      const syncIndicator = isPeriodic ? 'PERIODIC SYNC' : 'NORMAL SYNC';
+      const projectName = job.data.projectName ?? `Project ${job.data.projectId}`;
+      const indicatorDetails = isPeriodic
+        ? {
+            component: 'sync-worker',
+            indicator: syncIndicator,
+            projectName,
+            projectId: job.data.projectId,
+            tools: job.data.tools,
+            sessionId: job.data.sessionId,
+            slot: job.data.sessionId.split('T').at(-1),
+          }
+        : {
+            component: 'sync-worker',
+            indicator: syncIndicator,
+            projectName,
+          };
+
+      logger.info(indicatorDetails, `${syncIndicator} | started`);
       await processSyncJob(job.data);
-      jobLog.info('completed sync job');
+      logger.info(indicatorDetails, `${syncIndicator} | completed`);
     });
 
     const embeddingWorker = embeddingQueue?.createWorker(async (job) => {
