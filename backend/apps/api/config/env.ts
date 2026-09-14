@@ -140,6 +140,10 @@ const surveyTokenEncKey = process.env.SURVEY_TOKEN_ENC_KEY;
 // Survey feature: manual "Send Survey Now" monthly cap per project
 const manualSurveyMonthlyLimit = boundedInteger(process.env.MANUAL_SURVEY_MONTHLY_LIMIT, 2, 1, 20);
 
+// Survey feature: feed each project's latest raw CI/CD, version-control, and PM metrics
+// into question generation, in addition to risk scores. Default true; set to 'false' to disable.
+const metricsInSurvey = process.env.METRICS_IN_SURVEY !== 'false';
+
 // Periodic sync: re-syncs every project's configured tools on a fixed schedule so the
 // dashboard graphs keep accumulating datapoints without anyone clicking Sync.
 // SCHEDULED_SYNC_TIMES is a comma-separated list of HH:MM in SCHEDULED_SYNC_TZ — the number
@@ -234,6 +238,7 @@ export const env = {
   surveyMinDaysBetweenSurveys,
   surveyTokenEncKey,
   manualSurveyMonthlyLimit,
+  metricsInSurvey,
   scheduledSyncEnabled,
   scheduledSyncTimes,
   scheduledSyncTz,

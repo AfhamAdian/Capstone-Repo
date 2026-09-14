@@ -1,6 +1,8 @@
 import type { CategoryTrend, HealthTrendLabel, SurveyHealthContext } from '@libs/ai/index.js';
 import { assertSupabaseClient } from '../config/supabase.js';
+import { env } from '../config/env.js';
 import { getLatestRiskScoreForProject, getRiskScoreBySnapshotId, type LatestRiskScoreRow } from './risk-score.js';
+import { getLatestIncidentSignals, hasAnyIncidentSignal } from './incident-signals.js';
 
 const STEADY_THRESHOLD = 3;
 const SHARP_THRESHOLD = 15;
@@ -46,9 +48,21 @@ function buildTrend(current: LatestRiskScoreRow, previous: LatestRiskScoreRow): 
   };
 }
 
+/**
+ * Best-effort latest raw connector metrics (CI/CD, version control, PM), gated by
+ * METRICS_IN_SURVEY. Never allowed to break question generation - a fetch failure
+ * just means no extra metrics context this time, same as having none at all.
+ */
+async function captureIncidentsIfEnabled(projectId: number): Promise<SurveyHealthContext['incidents']> {
+  if (!env.metricsInSurvey) return undefined;
+  const incidents = await getLatestIncidentSignals(projectId).catch(() => null);
+  return incidents && hasAnyIncidentSignal(incidents) ? incidents : undefined;
+}
+
 /** Captures the exact risk-engine snapshot (plus its trend vs the prior sync) supplied to Gemini for a survey. Sourced from riskscore only — never projecthealthscore. */
 export async function captureSurveyHealthContext(projectId: number): Promise<SurveyHealthContext> {
   const riskScore = await getLatestRiskScoreForProject(projectId);
+  const incidents = await captureIncidentsIfEnabled(projectId);
 
   if (!riskScore) {
     return {
@@ -65,6 +79,7 @@ export async function captureSurveyHealthContext(projectId: number): Promise<Sur
       },
       metricsSnapshotId: null,
       source: 'unavailable',
+      incidents,
     };
   }
 
@@ -86,5 +101,6 @@ export async function captureSurveyHealthContext(projectId: number): Promise<Sur
     metricsSnapshotId: riskScore.project_snapshot_id,
     source: 'risk_score',
     trend: previousRiskScore ? buildTrend(riskScore, previousRiskScore) : undefined,
+    incidents,
   };
 }

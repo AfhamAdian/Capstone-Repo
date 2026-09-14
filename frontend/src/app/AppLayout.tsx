@@ -20,7 +20,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { SurveysView, GlobalSurveysView } from "./pages/Surveys";
 import { GlobalActionsView, ActionsTimeline, ActionsLibrary } from "./pages/GlobalActions";
 import { SettingsView } from "./pages/Settings";
-import type { Action, Project, Survey } from "./types";
+import type { Action, Project } from "./types";
 import { actionIncludesProject } from "./format";
 
 // ─── Shared "authenticated app" context, handed down through <Outlet context={...}/> ──
@@ -30,7 +30,6 @@ interface AppContext {
   actions: Action[];
   reviewQueue: ActionReviewQueue | null;
   currentUserId: number | null;
-  surveys: Survey[];
   trackedIds: Set<string>;
   toggleTracked: (id: string) => void;
   onLogAction: () => void;
@@ -39,9 +38,6 @@ interface AppContext {
   onEditAction: (action: Action) => void;
   onDeleteAction: (id: string) => Promise<void>;
   onSyncComplete: (projectId: string, riskScore?: number, riskScores?: Partial<Record<SyncRiskKey, number | null>>) => void;
-  refetchSurveys: () => void;
-  surveysError: string | null;
-  surveysLoading: boolean;
   refetchHealth: (opts?: { silent?: boolean }) => Promise<void> | void;
   portfolioPath: string;
   workspaceById: Map<number, number>;
@@ -95,7 +91,6 @@ export function AppLayout() {
     });
   },[projects]);
   const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
-  const {surveys,refetch:refetchSurveys,error:surveysError,loading:surveysLoading}=useSurveys(projects);
   const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
     setProjects(prev=>prev.map(p=>{
       if(p.id!==projectId) return p;
@@ -154,7 +149,7 @@ export function AppLayout() {
   if(projectsLoading){
     content = projectId ? <ProjectPageSkeleton/> : (
       <PortfolioView
-        projects={[]} surveys={surveys} pendingReviewCount={reviewQueue?.readyCount??0} loading
+        projects={[]} pendingReviewCount={reviewQueue?.readyCount??0} loading
         onSelect={id=>navigate(paths.project(id))} onLogAction={()=>setLogOpen(true)}
         onViewActions={()=>navigate(paths.globalActions)}
         onViewSurveys={()=>navigate(paths.globalSurveys)}
@@ -176,14 +171,14 @@ export function AppLayout() {
     );
   } else {
     const context: AppContext = {
-      projects, actions, reviewQueue, currentUserId:user?.id??null, surveys, trackedIds, toggleTracked,
+      projects, actions, reviewQueue, currentUserId:user?.id??null, trackedIds, toggleTracked,
       onLogAction: ()=>setLogOpen(true),
       onRatingOpen: ()=>setRatingOpen(true),
       onRateAction: handleRateAction,
       onEditAction: setEditingAction,
       onDeleteAction: handleDeleteAction,
       onSyncComplete: updateProjectRisk,
-      refetchSurveys, surveysError, surveysLoading, refetchHealth,
+      refetchHealth,
       portfolioPath, workspaceById,
       isAdmin: user?.role==="admin",
     };
@@ -214,7 +209,7 @@ export function PortfolioEntry() {
   const {workspaceId:urlWorkspaceId}=useParams();
   const {activeWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {projects,reviewQueue,surveys,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
+  const {projects,reviewQueue,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
   if(!isValidWorkspaceId(urlWorkspaceId)){
     return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   }
@@ -223,7 +218,7 @@ export function PortfolioEntry() {
   const workspaceName=backendWorkspaces.find(w=>w.id===wsId)?.name ?? `Workspace ${urlWorkspaceId}`;
   return (
     <PortfolioView
-      projects={visibleProjects} surveys={surveys} pendingReviewCount={reviewQueue?.readyCount??0}
+      projects={visibleProjects} pendingReviewCount={reviewQueue?.readyCount??0}
       onSelect={id=>navigate(paths.project(id))} onLogAction={onLogAction}
       onViewActions={()=>navigate(paths.globalActions)}
       onViewSurveys={()=>navigate(paths.globalSurveys)}
@@ -247,8 +242,9 @@ export function GlobalActionsRoute() {
 
 export function GlobalSurveysRoute() {
   const navigate=useNavigate();
-  const {projects,surveys,refetchSurveys,portfolioPath}=useAppContext();
-  return <GlobalSurveysView surveys={surveys} projects={projects} onBack={()=>navigate(portfolioPath)} onClosed={refetchSurveys}/>;
+  const {projects,portfolioPath}=useAppContext();
+  const {surveys,refetch}=useSurveys(projects);
+  return <GlobalSurveysView surveys={surveys} projects={projects} onBack={()=>navigate(portfolioPath)} onClosed={refetch}/>;
 }
 
 // ─── Per-project layout: Sidebar + the project's own nested routes ──
@@ -278,7 +274,8 @@ export function ProjectShell() {
 }
 
 export function DashboardRoute() {
-  const {project,actions,reviewQueue,surveys,onSyncComplete,onRatingOpen}=useProjectContext();
+  const {project,actions,reviewQueue,onSyncComplete,onRatingOpen}=useProjectContext();
+  const {surveys}=useProjectSurveys(project);
   return <Dashboard project={project} actions={actions} reviewQueue={reviewQueue} surveys={surveys} onSyncComplete={onSyncComplete} onRatingOpen={onRatingOpen}/>;
 }
 

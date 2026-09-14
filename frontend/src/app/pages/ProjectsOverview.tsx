@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { ChevronRight, Search, Plus, Zap, MessageSquare, Bookmark, Star, RefreshCw } from "lucide-react";
 import { motion } from "motion/react";
 import type { SyncRiskKey } from "../api";
-import type { Project, Survey } from "../types";
+import type { Project } from "../types";
 import { hColor, SUBSCORE_LABELS, toDisplaySubscores, type DisplaySubscores } from "../format";
 import { Ring, TrendIcon } from "../components/ScoreVisuals";
 import { PageShell, PageHeader, FieldShell } from "../components/PageShell";
@@ -39,8 +39,8 @@ function SyncBtn({project,onSyncComplete}:{
   );
 }
 
-export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
-  projects:Project[];surveys:Survey[];pendingReviewCount:number;
+export function PortfolioView({projects,pendingReviewCount,onSelect,onLogAction,onViewActions,onViewSurveys,onRatingOpen,trackedIds,onToggleTracked,loading,onAddProject,isAdmin,workspaceName,onBackToWorkspaces,onSyncComplete}:{
+  projects:Project[];pendingReviewCount:number;
   onSelect:(id:string)=>void;onLogAction:()=>void;
   onViewActions:()=>void;onViewSurveys:()=>void;onRatingOpen:()=>void;
   trackedIds:Set<string>;onToggleTracked:(id:string)=>void;
@@ -72,7 +72,7 @@ export function PortfolioView({projects,surveys,pendingReviewCount,onSelect,onLo
         )}
         description={loading
           ? "Loading projects from your workspace…"
-          : `${projects.length} project${projects.length!==1?"s":""}, ${needsAttention} scoring below 60. ${surveys.length} survey${surveys.length!==1?"s":""} sent.`}
+          : `${projects.length} project${projects.length!==1?"s":""}, ${needsAttention} scoring below 60.`}
         actions={<>
           {pendingReviewCount>0&&(
             <button onClick={onRatingOpen} className={btnSecondary} style={{fontFamily:"var(--font-display)"}}>
