@@ -35,7 +35,7 @@ function isGithubActionsMetricsResponse(data: unknown): data is GithubActionsMet
   return typeof data.generatedAt === 'string';
 }
 
-async function createProjectSnapshot(projectId: number, snapshotTime: string): Promise<number> {
+export async function createProjectSnapshot(projectId: number, snapshotTime: string): Promise<number> {
   const client = assertSupabaseClient();
 
   const { data, error } = await client
