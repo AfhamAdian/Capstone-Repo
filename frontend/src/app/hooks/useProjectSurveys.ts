@@ -62,6 +62,7 @@ export function useProjectSurveys(project: ProjectIdentity) {
             scores: detail?.scores ?? s.scores ?? undefined,
             themes: detail?.themes ?? s.themes ?? [],
             aiInsight: detail?.aiInsight ?? s.aiInsight ?? "",
+            questionSummaries: detail?.questionSummaries ?? s.questionSummaries ?? [],
             rawResponses: detail?.rawResponses ?? [],
             questions: detail?.questions ?? s.questions ?? [],
             reviewDeadlineAt: s.reviewDeadlineAt,

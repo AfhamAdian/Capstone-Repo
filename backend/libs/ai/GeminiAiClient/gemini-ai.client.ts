@@ -10,6 +10,7 @@ import type {
   GenerateSurveyQuestionsInput,
   GeneratedSurveyQuestion,
   QuestionScore,
+  QuestionSummary,
   ScoreSurveyQuestionsInput,
 } from '../types.js';
 
@@ -82,6 +83,19 @@ function parseQuestionScores(value: unknown, expectedCount: number): QuestionSco
   });
 }
 
+function parseQuestionSummaries(value: unknown): QuestionSummary[] {
+  if (!Array.isArray(value)) {
+    throw new Error('analysis questionSummaries must be an array');
+  }
+  return value.map((entry) => {
+    const row = asRecord(entry, 'analysis questionSummary');
+    if (typeof row.question !== 'string' || typeof row.summary !== 'string' || !row.summary.trim()) {
+      throw new Error('analysis questionSummary must have question and summary strings');
+    }
+    return { question: row.question.trim(), summary: row.summary.trim() };
+  });
+}
+
 function parseAnalysis(value: unknown): AnalyzeSurveyResponsesOutput {
   const row = asRecord(value, 'analysis');
   const scores = asRecord(row.scores, 'analysis scores');
@@ -103,6 +117,7 @@ function parseAnalysis(value: unknown): AnalyzeSurveyResponsesOutput {
     },
     themes: row.themes.map((theme) => (theme as string).trim()).filter(Boolean).slice(0, 5),
     aiInsight: row.aiInsight.trim(),
+    questionSummaries: parseQuestionSummaries(row.questionSummaries),
   };
 }
 

@@ -24,28 +24,27 @@ const DEFAULT_TEAM: SurveyTeamMember[] = [
   { n: "Lena Fischer", r: "QA Lead", e: "l.fischer@company.io" },
 ];
 
-const DEFAULT_GUIDANCE: SurveyGuidanceItem[] = [
-  { id: "g1", text: "Ask about specific blockers preventing sprint completion. Focus on cross-team dependencies." },
-  { id: "g2", text: "Probe team confidence in current sprint goals — is the scope realistic?" },
-  { id: "g3", text: "Explore communication and process pain points." },
-  { id: "g4", text: "Ask about workload balance and signs of unsustainable pace." },
-];
-
 function storageKey(projectId: string) {
   return `pulse.survey-settings.${projectId}`;
 }
 
+/**
+ * Guidance starts empty by default - with nothing saved, question generation
+ * relies purely on the risk-score-driven health context. An admin opts in by
+ * adding an instruction; an explicitly emptied list must stay empty across
+ * reloads, not silently repopulate with starter text.
+ */
 export function loadProjectSurveySettings(projectId: string): ProjectSurveySettings {
   try {
     const raw = localStorage.getItem(storageKey(projectId));
-    if (!raw) return { team: DEFAULT_TEAM, guidance: DEFAULT_GUIDANCE };
+    if (!raw) return { team: DEFAULT_TEAM, guidance: [] };
     const parsed = JSON.parse(raw) as Partial<ProjectSurveySettings>;
     return {
       team: Array.isArray(parsed.team) && parsed.team.length > 0 ? parsed.team : DEFAULT_TEAM,
-      guidance: Array.isArray(parsed.guidance) && parsed.guidance.length > 0 ? parsed.guidance : DEFAULT_GUIDANCE,
+      guidance: Array.isArray(parsed.guidance) ? parsed.guidance : [],
     };
   } catch {
-    return { team: DEFAULT_TEAM, guidance: DEFAULT_GUIDANCE };
+    return { team: DEFAULT_TEAM, guidance: [] };
   }
 }
 

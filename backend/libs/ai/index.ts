@@ -19,6 +19,7 @@ export type {
   SurveyCategoryScores,
   AnalyzeSurveyResponsesInput,
   AnalyzeSurveyResponsesOutput,
+  QuestionSummary,
 } from './types.js';
 
 export { createAiClient, getAiClient } from './client-factory.js';

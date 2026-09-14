@@ -20,14 +20,14 @@ import {
 import {
   countProjectDevelopers,
   listProjectDeveloperUserIds,
-  countProjectsForUser,
+  listProjectIdsForUser,
 } from '../database/project-member.js';
 import { getProjectName } from '../database/project.js';
 import { findUsersByIds } from '../database/user.js';
 import { sendSurveyEmail } from './email.service.js';
 import {
   hasAnyRecipientRecordForSurvey,
-  hasEverSentToUserForProject,
+  getSentCountsByProjectForUser,
   getLastSentAtForUser,
   recordSurveyRecipient,
 } from '../database/survey-recipient.js';
@@ -70,7 +70,9 @@ export function publicSurveyUrlFor(survey: {
 
 /**
  * Emails each project developer the same anonymous link, skipping anyone who
- * already got a survey email (for any project) within SURVEY_MIN_DAYS_BETWEEN_SURVEYS.
+ * already got a survey email (for any project) within SURVEY_MIN_DAYS_BETWEEN_SURVEYS,
+ * and rotating fairly across a developer's projects so no single project can
+ * monopolize a multi-project developer's attention (see the in-loop comment).
  * Runs once per survey (guarded by hasAnyRecipientRecordForSurvey).
  */
 async function emailEligibleDevelopers(surveyId: number, projectId: number, url: string): Promise<void> {
@@ -85,15 +87,22 @@ async function emailEligibleDevelopers(surveyId: number, projectId: number, url:
 
   for (const developer of developers) {
     // A developer working across more than one project must not have a single
-    // project permanently occupy their cooldown window and starve the others,
-    // so once they've been surveyed for THIS project, it never surveys them again.
-    const projectCount = await countProjectsForUser(developer.id);
-    if (projectCount > 1 && await hasEverSentToUserForProject(developer.id, projectId)) {
-      await recordSurveyRecipient({
-        surveyId, projectId, userId: developer.id, email: developer.email,
-        status: 'skipped', skipReason: 'already_surveyed_this_project',
-      });
-      continue;
+    // project monopolize their attention. Rotate fairly: only skip this project
+    // while it's already ahead of (has sent more than) some sibling project the
+    // developer is also on - once every sibling has caught up, it's eligible
+    // again. This is not a permanent block.
+    const projectIds = await listProjectIdsForUser(developer.id);
+    if (projectIds.length > 1) {
+      const counts = await getSentCountsByProjectForUser(developer.id, projectIds);
+      const thisCount = counts.get(projectId) ?? 0;
+      const minOtherCount = Math.min(...projectIds.filter((id) => id !== projectId).map((id) => counts.get(id) ?? 0));
+      if (thisCount > minOtherCount) {
+        await recordSurveyRecipient({
+          surveyId, projectId, userId: developer.id, email: developer.email,
+          status: 'skipped', skipReason: 'rotation_wait_for_other_projects',
+        });
+        continue;
+      }
     }
 
     const lastSentAt = await getLastSentAtForUser(developer.id);

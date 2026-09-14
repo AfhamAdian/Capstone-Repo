@@ -39,6 +39,7 @@ export class StubAiClient implements AiClient {
       scores: { security: 50, reliability: 50, maintainability: 50, cicdDeploymentHealth: 50, teamHealth: 50, engineeringProcess: 50, planningExecution: 50 },
       themes: ['stub-ai-client: no real analysis performed'],
       aiInsight: 'AI analysis is not configured (GEMINI_API_KEY missing) - this is placeholder output.',
+      questionSummaries: _input.rawResponses.map((r) => ({ question: r.question, summary: 'stub-ai-client: no real analysis performed' })),
     };
   }
 }

@@ -26,6 +26,7 @@ export interface FrontendSurvey {
   scores?: { security: number; reliability: number; maintainability: number; cicdDeploymentHealth: number; teamHealth: number; engineeringProcess: number; planningExecution: number };
   themes: string[];
   aiInsight: string;
+  questionSummaries: { question: string; summary: string }[];
   rawResponses: { question: string; answers: string[] }[];
   questions: GeneratedSurveyQuestion[];
   reviewDeadlineAt: string | null;
@@ -102,6 +103,7 @@ export function useSurveys(projects: ProjectIdentity[]) {
             scores: detail?.scores ?? s.scores ?? undefined,
             themes: detail?.themes ?? s.themes ?? [],
             aiInsight: detail?.aiInsight ?? s.aiInsight ?? "",
+            questionSummaries: detail?.questionSummaries ?? s.questionSummaries ?? [],
             rawResponses: detail?.rawResponses ?? [],
             questions: detail?.questions ?? s.questions ?? [],
             reviewDeadlineAt: s.reviewDeadlineAt,
