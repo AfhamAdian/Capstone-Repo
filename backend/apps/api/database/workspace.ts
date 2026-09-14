@@ -4,12 +4,9 @@
 //
 // access_token is encrypted at rest (encryptSecret/decryptSecret) — this module is the only place
 // that reads/writes the `workspace` table, so every caller above it always sees plaintext.
-//
-// TEMPORARY: encryption disabled in production (see decryptRecord/createWorkspace below) - do not
-// remove the encryptSecret/decryptSecret code, just re-enable the commented lines to restore it.
 
 import { assertSupabaseClient } from '../config/supabase.js';
-// import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
+import { encryptSecret, decryptSecret } from '@libs/security/secret-crypto.js';
 
 export interface WorkspaceRecord {
   id: number;
@@ -24,9 +21,7 @@ export interface WorkspaceRecord {
 const WORKSPACE_COLUMNS = 'id, company_id, name, vcs_provider, organization, access_token, created_at';
 
 function decryptRecord(record: WorkspaceRecord): WorkspaceRecord {
-  // TEMPORARY: encryption disabled - see note above.
-  // return { ...record, access_token: decryptSecret(record.access_token) };
-  return record;
+  return { ...record, access_token: decryptSecret(record.access_token) };
 }
 
 export async function createWorkspace(input: {
@@ -46,9 +41,7 @@ export async function createWorkspace(input: {
         name: input.name.trim(),
         vcs_provider: input.vcsProvider,
         organization: input.organization.trim(),
-        // TEMPORARY: encryption disabled - see note above.
-        // access_token: encryptSecret(input.accessToken),
-        access_token: input.accessToken,
+        access_token: encryptSecret(input.accessToken),
         created_at: new Date().toISOString(),
       },
     ])
