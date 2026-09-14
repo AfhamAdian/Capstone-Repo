@@ -88,25 +88,7 @@ export function useProjectSurveys(project: ProjectIdentity) {
     void fetchSurveys();
   }, [fetchSurveys]);
 
-  // Same rationale as useSurveys: "active" is long-lived (up to 15 days), not a
-  // short background job, so it's excluded from the fast poll - use the Refresh
-  // button for that. Only the genuinely transient states below auto-poll.
-  const waitingForBackground = surveys.some((s) => {
-    if (s.status === "closed" && !s.scores) return true;
-    if (s.status === "draft" && s.questions.length === 0) return true;
-    if (s.status === "draft" && s.scheduledSendAt) {
-      const sendAt = new Date(s.scheduledSendAt).getTime();
-      return Number.isFinite(sendAt) && sendAt <= Date.now() + 60_000;
-    }
-    return false;
-  });
-  useEffect(() => {
-    if (!waitingForBackground) return;
-    const timer = window.setInterval(() => {
-      void fetchSurveys({ silent: true });
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [waitingForBackground, fetchSurveys]);
-
+  // No auto-polling - it put too much load on the backend. Surveys refresh on
+  // mount/project change only; use the Refresh button for anything newer.
   return { surveys, loading, error, refetch: fetchSurveys };
 }
