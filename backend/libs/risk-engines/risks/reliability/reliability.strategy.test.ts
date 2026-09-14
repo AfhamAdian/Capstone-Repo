@@ -23,15 +23,15 @@ describe('ReliabilityStrategy', () => {
     expect(result.score).toBe(100);
     expect(result.level).toBe('HIGH');
     expect(result.weights).toEqual([
-      { key: 'reliabilityRating', w: 0.3 },
-      { key: 'testFailureRate', w: 0.15 },
-      { key: 'coverageOverall', w: 0.14 },
-      { key: 'flakyTestCount', w: 0.1 },
-      { key: 'coverageNewCode', w: 0.09 },
-      { key: 'issueReopenRate', w: 0.08 },
-      { key: 'mrRevertRate', w: 0.08 },
-      { key: 'qualityGatePassRate', w: 0.04 },
-      { key: 'reliabilityRemediationEffort', w: 0.02 },
+      { key: 'reliabilityRating', w: 0.3, score: 100 },
+      { key: 'testFailureRate', w: 0.15, score: 100 },
+      { key: 'coverageOverall', w: 0.14, score: 100 },
+      { key: 'flakyTestCount', w: 0.1, score: 100 },
+      { key: 'coverageNewCode', w: 0.09, score: 100 },
+      { key: 'issueReopenRate', w: 0.08, score: 100 },
+      { key: 'mrRevertRate', w: 0.08, score: 100 },
+      { key: 'qualityGatePassRate', w: 0.04, score: 100 },
+      { key: 'reliabilityRemediationEffort', w: 0.02, score: 100 },
     ]);
   });
 
@@ -55,7 +55,7 @@ describe('ReliabilityStrategy', () => {
   it('renormalizes around whatever signal is actually present', () => {
     const result = new ReliabilityStrategy().calculate({ reliabilityRating: 1 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'reliabilityRating', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'reliabilityRating', w: 1, score: 100 }]);
   });
 
   it('subtracts 2 points per new bug from the base score', () => {

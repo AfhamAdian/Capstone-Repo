@@ -60,6 +60,7 @@ export function renormalizedWeightedScore(signals: WeightedSignal[]): Renormaliz
     weights: present.map((signal) => ({
       key: signal.key,
       w: Math.round((signal.weight / totalWeight) * 100) / 100,
+      score: Math.round(signal.score),
     })),
   };
 }

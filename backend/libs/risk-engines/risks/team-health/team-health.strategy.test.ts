@@ -17,10 +17,10 @@ describe('TeamHealthStrategy', () => {
     expect(result.score).toBe(100);
     expect(result.level).toBe('HIGH');
     expect(result.weights).toEqual([
-      { key: 'busFactor', w: 0.35 },
-      { key: 'ownershipConcentration', w: 0.3 },
-      { key: 'reviewNetworkDensity', w: 0.25 },
-      { key: 'activeContributors', w: 0.1 },
+      { key: 'busFactor', w: 0.35, score: 100 },
+      { key: 'ownershipConcentration', w: 0.3, score: 100 },
+      { key: 'reviewNetworkDensity', w: 0.25, score: 100 },
+      { key: 'activeContributors', w: 0.1, score: 100 },
     ]);
   });
 
@@ -43,7 +43,7 @@ describe('TeamHealthStrategy', () => {
   it('renormalizes around whatever signal is actually present', () => {
     const result = new TeamHealthStrategy().calculate({ reviewNetworkDensityPercent: 60 });
     expect(result.score).toBe(60);
-    expect(result.weights).toEqual([{ key: 'reviewNetworkDensity', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'reviewNetworkDensity', w: 1, score: 60 }]);
   });
 
   it('returns a 0 score with no contributing weights when every signal is absent', () => {

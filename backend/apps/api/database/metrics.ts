@@ -57,6 +57,21 @@ export async function createProjectSnapshot(projectId: number, snapshotTime: str
   return data.id as number;
 }
 
+/** The project a snapshot belongs to, or null if the id doesn't exist - used to check
+ *  ownership before exposing a per-snapshot score breakdown. */
+export async function getSnapshotProjectId(snapshotId: number): Promise<number | null> {
+  const client = assertSupabaseClient();
+  const { data, error } = await client
+    .from('projectsnapshot')
+    .select('project_id')
+    .eq('id', snapshotId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load snapshot ${snapshotId}: ${error.message}`);
+  }
+  return data ? (data.project_id as number) : null;
+}
+
 async function insertVersionControlMetrics(snapshotId: number, data: GitHubMetricsResponse): Promise<void> {
   const client = assertSupabaseClient();
 

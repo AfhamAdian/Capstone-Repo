@@ -27,6 +27,8 @@ import {
   listScoreHistoryForProject,
   type ProjectRiskScore,
 } from '../database/score.js';
+import { getSnapshotProjectId } from '../database/metrics.js';
+import { getScoreBreakdown, type HealthScoreType, type ScoreBreakdown } from './risk-calculation.service.js';
 import { sendProjectInvites } from './invite.service.js';
 import { logger } from '@libs/logger.js';
 import { getWorkspaceById } from '../database/workspace.js';
@@ -370,6 +372,9 @@ export interface HealthSeriesPoint {
   date: string;
   label: string;
   score: number;
+  /** The snapshot this point came from - lets the frontend ask for a score breakdown
+   *  ("what metrics made up this score") for this exact point. */
+  snapshotId: number;
 }
 
 export interface OpsMetrics {
@@ -398,7 +403,7 @@ export interface ProjectHealth {
   subscores: HealthSubscores | null;
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
-  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]>;
+  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string; snapshotId: number }[]>;
   metrics: OpsMetrics | null;
   metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;
@@ -554,16 +559,17 @@ function buildProjectHealth(
     date: date(h),
     label: label(h),
     score: round(h.overall),
+    snapshotId: h.snapshotId,
   }));
 
-  const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string }[]> = {
-    security: history.map((h) => ({ v: round(h.subscores.security), label: label(h), date: date(h) })),
-    reliability: history.map((h) => ({ v: round(h.subscores.reliability), label: label(h), date: date(h) })),
-    maintainability: history.map((h) => ({ v: round(h.subscores.maintainability), label: label(h), date: date(h) })),
-    cicdDeploymentHealth: history.map((h) => ({ v: round(h.subscores.cicdDeploymentHealth), label: label(h), date: date(h) })),
-    teamHealth: history.map((h) => ({ v: round(h.subscores.teamHealth), label: label(h), date: date(h) })),
-    engineeringProcess: history.map((h) => ({ v: round(h.subscores.engineeringProcess), label: label(h), date: date(h) })),
-    planningExecution: history.map((h) => ({ v: round(h.subscores.planningExecution), label: label(h), date: date(h) })),
+  const subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date: string; snapshotId: number }[]> = {
+    security: history.map((h) => ({ v: round(h.subscores.security), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    reliability: history.map((h) => ({ v: round(h.subscores.reliability), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    maintainability: history.map((h) => ({ v: round(h.subscores.maintainability), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    cicdDeploymentHealth: history.map((h) => ({ v: round(h.subscores.cicdDeploymentHealth), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    teamHealth: history.map((h) => ({ v: round(h.subscores.teamHealth), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    engineeringProcess: history.map((h) => ({ v: round(h.subscores.engineeringProcess), label: label(h), date: date(h), snapshotId: h.snapshotId })),
+    planningExecution: history.map((h) => ({ v: round(h.subscores.planningExecution), label: label(h), date: date(h), snapshotId: h.snapshotId })),
   };
 
   const ops = buildOpsMetrics(opsHistory);
@@ -631,4 +637,25 @@ export async function getProjectHealth(auth: Auth, projectId: number): Promise<P
     getVcsOwnerRepo(projectId),
   ]);
   return buildProjectHealth(project, history, opsHistory, vcs);
+}
+
+/**
+ * "Click a score's graph, see what it was calculated from" - re-derives one score for one
+ * already-synced snapshot and returns which metrics drove it. Same company-scoping as
+ * getProjectHealth, plus a check that the snapshot actually belongs to this project (snapshot
+ * ids are sequential across all projects, so that isn't implied by the project check alone).
+ */
+export async function getProjectScoreBreakdown(
+  auth: Auth,
+  projectId: number,
+  snapshotId: number,
+  type: HealthScoreType,
+): Promise<ScoreBreakdown | null> {
+  const project = await dbGetProjectRow(projectId);
+  if (!project || project.companyId !== auth.companyId) return null;
+
+  const snapshotProjectId = await getSnapshotProjectId(snapshotId);
+  if (snapshotProjectId !== projectId) return null;
+
+  return getScoreBreakdown(snapshotId, type);
 }

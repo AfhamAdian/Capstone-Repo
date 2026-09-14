@@ -25,15 +25,15 @@ describe('MaintainabilityStrategy', () => {
     expect(result.score).toBe(100);
     expect(result.level).toBe('HIGH');
     expect(result.weights).toEqual([
-      { key: 'maintainabilityRating', w: 0.3 },
-      { key: 'codeSmellsDensity', w: 0.15 },
-      { key: 'cyclomaticComplexity', w: 0.1 },
-      { key: 'cognitiveComplexity', w: 0.1 },
-      { key: 'duplicatedCode', w: 0.1 },
-      { key: 'duplicatedLinesNewCode', w: 0.05 },
-      { key: 'codeChurnDensity', w: 0.08 },
-      { key: 'hotspotFilesDensity', w: 0.07 },
-      { key: 'dependencyUpdateLag', w: 0.05 },
+      { key: 'maintainabilityRating', w: 0.3, score: 100 },
+      { key: 'codeSmellsDensity', w: 0.15, score: 100 },
+      { key: 'cyclomaticComplexity', w: 0.1, score: 100 },
+      { key: 'cognitiveComplexity', w: 0.1, score: 100 },
+      { key: 'duplicatedCode', w: 0.1, score: 100 },
+      { key: 'duplicatedLinesNewCode', w: 0.05, score: 100 },
+      { key: 'codeChurnDensity', w: 0.08, score: 100 },
+      { key: 'hotspotFilesDensity', w: 0.07, score: 100 },
+      { key: 'dependencyUpdateLag', w: 0.05, score: 100 },
     ]);
   });
 
@@ -59,7 +59,7 @@ describe('MaintainabilityStrategy', () => {
   it('renormalizes around whatever signal is actually present', () => {
     const result = new MaintainabilityStrategy().calculate({ maintainabilityRating: 1 });
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'maintainabilityRating', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'maintainabilityRating', w: 1, score: 100 }]);
   });
 
   it('does not compute a density signal without linesOfCode', () => {
@@ -71,7 +71,7 @@ describe('MaintainabilityStrategy', () => {
     });
     const without = new MaintainabilityStrategy().calculate({ maintainabilityRating: 1 });
     expect(withCounts.score).toBe(without.score);
-    expect(withCounts.weights).toEqual([{ key: 'maintainabilityRating', w: 1 }]);
+    expect(withCounts.weights).toEqual([{ key: 'maintainabilityRating', w: 1, score: 100 }]);
   });
 
   it('sums newTechnicalDebt minutes and newCodeSmells count into one penalty, capped at 15', () => {

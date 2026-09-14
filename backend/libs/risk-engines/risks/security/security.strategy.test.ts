@@ -40,12 +40,12 @@ describe('SecurityStrategy', () => {
     expect(result.level).toBe('LOW');
     // All six signals were present, so weights come back exactly as declared (no renormalization).
     expect(result.weights).toEqual([
-      { key: 'securityRating', w: 0.25 },
-      { key: 'vulnCountDensity', w: 0.2 },
-      { key: 'securityReviewRating', w: 0.15 },
-      { key: 'securityHotspotsDensity', w: 0.15 },
-      { key: 'dependencyUpdateLag', w: 0.15 },
-      { key: 'securityRemediationEffort', w: 0.1 },
+      { key: 'securityRating', w: 0.25, score: 0 },
+      { key: 'vulnCountDensity', w: 0.2, score: 0 },
+      { key: 'securityReviewRating', w: 0.15, score: 0 },
+      { key: 'securityHotspotsDensity', w: 0.15, score: 0 },
+      { key: 'dependencyUpdateLag', w: 0.15, score: 0 },
+      { key: 'securityRemediationEffort', w: 0.1, score: 0 },
     ]);
   });
 
@@ -55,7 +55,7 @@ describe('SecurityStrategy', () => {
     const result = new SecurityStrategy().calculate({ securityRating: 1 });
 
     expect(result.score).toBe(100);
-    expect(result.weights).toEqual([{ key: 'securityRating', w: 1 }]);
+    expect(result.weights).toEqual([{ key: 'securityRating', w: 1, score: 100 }]);
   });
 
   it('does not compute a vulnerability/hotspot density without linesOfCode', () => {
@@ -69,7 +69,7 @@ describe('SecurityStrategy', () => {
     const withoutCount = new SecurityStrategy().calculate({ securityRating: 1 });
 
     expect(withCount.score).toBe(withoutCount.score);
-    expect(withCount.weights).toEqual([{ key: 'securityRating', w: 1 }]);
+    expect(withCount.weights).toEqual([{ key: 'securityRating', w: 1, score: 100 }]);
   });
 
   it('subtracts 2 points per new vulnerability from the base score', () => {

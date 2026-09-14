@@ -184,6 +184,11 @@ export type RiskMetricsByType = {
 export type RiskWeight = {
   key: string;
   w: number;
+  /** The 0..100 score this signal itself contributed, before weighting - used by the
+   *  score-breakdown feature to show which metrics drove the result, not just their weight.
+   *  Optional: BlockersStrategy (legacy survey rubric, not part of the breakdown feature)
+   *  builds its weights by hand without it - every health-score strategy sets it. */
+  score?: number;
 };
 
 export type RiskResult = {

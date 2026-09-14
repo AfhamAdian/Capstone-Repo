@@ -168,10 +168,12 @@ export class PlanningExecutionStrategy implements PlanningExecutionRiskCalculato
         ...resultA.weights.map((w) => ({
           key: `planningAccuracy.${w.key}`,
           w: Math.round(w.w * 0.65 * 100) / 100,
+          score: w.score,
         })),
         ...resultB.weights.map((w) => ({
           key: `deliveryFocus.${w.key}`,
           w: Math.round(w.w * 0.35 * 100) / 100,
+          score: w.score,
         })),
       ];
     }

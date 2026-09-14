@@ -11,8 +11,8 @@ import { AnimatePresence } from "motion/react";
 import type { ActionReviewQueue, SyncRiskKey } from "../api";
 import type { Project, Action, Survey } from "../types";
 import { actionIncludesProject, scoreInt, trendLabel, hColor, hClass, SUBSCORE_LABELS, surveyResponseRate, SURVEY_STATUS_CONFIG, fmtDate, toDisplaySubscores, computeCodeQualitySeries, ttStyle, type DisplaySubscores } from "../format";
-import { Spark, TrendIcon } from "../components/ScoreVisuals";
-import { MetricModal, MMETA, MVAL } from "../components/MetricModal";
+import { TrendIcon } from "../components/ScoreVisuals";
+import { ScoreBreakdownModal, SCORE_BREAKDOWN_TYPES } from "../components/ScoreBreakdownModal";
 import { DashboardSyncBar } from "../components/DashboardSyncBar";
 import { PageShell, SectionHeading, CardHeading } from "../components/PageShell";
 
@@ -46,8 +46,17 @@ function CodeQualityBreakdown({subscores,align}:{
   );
 }
 
+/** Latest snapshot behind a display category's trend - Code Quality has no series of its own
+ *  (it's a frontend-only merge of security/reliability/maintainability, which share the same
+ *  snapshot-history alignment), so it borrows security's. */
+function latestSnapshotId(project: Project, k: keyof DisplaySubscores): number | undefined {
+  const sourceKey = k === "codeQuality" ? "security" : k;
+  const series = project.subscoreSeries[sourceKey];
+  return series?.[series.length - 1]?.snapshotId;
+}
+
 export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,onRatingOpen}:{project:Project;actions:Action[];surveys:Survey[];reviewQueue:ActionReviewQueue|null;onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;onRatingOpen:()=>void;}) {
-  const [expanded,setExpanded]=useState<string|null>(null);
+  const [breakdownKey,setBreakdownKey]=useState<keyof DisplaySubscores|null>(null);
   const display=toDisplaySubscores(project.subscores);
   const displaySeries:Record<keyof DisplaySubscores,{v:number;label:string;date?:string}[]>={
     codeQuality: computeCodeQualitySeries(project.subscoreSeries),
@@ -60,8 +69,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
   const pending=[...(reviewQueue?.fromLastWeek??[]),...(reviewQueue?.earlier??[])].filter(action=>actionIncludesProject(action,project));
   const projectActions=actions.filter(a=>actionIncludesProject(a,project));
   const projectSurveys=surveys.filter(s=>s.projectId===project.id);
-  const mkeys=["commits","tickets","velocity","blockers","deployments","prCycleTime"];
-  const mseries:Record<string,string>={commits:"commits",tickets:"tickets",velocity:"velocity",blockers:"blockers",deployments:"deployments",prCycleTime:"prCycleTime"};
 
   return (
     <PageShell className="space-y-8">
@@ -82,12 +89,12 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
         </button>
       )}
 
-      {/* Score + radar. The score column only becomes a fixed track once there's room
-          for the radar beside it; below that the two stack. */}
-      <div className="grid grid-cols-1 lg:grid-cols-[290px_1fr] gap-6">
+      {/* Score summary row: overall score, category scores, and the (minimized) radar chart
+          side by side; below lg they stack. */}
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr_260px] gap-6">
         <section className="bg-card border border-border p-6">
           <CardHeading className="mb-4">Health score</CardHeading>
-          <div className="flex items-end gap-4 mb-5">
+          <div className="flex items-end gap-4">
             <span className="text-7xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:hColor(project.score)}}>{scoreInt(project.score)}</span>
             <div className="mb-2 flex flex-col gap-1.5">
               <TrendIcon t={project.scoreTrend} sz={18}/>
@@ -96,9 +103,10 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
               </span>
             </div>
           </div>
-          {/* Fills the card's content box so it shares a right edge with the bars below. */}
-          <Spark data={project.sparkline} color={hColor(project.score)} h={48}/>
-          <div className="mt-5 pt-5 border-t border-border space-y-3">
+        </section>
+        <section className="bg-card border border-border p-6">
+          <CardHeading className="mb-4">Category scores</CardHeading>
+          <div className="space-y-3">
             {(Object.keys(display) as (keyof DisplaySubscores)[]).map(k=>{
               const row=(
                 <div className="flex items-center justify-between w-full text-left gap-3 px-1 py-0.5">
@@ -123,16 +131,50 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
         </section>
         <section className="bg-card border border-border p-6">
           <CardHeading className="mb-4">Category balance</CardHeading>
-          <ResponsiveContainer width="100%" height={240}>
-            <RadarChart data={radarData} margin={{top:4,right:28,bottom:4,left:28}}>
+          <ResponsiveContainer width="100%" height={180}>
+            <RadarChart data={radarData} margin={{top:4,right:8,bottom:4,left:8}}>
               <PolarGrid stroke="var(--border)"/>
-              <PolarAngleAxis dataKey="subject" tick={{fill:"var(--foreground)",fontSize:12,fontFamily:"var(--font-display)",fontWeight:600}}/>
+              <PolarAngleAxis dataKey="subject" tick={{fill:"var(--foreground)",fontSize:9,fontFamily:"var(--font-display)",fontWeight:600}}/>
               <PolarRadiusAxis angle={30} domain={[0,100]} tick={false} axisLine={false}/>
               <Radar dataKey="value" stroke="var(--primary)" fill="var(--primary)" fillOpacity={0.12} strokeWidth={2}/>
             </RadarChart>
           </ResponsiveContainer>
         </section>
       </div>
+
+      {/* Health score over time, full width. Hover/scrub across the line the same way the
+          Category scores' mini trend charts work - the tooltip tracks the cursor and shows
+          the score + date at that point instead of a fixed drag handle. */}
+      <section className="bg-card border border-border p-6">
+        <CardHeading className="mb-4">Health score over time</CardHeading>
+        <ResponsiveContainer width="100%" height={220}>
+          <AreaChart data={project.timeSeries} margin={{top:8,right:8,bottom:0,left:8}}>
+            <defs>
+              <linearGradient id={`hs-${project.id}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={hColor(project.score)} stopOpacity={0.25}/>
+                <stop offset="100%" stopColor={hColor(project.score)} stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            <ReTooltip
+              contentStyle={ttStyle}
+              itemStyle={{color:"var(--foreground)"}}
+              labelStyle={{color:"var(--muted-foreground)",fontSize:"11px"}}
+              formatter={(v:number)=>[v,"Score"]}
+              labelFormatter={(_:unknown,pl:unknown[])=>(pl as {payload:{label:string}}[])[0]?.payload?.label}
+            />
+            <Area
+              type="monotone"
+              dataKey="score"
+              stroke={hColor(project.score)}
+              strokeWidth={2}
+              fill={`url(#hs-${project.id})`}
+              dot={false}
+              activeDot={{r:4,fill:hColor(project.score),stroke:"var(--card)",strokeWidth:2}}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </section>
 
       {/* Five subscore trends. Steps 2 -> 3 -> 5 across so the labels never crush. */}
       <section>
@@ -149,8 +191,13 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
             const trendGood = delta >= 0; // higher = better for all subscores
             const minV = scoreInt(series.length?Math.min(...series.map(d=>d.v)):val);
             const maxV = scoreInt(series.length?Math.max(...series.map(d=>d.v)):val);
+            const snapshotId = latestSnapshotId(project, k);
             return (
-              <div key={k} className="group relative bg-card border border-border p-4 flex flex-col" tabIndex={k==="codeQuality"?0:undefined}>
+              <div key={k} role="button" tabIndex={0}
+                onClick={()=>snapshotId&&setBreakdownKey(k)}
+                onKeyDown={e=>{if(snapshotId&&(e.key==="Enter"||e.key===" ")){e.preventDefault();setBreakdownKey(k);}}}
+                title={snapshotId?"See which metrics made up this score":undefined}
+                className={`group relative bg-card border border-border p-4 flex flex-col text-left ${snapshotId?"cursor-pointer hover:border-primary transition-colors":""}`}>
                 <div className="flex items-center gap-1.5 mb-3">
                   <span style={{color:strokeColor}} className="shrink-0">{SUBSCORE_ICONS[k]}</span>
                   <span className="text-xs font-semibold text-foreground leading-tight" style={{fontFamily:"var(--font-display)"}}>{SUBSCORE_LABELS[k]}</span>
@@ -193,51 +240,6 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
-            );
-          })}
-        </div>
-      </section>
-
-      <section>
-        <SectionHeading>Delivery metrics</SectionHeading>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {mkeys.map(mk=>{
-            const meta=MMETA[mk];
-            const val=MVAL[mk](project.metrics);
-            const series=project.metricSeries[mseries[mk]]??[];
-            const isBad=meta.invertBad&&val>(mk==="blockers"?3:36);
-            const strokeColor=isBad?"var(--health-crit)":meta.color;
-            const gradId=`mg-${mk}-${project.id}`;
-            const last=series[series.length-1]?.v??val;
-            const prev=series[series.length-2]?.v??last;
-            const trendUp=last>=prev;
-            return (
-              <button key={mk} onClick={()=>setExpanded(mk)}
-                aria-label={`${meta.label}: ${val}${meta.unit??""}. Open full history.`}
-                className="bg-card border border-border p-4 text-left hover:border-primary transition-colors cursor-pointer overflow-hidden">
-                <div className="flex items-center gap-2 mb-2">
-                  <span style={{color:strokeColor}} className="shrink-0">{meta.icon}</span>
-                  <span className="text-sm font-semibold text-foreground" style={{fontFamily:"var(--font-display)"}}>{meta.label}</span>
-                  <span className="ml-auto text-xs font-medium shrink-0" style={{color:trendUp===!meta.invertBad?"var(--health-good)":"var(--health-crit)"}}>
-                    {trendUp?"↑":"↓"}{Math.abs(last-prev).toFixed(meta.unit==="h"?1:0)}{meta.unit??""}
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-1 mb-1">
-                  <span className="text-4xl font-bold tabular-nums leading-none" style={{fontFamily:"var(--font-mono)",color:isBad?"var(--health-crit)":"var(--foreground)"}}>{val}</span>
-                  {meta.unit&&<span className="text-sm text-muted-foreground">{meta.unit}</span>}
-                </div>
-                <ResponsiveContainer width="100%" height={52}>
-                  <AreaChart data={series} margin={{top:2,right:0,bottom:0,left:0}}>
-                    <defs>
-                      <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor={strokeColor} stopOpacity={0.2}/>
-                        <stop offset="100%" stopColor={strokeColor} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <Area type="monotone" dataKey="v" stroke={strokeColor} strokeWidth={1.5} fill={`url(#${gradId})`} dot={false} activeDot={{r:3,fill:strokeColor,stroke:"var(--card)",strokeWidth:2}} isAnimationActive={false}/>
-                  </AreaChart>
-                </ResponsiveContainer>
-              </button>
             );
           })}
         </div>
@@ -312,7 +314,15 @@ export function Dashboard({project,actions,surveys,reviewQueue,onSyncComplete,on
       </div>
 
       <AnimatePresence>
-        {expanded&&<MetricModal key="mm" mk={expanded} series={project.metricSeries[mseries[expanded]]??[]} val={MVAL[expanded](project.metrics)} onClose={()=>setExpanded(null)}/>}
+        {breakdownKey&&(()=>{
+          const snapshotId=latestSnapshotId(project,breakdownKey);
+          if(!snapshotId) return null;
+          return (
+            <ScoreBreakdownModal key="sb" cardLabel={SUBSCORE_LABELS[breakdownKey]} projectId={project.backendProjectId??project.id}
+              snapshotId={snapshotId} scoreTypes={SCORE_BREAKDOWN_TYPES[breakdownKey]}
+              onClose={()=>setBreakdownKey(null)}/>
+          );
+        })()}
       </AnimatePresence>
     </PageShell>
   );

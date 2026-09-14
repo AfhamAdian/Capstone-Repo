@@ -2,17 +2,30 @@
 // Also serves the read-only project + health-score dashboard feed.
 
 import type { Request, Response } from 'express';
+import { RiskType } from '@libs/risk-engines/types.js';
+import type { HealthScoreType } from '../services/risk-calculation.service.js';
 import {
   ProjectError,
   getProject,
   listProjects,
   listProjectsWithHealth,
   getProjectHealth,
+  getProjectScoreBreakdown,
   updateProjectIntegration,
   getIntegrationToken,
   inviteMemberToProject,
   removeMemberFromProject,
 } from '../services/project.service.js';
+
+// The 7 health-score types this feature covers - excludes RiskType.BLOCKERS (legacy survey
+// rubric, not part of the dashboard's health-score model).
+const HEALTH_SCORE_TYPES = new Set<string>(
+  Object.values(RiskType).filter((t) => t !== RiskType.BLOCKERS),
+);
+
+function isHealthScoreType(value: string): value is HealthScoreType {
+  return HEALTH_SCORE_TYPES.has(value);
+}
 
 function handleProjectError(error: unknown, response: Response): void {
   if (error instanceof ProjectError) {
@@ -147,6 +160,45 @@ export async function getProjectHealthDetail(request: Request, response: Respons
     response.status(200).json(health);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load project health';
+    response.status(500).json({ message });
+  }
+}
+
+/**
+ * GET /api/v1/projects/:projectId/snapshots/:snapshotId/score-breakdown/:scoreType
+ * "Click a score's graph, see what it was calculated from" - recomputes one score for one
+ * already-synced snapshot and returns the metrics that drove it. Nothing is persisted; this
+ * re-derives from the snapshot's already-stored raw metrics on every request.
+ */
+export async function getScoreBreakdownHandler(request: Request, response: Response): Promise<void> {
+  const projectId = Number(request.params.projectId);
+  const snapshotId = Number(request.params.snapshotId);
+  const scoreType = request.params.scoreType ?? '';
+
+  if (!Number.isFinite(projectId) || projectId <= 0) {
+    response.status(400).json({ message: 'projectId must be a positive number' });
+    return;
+  }
+  if (!Number.isFinite(snapshotId) || snapshotId <= 0) {
+    response.status(400).json({ message: 'snapshotId must be a positive number' });
+    return;
+  }
+  if (!isHealthScoreType(scoreType)) {
+    response.status(400).json({
+      message: `scoreType must be one of: ${[...HEALTH_SCORE_TYPES].join(', ')}`,
+    });
+    return;
+  }
+
+  try {
+    const breakdown = await getProjectScoreBreakdown(request.auth!, projectId, snapshotId, scoreType);
+    if (!breakdown) {
+      response.status(404).json({ message: 'Snapshot not found for this project' });
+      return;
+    }
+    response.status(200).json(breakdown);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to load score breakdown';
     response.status(500).json({ message });
   }
 }

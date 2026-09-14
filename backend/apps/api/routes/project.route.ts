@@ -4,6 +4,7 @@ import {
   listProjectsHandler,
   listProjectsHealthHandler,
   getProjectHealthDetail,
+  getScoreBreakdownHandler,
   updateIntegrationHandler,
   getIntegrationTokenHandler,
   inviteMemberHandler,
@@ -25,3 +26,8 @@ projectRouter.post('/:projectId/invites', requireAuth, asyncHandler(inviteMember
 projectRouter.delete('/:projectId/members/:userId', requireAuth, asyncHandler(removeMemberHandler));
 projectRouter.get('/:projectId/integrations/:toolName/token', requireAuth, asyncHandler(getIntegrationTokenHandler));
 projectRouter.get('/:projectId/health', requireAuth, asyncHandler(getProjectHealthDetail));
+projectRouter.get(
+  '/:projectId/snapshots/:snapshotId/score-breakdown/:scoreType',
+  requireAuth,
+  asyncHandler(getScoreBreakdownHandler),
+);

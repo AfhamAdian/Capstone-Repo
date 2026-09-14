@@ -12,7 +12,7 @@ export interface Project {
   score: number;
   scoreTrend: number;
   sparkline: { v: number }[];
-  timeSeries: { date: string; label: string; score: number }[];
+  timeSeries: { date: string; label: string; score: number; snapshotId: number }[];
   // Raw scores from the 7-score health engine. "Code Quality" (security + reliability +
   // maintainability) is a frontend-only display merge - see format.ts's computeCodeQualityScore.
   subscores: {
@@ -26,7 +26,7 @@ export interface Project {
   };
   metrics: { commits: number; ticketsClosed: number; sprintVelocity: number; openBlockers: number; deployments: number; prCycleTime: number };
   metricSeries: Record<string, { v: number; label: string; date?: string }[]>;
-  subscoreSeries: Record<string, { v: number; label: string; date?: string }[]>;
+  subscoreSeries: Record<string, { v: number; label: string; date?: string; snapshotId: number }[]>;
   pendingSurvey: boolean;
   pendingReview: number;
   lastUpdated: string;

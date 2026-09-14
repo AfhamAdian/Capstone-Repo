@@ -17,6 +17,7 @@ export interface HealthSeriesPoint {
   date: string;
   label: string;
   score: number;
+  snapshotId: number;
 }
 
 export interface OpsMetrics {
@@ -45,7 +46,7 @@ export interface ProjectHealth {
   subscores: HealthSubscores | null;
   sparkline: { v: number }[];
   timeSeries: HealthSeriesPoint[];
-  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date?: string }[]>;
+  subscoreSeries: Record<keyof HealthSubscores, { v: number; label: string; date?: string; snapshotId: number }[]>;
   metrics: OpsMetrics | null;
   metricSeries: OpsMetricSeries;
   pendingSurvey: boolean;
@@ -75,4 +76,34 @@ export async function listProjectsWithHealth(): Promise<ProjectHealth[]> {
 /** GET /api/v1/projects/:projectId/health */
 export async function getProjectHealth(projectId: string): Promise<ProjectHealth> {
   return request(`/projects/${projectId}/health`);
+}
+
+export interface ScoreBreakdownSignal {
+  key: string;
+  label: string;
+  /** 0..100, or null if this snapshot had no usable value for it (excluded and renormalized around). */
+  score: number | null;
+  /** This signal's share of the score's total weight (0..1), after renormalizing. */
+  weight: number;
+  /** Raw input field name(s) this signal is derived from. */
+  metricFields: string[];
+  /** Raw values for metricFields, same order - undefined means that tool wasn't synced for this snapshot. */
+  metricValues: Array<number | string | boolean | null | undefined>;
+}
+
+export interface ScoreBreakdown {
+  type: string;
+  score: number;
+  level: "LOW" | "MEDIUM" | "HIGH";
+  signals: ScoreBreakdownSignal[];
+}
+
+/** GET /api/v1/projects/:projectId/snapshots/:snapshotId/score-breakdown/:scoreType - which
+ *  metrics made up one score for one already-synced snapshot ("click a score's graph"). */
+export async function getScoreBreakdown(
+  projectId: string,
+  snapshotId: number,
+  scoreType: string,
+): Promise<ScoreBreakdown> {
+  return request(`/projects/${projectId}/snapshots/${snapshotId}/score-breakdown/${scoreType}`);
 }
