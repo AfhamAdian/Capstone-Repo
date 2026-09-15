@@ -10,6 +10,7 @@ import {
   listProjectsForMember,
   listProjects as dbListAllProjects,
   getProject as dbGetProjectRow,
+  setProjectTracked as dbSetProjectTracked,
   type ProjectRecord,
   type ProjectRow,
 } from '../database/project.js';
@@ -273,6 +274,18 @@ export async function removeMemberFromProject(
   return toDetail(project);
 }
 
+// Admin-only: toggle whether a project is tracked in the portfolio (company-wide flag).
+export async function setProjectTracked(auth: Auth, projectId: number, tracked: boolean): Promise<void> {
+  if (auth.role !== 'admin') {
+    throw new ProjectError('Only admins can change tracking', 403);
+  }
+  const project = await getProjectById(projectId);
+  if (!project || project.company_id !== auth.companyId) {
+    throw new ProjectError('Project not found', 404);
+  }
+  await dbSetProjectTracked(projectId, tracked);
+}
+
 // Admin-only: update an existing tool integration's config (e.g. the connector settings' Save).
 // Only non-empty, non-masked values are persisted, so a blank field keeps the current value.
 export async function updateProjectIntegration(
@@ -413,6 +426,8 @@ export interface ProjectHealth {
   hasData: boolean;
   /** True once at least one snapshot metric value exists for the ops cards. */
   hasMetrics: boolean;
+  // Whether the project is tracked in the portfolio (All vs Tracked filter).
+  isTracked: boolean;
 }
 
 // Built once: constructing an Intl.DateTimeFormat per data point is measurably slow on
@@ -594,6 +609,7 @@ function buildProjectHealth(
     lastUpdated: toUtcIso(latest?.snapshotTime ?? opsHistory[opsHistory.length - 1]?.snapshotTime ?? null),
     hasData: latest !== null,
     hasMetrics: ops.hasMetrics,
+    isTracked: project.isTracked,
   };
 }
 
