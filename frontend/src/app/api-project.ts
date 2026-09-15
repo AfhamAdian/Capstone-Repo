@@ -56,6 +56,7 @@ export interface ProjectHealth {
   hasData: boolean;
   /** False if no snapshot metric rows exist yet - keep the mock ops cards until then. */
   hasMetrics: boolean;
+  isTracked: boolean;
 }
 
 async function request<T>(path: string): Promise<T> {
