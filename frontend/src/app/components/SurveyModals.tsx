@@ -303,7 +303,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
     setErrorMessage(null);
     try{
       const [generated,q]=await Promise.all([
-        generateSurveyQuestions(backendProjectId,trigger,customGuidance,undefined,force),
+        generateSurveyQuestions(backendProjectId,trigger,customGuidance,force),
         getSurveyQuota(backendProjectId),
       ]);
       setSurveyId(generated.surveyId);
@@ -324,7 +324,7 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
     setErrorMessage(null);
     try{
       const payload=questionPayload();
-      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,undefined,surveyId??undefined);
+      await sendSurvey(backendProjectId,trigger,customGuidance,payload,undefined,surveyId??undefined);
       setSentResult({queued:true,questionCount:payload.length});
       onSent?.();
       setStep("sent");
