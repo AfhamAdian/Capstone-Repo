@@ -49,7 +49,7 @@ export function PortfolioView({projects,pendingReviewCount,onSelect,onLogAction,
   workspaceName?:string;onBackToWorkspaces?:()=>void;
   onSyncComplete:(projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>void;
 }) {
-  const [tab,setTab]=useState<"all"|"tracked">("all");
+  const [tab,setTab]=useState<"all"|"tracked">("tracked");
   const [q,setQ]=useState("");
   const visible=useMemo(()=>{
     let list=tab==="tracked"?projects.filter(p=>p.tracked):projects;
@@ -93,7 +93,7 @@ export function PortfolioView({projects,pendingReviewCount,onSelect,onLogAction,
 
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <div className="flex border border-border" role="tablist" aria-label="Filter projects">
-          {(["all","tracked"] as const).map(t=>(
+          {(["tracked","all"] as const).map(t=>(
             <button key={t} role="tab" aria-selected={tab===t} onClick={()=>setTab(t)}
               className={`px-5 py-2.5 text-sm font-semibold transition-colors ${tab===t?"bg-foreground text-background":"text-muted-foreground hover:text-foreground"}`}
               style={{fontFamily:"var(--font-display)"}}>
