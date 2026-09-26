@@ -495,7 +495,6 @@ export function SendSurveyModal({onClose,project,customGuidance,onSent,audienceS
                           className="text-xs bg-card border border-border px-1.5 py-1">
                           <option value="text">Text</option><option value="scale">Scale 1–5</option>
                         </select>
-                        {q.score&&q.score.overall>0&&<span className="text-xs font-semibold text-link" title="AI quality score">score {Math.round(q.score.overall)}</span>}
                       </div>
                     )}
                     <textarea value={q.text} rows={2} onChange={e=>updateQ(q.id,e.target.value)} placeholder="Enter question…"
