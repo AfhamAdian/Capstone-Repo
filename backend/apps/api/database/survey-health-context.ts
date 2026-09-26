@@ -1,8 +1,20 @@
-import type { CategoryTrend, HealthTrendLabel, SurveyHealthContext } from '@libs/ai/index.js';
+import type { CategoryTrend, HealthTrendLabel, SurveyHealthContext, SurveyQuestionCategory } from '@libs/ai/index.js';
+import { RiskType, type HealthScoreType } from '@libs/risk-engines/types.js';
 import { assertSupabaseClient } from '../config/supabase.js';
 import { env } from '../config/env.js';
 import { getLatestRiskScoreForProject, getRiskScoreBySnapshotId, type LatestRiskScoreRow } from './risk-score.js';
 import { getLatestIncidentSignals, hasAnyIncidentSignal } from './incident-signals.js';
+import { getScoreBreakdown } from '../services/risk-calculation.service.js';
+
+const CATEGORY_TO_RISK_TYPE: Record<SurveyQuestionCategory, HealthScoreType> = {
+  security: RiskType.SECURITY,
+  reliability: RiskType.RELIABILITY,
+  maintainability: RiskType.MAINTAINABILITY,
+  cicdDeploymentHealth: RiskType.CICD_DEPLOYMENT_HEALTH,
+  teamHealth: RiskType.TEAM_HEALTH,
+  engineeringProcess: RiskType.ENGINEERING_PROCESS,
+  planningExecution: RiskType.PLANNING_EXECUTION,
+};
 
 const STEADY_THRESHOLD = 3;
 const SHARP_THRESHOLD = 15;
@@ -59,6 +71,26 @@ async function captureIncidentsIfEnabled(projectId: number): Promise<SurveyHealt
   return incidents && hasAnyIncidentSignal(incidents) ? incidents : undefined;
 }
 
+/**
+ * Best-effort full per-category metric breakdown (score, weight, raw metricFields/metricValues)
+ * for the snapshot the survey's scores were captured from - the same data the dashboard's
+ * score-breakdown modal shows, reusing getScoreBreakdown() as-is. Gated by METRICS_IN_SURVEY.
+ * Never allowed to break question generation - a fetch failure for any category just omits it.
+ */
+async function captureBreakdownIfEnabled(snapshotId: number): Promise<SurveyHealthContext['breakdown']> {
+  if (!env.metricsInSurvey) return undefined;
+  const entries = await Promise.all(
+    (Object.entries(CATEGORY_TO_RISK_TYPE) as [SurveyQuestionCategory, HealthScoreType][]).map(
+      async ([category, type]) => [category, await getScoreBreakdown(snapshotId, type).catch(() => null)] as const,
+    ),
+  );
+  const breakdown: NonNullable<SurveyHealthContext['breakdown']> = {};
+  for (const [category, result] of entries) {
+    if (result) breakdown[category] = result.signals;
+  }
+  return Object.keys(breakdown).length > 0 ? breakdown : undefined;
+}
+
 /** Captures the exact risk-engine snapshot (plus its trend vs the prior sync) supplied to Gemini for a survey. Sourced from riskscore only — never projecthealthscore. */
 export async function captureSurveyHealthContext(projectId: number): Promise<SurveyHealthContext> {
   const riskScore = await getLatestRiskScoreForProject(projectId);
@@ -85,10 +117,12 @@ export async function captureSurveyHealthContext(projectId: number): Promise<Sur
 
   const previousSnapshotId = await getPreviousSnapshotId(projectId, riskScore.project_snapshot_id);
   const previousRiskScore = previousSnapshotId ? await getRiskScoreBySnapshotId(previousSnapshotId) : null;
+  const breakdown = await captureBreakdownIfEnabled(riskScore.project_snapshot_id);
 
   return {
     capturedAt: riskScore.created_at,
     overallScore: riskScore.overall_score,
+    breakdown,
     scores: {
       security: riskScore.security_score,
       reliability: riskScore.reliability_score,

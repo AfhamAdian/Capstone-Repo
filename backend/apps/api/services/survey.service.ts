@@ -33,7 +33,6 @@ import { captureSurveyHealthContext } from '../database/survey-health-context.js
 import { generateQualityQuestions } from './survey-question-generation.service.js';
 import { publicSurveyUrlFor } from './survey-dispatch.service.js';
 import { broadcastSurveyLink } from '@libs/notifications/index.js';
-import { isLevel1 } from '../utils/requester-role.js';
 import { ForbiddenError } from '../utils/errors.js';
 import { periodMonthString } from '../utils/period-month.js';
 import { env } from '../config/env.js';
@@ -223,13 +222,10 @@ export class SurveyService {
   }
 
   /**
-   * Level-1 (CEO/CTO) question editing before dispatch.
-   * Questions freeze once the shared link has been broadcast.
+   * Admin (CEO/CTO) question editing before dispatch - access already enforced by
+   * requireSurveyAdmin at the route level. Questions freeze once the shared link has been broadcast.
    */
-  async editQuestions(surveyId: number, questions: GeneratedSurveyQuestion[], requesterRole: string | null): Promise<void> {
-    if (!isLevel1(requesterRole)) {
-      throw new ForbiddenError('Only level-1 users (CEO/CTO) can edit survey questions');
-    }
+  async editQuestions(surveyId: number, questions: GeneratedSurveyQuestion[]): Promise<void> {
     const survey = await getSurveyById(surveyId);
     if (!survey) {
       throw new SurveyNotFoundError(`Survey ${surveyId} not found`);

@@ -72,10 +72,10 @@ const frontendOrigin = process.env.FRONTEND_ORIGIN ?? 'http://localhost:5173';
 
 // Connector credentials (GitHub/Jira/SonarQube) live per-project in projecttoolintegration.config, not in env.
 
-// Email (Gmail SMTP via Nodemailer) + frontend URLs used in public links.
-const smtpUser = process.env.SMTP_USER;
-const smtpPass = process.env.SMTP_PASS;
-const smtpFrom = process.env.SMTP_FROM ?? smtpUser;
+// Email via Brevo HTTP API.
+const brevoApiKey = process.env.BREVO_API_KEY;
+// Must be a Brevo-verified sender. Format: "Name <email@example.com>" or a bare email.
+const emailFrom = process.env.EMAIL_FROM ?? 'Pulse <no-reply@pulse.app>';
 const defaultFrontendUrl = nodeEnv === 'production'
   ? 'https://capstone-repo.vercel.app'
   : 'http://localhost:5173';
@@ -216,9 +216,8 @@ export const env = {
   isActionRerankConfigured: Boolean(pineconeApiKey),
   isSemanticSearchConfigured: Boolean(geminiApiKey),
   frontendOrigin,
-  smtpUser,
-  smtpPass,
-  smtpFrom,
+  brevoApiKey,
+  emailFrom,
   frontendUrl,
   surveyFormBaseUrl,
   geminiApiKey,

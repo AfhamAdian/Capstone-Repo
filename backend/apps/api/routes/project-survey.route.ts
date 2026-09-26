@@ -12,27 +12,28 @@ import {
   getSurveySchedule,
   getPendingSurvey,
 } from '../controllers/survey.controller.js';
+import { requireSurveyAdmin } from '../middlewares/survey-auth.middleware.js';
 import { asyncHandler } from '../utils/async-handler.js';
 
 export const projectSurveyRouter = Router({ mergeParams: true });
 
-/** POST /api/v1/projects/:projectId/surveys/generate-questions */
-projectSurveyRouter.post('/surveys/generate-questions', asyncHandler(generateSurveyQuestions));
+/** POST /api/v1/projects/:projectId/surveys/generate-questions - admin only */
+projectSurveyRouter.post('/surveys/generate-questions', ...requireSurveyAdmin, asyncHandler(generateSurveyQuestions));
 
-/** POST /api/v1/projects/:projectId/surveys/send-now */
-projectSurveyRouter.post('/surveys/send-now', asyncHandler(sendSurveyNow));
+/** POST /api/v1/projects/:projectId/surveys/send-now - admin only */
+projectSurveyRouter.post('/surveys/send-now', ...requireSurveyAdmin, asyncHandler(sendSurveyNow));
 
-/** POST /api/v1/projects/:projectId/surveys */
-projectSurveyRouter.post('/surveys', asyncHandler(sendSurvey));
+/** POST /api/v1/projects/:projectId/surveys - admin only */
+projectSurveyRouter.post('/surveys', ...requireSurveyAdmin, asyncHandler(sendSurvey));
 
-/** GET /api/v1/projects/:projectId/surveys */
-projectSurveyRouter.get('/surveys', asyncHandler(listProjectSurveys));
+/** GET /api/v1/projects/:projectId/surveys - admin only */
+projectSurveyRouter.get('/surveys', ...requireSurveyAdmin, asyncHandler(listProjectSurveys));
 
-/** GET /api/v1/projects/:projectId/surveys/quota */
-projectSurveyRouter.get('/surveys/quota', asyncHandler(getSurveyQuota));
+/** GET /api/v1/projects/:projectId/surveys/quota - admin only */
+projectSurveyRouter.get('/surveys/quota', ...requireSurveyAdmin, asyncHandler(getSurveyQuota));
 
-/** GET /api/v1/projects/:projectId/surveys/schedule */
-projectSurveyRouter.get('/surveys/schedule', asyncHandler(getSurveySchedule));
+/** GET /api/v1/projects/:projectId/surveys/schedule - admin only */
+projectSurveyRouter.get('/surveys/schedule', ...requireSurveyAdmin, asyncHandler(getSurveySchedule));
 
-/** GET /api/v1/projects/:projectId/pending-survey */
-projectSurveyRouter.get('/pending-survey', asyncHandler(getPendingSurvey));
+/** GET /api/v1/projects/:projectId/pending-survey - admin only */
+projectSurveyRouter.get('/pending-survey', ...requireSurveyAdmin, asyncHandler(getPendingSurvey));

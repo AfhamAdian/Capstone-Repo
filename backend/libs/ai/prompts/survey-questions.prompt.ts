@@ -65,6 +65,22 @@ export function formatSurveyIncidents(incidents?: SurveyIncidentSignals | null):
   return lines;
 }
 
+/** Per-category raw metric breakdown (score, weight, raw field values), same data the dashboard's score-breakdown modal shows. No trend here - trend is only tracked per-category score. */
+function formatSurveyBreakdown(breakdown?: SurveyHealthContext['breakdown']): string[] {
+  if (!breakdown) return [];
+  const lines: string[] = [];
+  for (const [category, signals] of Object.entries(breakdown)) {
+    for (const s of signals ?? []) {
+      if (s.score === null) continue;
+      const values = s.metricFields.map((field, i) => `${field}=${s.metricValues[i]}`).join(', ');
+      lines.push(
+        `[${category}] ${s.label}: score ${s.score}/100 (weight ${Math.round(s.weight * 100)}%)${values ? ` — raw: ${values}` : ''}`,
+      );
+    }
+  }
+  return lines;
+}
+
 const TREND_PHRASES: Record<CategoryTrend['label'], string> = {
   steady: 'steady',
   gradual_increase: 'gradually improving',
@@ -96,6 +112,11 @@ export function formatSurveyHealthContext(context?: SurveyHealthContext): string
       ? `\nRecent incidents from the last sync (ask about these situations, not generic mood):\n${incidents.map((line) => `- ${line}`).join('\n')}`
       : '';
   const trend = context.trend;
+  const breakdownLines = formatSurveyBreakdown(context.breakdown);
+  const breakdownBlock =
+    breakdownLines.length > 0
+      ? `\nDetailed metric breakdown by category (use to ground questions in specific findings, not just overall scores):\n${breakdownLines.map((line) => `- ${line}`).join('\n')}`
+      : '';
   return `Project health context captured at ${context.capturedAt}:
 - Overall: ${score(context.overallScore)}${trendSuffix(trend?.overall)}
 - Security: ${score(context.scores.security)}${trendSuffix(trend?.security)}
@@ -104,7 +125,7 @@ export function formatSurveyHealthContext(context?: SurveyHealthContext): string
 - CI/CD & deployment health: ${score(context.scores.cicdDeploymentHealth)}${trendSuffix(trend?.cicdDeploymentHealth)}
 - Team health: ${score(context.scores.teamHealth)}${trendSuffix(trend?.teamHealth)}
 - Engineering process: ${score(context.scores.engineeringProcess)}${trendSuffix(trend?.engineeringProcess)}
-- Planning & execution: ${score(context.scores.planningExecution)}${trendSuffix(trend?.planningExecution)}${incidentBlock}`;
+- Planning & execution: ${score(context.scores.planningExecution)}${trendSuffix(trend?.planningExecution)}${incidentBlock}${breakdownBlock}`;
 }
 
 export function buildSurveyQuestionsPrompt(input: GenerateSurveyQuestionsInput): string {

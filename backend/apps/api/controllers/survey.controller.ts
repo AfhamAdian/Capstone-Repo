@@ -13,8 +13,6 @@ import {
   SurveyValidationError,
   type SurveyLifecycleAction,
 } from '../services/survey.service.js';
-import { assertProjectAccess } from '../services/authorization.service.js';
-import { getRequesterRole, isLevel1 } from '../utils/requester-role.js';
 import { getSurveyById, type SurveyStatus } from '../database/survey.js';
 import { env } from '../config/env.js';
 
@@ -51,7 +49,6 @@ export async function generateSurveyQuestions(request: Request, response: Respon
   }
 
   try {
-    await assertProjectAccess(projectId, request);
     const result = await surveyService.generateQuestions(projectId, trigger, customGuidance, {
       force: force === true,
     });
@@ -93,7 +90,6 @@ export async function sendSurvey(request: Request, response: Response): Promise<
   }
 
   try {
-    await assertProjectAccess(projectId, request);
     const result = await surveyService.createAndSendSurvey(projectId, {
       surveyId: typeof surveyId === 'number' ? surveyId : undefined,
       trigger,
@@ -133,7 +129,6 @@ export async function sendSurveyNow(request: Request, response: Response): Promi
   const { trigger, customGuidance } = (request.body ?? {}) as { trigger?: string; customGuidance?: string };
 
   try {
-    await assertProjectAccess(projectId, request);
     const result = await surveyService.sendNow(projectId, { trigger, customGuidance });
     response.status(200).json(result);
   } catch (error) {
@@ -153,7 +148,6 @@ export async function listProjectSurveys(request: Request, response: Response): 
   if (projectId === null) return;
 
   try {
-    await assertProjectAccess(projectId, request);
     const surveys = await surveyService.listForProject(projectId);
     response.status(200).json({ surveys });
   } catch (error) {
@@ -169,10 +163,6 @@ export async function listProjectSurveys(request: Request, response: Response): 
 /** GET /api/v1/surveys?projectId=&status=&q= */
 export async function listGlobalSurveys(request: Request, response: Response): Promise<void> {
   try {
-    if (!isLevel1(getRequesterRole(request))) {
-      response.status(403).json({ message: 'Level-1 access is required to list organization surveys' });
-      return;
-    }
     const { projectId, status, q } = request.query as { projectId?: string; status?: string; q?: string };
     const surveys = await surveyService.listGlobal({
       projectId: projectId ? Number(projectId) : undefined,
@@ -200,7 +190,6 @@ export async function getSurveyDetail(request: Request, response: Response): Pro
       response.status(404).json({ message: 'Survey not found' });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
     const detail = await surveyService.getDetail(surveyId);
     if (!detail) {
       response.status(404).json({ message: 'Survey not found' });
@@ -219,7 +208,8 @@ export async function getSurveyDetail(request: Request, response: Response): Pro
 
 /**
  * PATCH /api/v1/surveys/:surveyId/questions
- * Level-1 (CEO/CTO) question editing. Blocked once the survey has been sent.
+ * Admin (CEO/CTO) question editing - enforced by requireSurveyAdmin at the route level.
+ * Blocked once the survey has been sent.
  */
 export async function updateSurveyQuestions(request: Request, response: Response): Promise<void> {
   const surveyId = Number(request.params.surveyId);
@@ -240,10 +230,8 @@ export async function updateSurveyQuestions(request: Request, response: Response
       response.status(404).json({ message: `Survey ${surveyId} not found` });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
 
-    const requesterRole = getRequesterRole(request);
-    await surveyService.editQuestions(surveyId, questions as GeneratedSurveyQuestion[], requesterRole);
+    await surveyService.editQuestions(surveyId, questions as GeneratedSurveyQuestion[]);
     response.status(200).json({ message: 'Survey questions updated' });
   } catch (error) {
     if (error instanceof ForbiddenError) {
@@ -281,7 +269,6 @@ export async function completeSurvey(request: Request, response: Response): Prom
       response.status(404).json({ message: `Survey ${surveyId} not found` });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
 
     await surveyService.completeSurvey(surveyId);
     response.status(200).json({ message: 'Survey closed; scoring queued' });
@@ -317,7 +304,6 @@ export async function closeSurveyForm(request: Request, response: Response): Pro
       response.status(404).json({ message: `Survey ${surveyId} not found` });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
     if (!['active', 'closed', 'failed'].includes(survey.status)) {
       response.status(409).json({ message: 'Only an active, closed, or failed survey can be scored' });
       return;
@@ -357,7 +343,6 @@ export async function remindSurveyForm(request: Request, response: Response): Pr
       response.status(404).json({ message: `Survey ${surveyId} not found` });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
     const result = await surveyService.remindActiveSurvey(surveyId);
     response.status(200).json({ message: 'Reminder posted to team channels', ...result });
   } catch (error) {
@@ -397,7 +382,6 @@ export async function changeSurveyLifecycle(request: Request, response: Response
       response.status(404).json({ message: `Survey ${surveyId} not found` });
       return;
     }
-    await assertProjectAccess(survey.project_id, request);
     await surveyService.changeLifecycle(surveyId, action);
     response.status(200).json({ message: `Survey ${action} applied` });
   } catch (error) {

@@ -4,6 +4,8 @@
  * implementation (Gemini today) can be swapped via client-factory.ts.
  */
 
+import type { ScoreBreakdownSignal } from '@libs/risk-engines/types.js';
+
 /** The 7 rubric buckets that scoring is fixed to — mirrors the risk-engine's own categories (riskscore table). */
 export type SurveyQuestionCategory =
   | 'security' | 'reliability' | 'maintainability' | 'cicdDeploymentHealth' | 'teamHealth' | 'engineeringProcess' | 'planningExecution';
@@ -60,6 +62,11 @@ export interface SurveyHealthContext {
   source: 'risk_score' | 'unavailable';
   /** Last-cycle delivery/CI facts. Optional so older stored surveys still parse. */
   incidents?: SurveyIncidentSignals | null;
+  /** Per-category raw metric breakdown (score, weight, raw field values) for the snapshot
+   *  the scores above came from - the same data the dashboard's score-breakdown modal shows.
+   *  No trend/delta here; trend is only tracked per-category above. Optional so older stored
+   *  surveys still parse, and omitted when METRICS_IN_SURVEY is off or the breakdown fetch fails. */
+  breakdown?: Partial<Record<SurveyQuestionCategory, ScoreBreakdownSignal[]>>;
   /** Movement vs the previous sync's risk score. Optional - omitted when there's no prior snapshot to compare against. */
   trend?: {
     previousCapturedAt: string | null;

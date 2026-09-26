@@ -197,3 +197,31 @@ export type RiskResult = {
   level: "LOW" | "MEDIUM" | "HIGH";
   weights: RiskWeight[];
 };
+
+/** The 7 health-score types this feature covers - excludes RiskType.BLOCKERS, the legacy
+ *  survey-rubric score that isn't part of the dashboard's health-score model. */
+export type HealthScoreType = Exclude<RiskType, RiskType.BLOCKERS>;
+
+export type ScoreBreakdownSignal = {
+  key: string;
+  label: string;
+  /** The 0..100 score this metric contributed, before weighting. Null if the strategy had no
+   *  usable value for it in this snapshot (so it was excluded and renormalized around). */
+  score: number | null;
+  /** This signal's share of the score's total weight (0..1), after renormalizing around
+   *  whichever signals actually had data for this snapshot. */
+  weight: number;
+  /** Raw input field name(s) (from the score's typed metrics input) this signal is derived
+   *  from - e.g. "vulnerability density" comes from two raw fields, most signals from one. */
+  metricFields: string[];
+  /** Raw values for metricFields, in the same order, straight from this snapshot's stored
+   *  connector data - undefined/omitted fields mean that tool wasn't synced for this snapshot. */
+  metricValues: Array<number | string | boolean | null | undefined>;
+};
+
+export type ScoreBreakdown = {
+  type: HealthScoreType;
+  score: number;
+  level: "LOW" | "MEDIUM" | "HIGH";
+  signals: ScoreBreakdownSignal[];
+};

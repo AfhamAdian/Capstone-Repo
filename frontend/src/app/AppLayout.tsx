@@ -4,7 +4,7 @@ import { AlertTriangle } from "lucide-react";
 import { AnimatePresence } from "motion/react";
 import { paths, isValidWorkspaceId, resolvePortfolioPath } from "./app-paths";
 import { useWorkspace, type VcsProvider } from "./context/WorkspaceContext";
-import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, listProjects, rateAction, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
+import { createAction, deferActionReview, deleteAction, listActionEffectivenessReviews, listActions, rateAction, setProjectTracked, updateAction, type ActionReviewQueue, type SyncRiskKey } from "./api";
 import { useSurveys } from "./hooks/useSurveys";
 import { useProjectSurveys } from "./hooks/useProjectSurveys";
 import { useBackendProjects, findProjectByPath } from "./hooks/useProjectHealth";
@@ -30,7 +30,6 @@ interface AppContext {
   actions: Action[];
   reviewQueue: ActionReviewQueue | null;
   currentUserId: number | null;
-  trackedIds: Set<string>;
   toggleTracked: (id: string) => void;
   onLogAction: () => void;
   onRatingOpen: () => void;
@@ -60,14 +59,7 @@ export function AppLayout() {
   const [editingAction,setEditingAction]=useState<Action|null>(null);
   const [actions,setActions]=useState<Action[]>([]);
   const [reviewQueue,setReviewQueue]=useState<ActionReviewQueue|null>(null);
-  const {projects,setProjects,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects();
-  // workspace_id per project (company-scoped) from our own API — used to filter the portfolio by workspace.
-  const [workspaceById,setWorkspaceById]=useState<Map<number,number>>(new Map());
-  useEffect(()=>{
-    listProjects()
-      .then(rows=>setWorkspaceById(new Map(rows.filter(r=>r.workspaceId!=null).map(r=>[r.id,r.workspaceId as number]))))
-      .catch(()=>{});
-  },[]);
+  const {projects,setProjects,workspaceById,loading:projectsLoading,error:projectsError,refetch:refetchHealth}=useBackendProjects(projectId??null);
   const activeWorkspaceId=urlWorkspaceId ?? activeWorkspace?.id ?? null;
   const portfolioPath=resolvePortfolioPath(activeWorkspaceId);
   // Keep the remembered workspace in sync with the URL; look up its name/vcs from the backend list.
@@ -82,15 +74,16 @@ export function AppLayout() {
       membersCount:0,
     });
   },[urlWorkspaceId,activeWorkspace,setActiveWorkspace,backendWorkspaces]);
-  const [trackedIds,setTrackedIds]=useState<Set<string>>(new Set());
-  useEffect(()=>{
-    if(projects.length===0) return;
-    setTrackedIds(prev=>{
-      if(prev.size>0) return prev;
-      return new Set(projects.map(p=>p.id));
+  // Tracked is a persisted per-project flag; flip optimistically and revert if the API call fails.
+  const toggleTracked=useCallback((id:string)=>{
+    const proj=projects.find(p=>p.id===id);
+    if(!proj?.backendProjectId) return;
+    const next=!proj.tracked;
+    setProjects(prev=>prev.map(p=>p.id===id?{...p,tracked:next}:p));
+    void setProjectTracked(Number(proj.backendProjectId),next).catch(()=>{
+      setProjects(prev=>prev.map(p=>p.id===id?{...p,tracked:!next}:p));
     });
-  },[projects]);
-  const toggleTracked=(id:string)=>setTrackedIds(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;});
+  },[projects,setProjects]);
   const updateProjectRisk=useCallback((projectId:string,riskScore?:number,riskScores?:Partial<Record<SyncRiskKey,number|null>>)=>{
     setProjects(prev=>prev.map(p=>{
       if(p.id!==projectId) return p;
@@ -108,7 +101,7 @@ export function AppLayout() {
       return {...p,subscores,score:riskScore,scoreTrend:riskScore-p.score};
     }));
     void refetchHealth({ silent: true });
-  },[refetchHealth]);
+  },[refetchHealth,setProjects]);
   const refreshActions=useCallback(async()=>{
     const rows=await listActions();
     setActions(rows);
@@ -154,11 +147,11 @@ export function AppLayout() {
         onViewActions={()=>navigate(paths.globalActions)}
         onViewSurveys={()=>navigate(paths.globalSurveys)}
         onRatingOpen={()=>setRatingOpen(true)}
-        trackedIds={trackedIds} onToggleTracked={toggleTracked}
+        onToggleTracked={toggleTracked}
         onSyncComplete={updateProjectRisk}
       />
     );
-  } else if(projectsError && projects.length===0){
+  } else if(projectsError){
     content = (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center max-w-md">
@@ -171,7 +164,7 @@ export function AppLayout() {
     );
   } else {
     const context: AppContext = {
-      projects, actions, reviewQueue, currentUserId:user?.id??null, trackedIds, toggleTracked,
+      projects, actions, reviewQueue, currentUserId:user?.id??null, toggleTracked,
       onLogAction: ()=>setLogOpen(true),
       onRatingOpen: ()=>setRatingOpen(true),
       onRateAction: handleRateAction,
@@ -209,7 +202,7 @@ export function PortfolioEntry() {
   const {workspaceId:urlWorkspaceId}=useParams();
   const {activeWorkspace,backendWorkspaces}=useWorkspace();
   const navigate=useNavigate();
-  const {projects,reviewQueue,trackedIds,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
+  const {projects,reviewQueue,toggleTracked,onLogAction,onRatingOpen,onSyncComplete,workspaceById,isAdmin}=useAppContext();
   if(!isValidWorkspaceId(urlWorkspaceId)){
     return <Navigate to={resolvePortfolioPath(activeWorkspace?.id)} replace/>;
   }
@@ -223,7 +216,7 @@ export function PortfolioEntry() {
       onViewActions={()=>navigate(paths.globalActions)}
       onViewSurveys={()=>navigate(paths.globalSurveys)}
       onRatingOpen={onRatingOpen}
-      trackedIds={trackedIds} onToggleTracked={toggleTracked}
+      onToggleTracked={toggleTracked}
       onAddProject={()=>navigate(paths.addProject(wsId))} isAdmin={isAdmin}
       workspaceName={workspaceName} onBackToWorkspaces={()=>navigate(paths.workspaces)}
       onSyncComplete={onSyncComplete}

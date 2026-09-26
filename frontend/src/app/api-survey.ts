@@ -154,26 +154,6 @@ export interface SubmittedAnswer {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-interface RequesterContext {
-  role?: string | null;
-  userId?: number | null;
-}
-
-/**
- * TEMPORARY: there's no login/session system in this frontend yet, so there's
- * no real role or user id to send. The backend's project-scoped checks accept
- * a "level1" role as a bypass (see backend/apps/api/src/services/authorization.service.ts),
- * so every call defaults to that until real auth exists. Replace this - and
- * only this - once a session is available.
- */
-const DEMO_REQUESTER_ROLE = "level1";
-
-function requesterHeaders(ctx?: RequesterContext): Record<string, string> {
-  const headers: Record<string, string> = { "x-user-role": ctx?.role ?? DEMO_REQUESTER_ROLE };
-  if (ctx?.userId != null) headers["x-user-id"] = String(ctx.userId);
-  return headers;
-}
-
 function readApiError(body: unknown, status: number): string {
   if (!body || typeof body !== "object") return `Request failed (${status})`;
   const record = body as Record<string, unknown>;
@@ -200,9 +180,9 @@ function readApiError(body: unknown, status: number): string {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...requesterHeaders(),
       ...(init?.headers ?? {}),
     },
   });
@@ -220,12 +200,11 @@ export async function generateSurveyQuestions(
   projectId: string,
   trigger: string,
   customGuidance: string | undefined,
-  ctx?: RequesterContext,
   force = false,
 ): Promise<{ surveyId: number; questions: ScoredSurveyQuestion[]; scheduledSendAt: string }> {
   return request(
     `/projects/${projectId}/surveys/generate-questions`,
-    { method: "POST", headers: requesterHeaders(ctx), body: JSON.stringify({ trigger, customGuidance, force }) },
+    { method: "POST", body: JSON.stringify({ trigger, customGuidance, force }) },
   );
 }
 
@@ -234,13 +213,11 @@ export async function sendSurvey(
   trigger: string,
   customGuidance: string | undefined,
   questions: GeneratedSurveyQuestion[],
-  ctx?: RequesterContext,
   targetCount?: number,
   surveyId?: number,
 ): Promise<{ surveyId: number }> {
   return request(`/projects/${projectId}/surveys`, {
     method: "POST",
-    headers: requesterHeaders(ctx),
     body: JSON.stringify({ trigger, customGuidance, questions, targetCount, surveyId }),
   });
 }
@@ -260,11 +237,9 @@ export async function sendSurveyNow(
   projectId: string,
   trigger?: string,
   customGuidance?: string,
-  ctx?: RequesterContext,
 ): Promise<SendSurveyNowResult> {
   return request(`/projects/${projectId}/surveys/send-now`, {
     method: "POST",
-    headers: requesterHeaders(ctx),
     body: JSON.stringify({ trigger, customGuidance }),
   });
 }
@@ -291,26 +266,24 @@ export async function getSurveyDetail(surveyId: number): Promise<SurveyDetail> {
 export async function updateSurveyQuestions(
   surveyId: number,
   questions: GeneratedSurveyQuestion[],
-  ctx?: RequesterContext,
 ): Promise<void> {
   await request(`/surveys/${surveyId}/questions`, {
     method: "PATCH",
-    headers: requesterHeaders(ctx),
     body: JSON.stringify({ questions }),
   });
 }
 
-export async function completeSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
-  await request(`/surveys/${surveyId}/complete`, { method: "PATCH", headers: requesterHeaders(ctx) });
+export async function completeSurvey(surveyId: number): Promise<void> {
+  await request(`/surveys/${surveyId}/complete`, { method: "PATCH" });
 }
 
 /** Closes an active public form and queues background AI scoring. */
-export async function closeSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
-  await request(`/surveys/${surveyId}/close`, { method: "POST", headers: requesterHeaders(ctx) });
+export async function closeSurvey(surveyId: number): Promise<void> {
+  await request(`/surveys/${surveyId}/close`, { method: "POST" });
 }
 
-export async function remindSurvey(surveyId: number, ctx?: RequesterContext): Promise<void> {
-  await request(`/surveys/${surveyId}/remind`, { method: "POST", headers: requesterHeaders(ctx) });
+export async function remindSurvey(surveyId: number): Promise<void> {
+  await request(`/surveys/${surveyId}/remind`, { method: "POST" });
 }
 
 export async function getSurveyQuota(projectId: string): Promise<SurveyQuota> {
@@ -329,11 +302,9 @@ export async function getPendingSurvey(projectId: string): Promise<PendingSurvey
 export async function changeSurveyLifecycle(
   surveyId: number,
   action: "pause" | "resume" | "retry" | "cancel" | "close",
-  ctx?: RequesterContext,
 ): Promise<void> {
   await request(`/surveys/${surveyId}/lifecycle`, {
     method: "PATCH",
-    headers: requesterHeaders(ctx),
     body: JSON.stringify({ action }),
   });
 }
