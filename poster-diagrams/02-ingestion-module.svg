@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1290" viewBox="0 0 1000 1290">
+<rect width="100%" height="100%" fill="white"/>
+<text x="500.0" y="52" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#183047">Ingestion: From Tools to Health Scores</text>
+<text x="500.0" y="94" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Collect, organize, and interpret engineering data</text>
+<polyline points="48,125 952,125" fill="none" stroke="#e2e8ef" stroke-width="2" stroke-linejoin="round"/>
+<rect x="210" y="165" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="201.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Start a sync</text>
+<text x="500.0" y="236.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Manual request or scheduled update</text>
+<rect x="210" y="310" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="334.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Load connected tools</text>
+<text x="500.0" y="369.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">GitHub / GitLab · Jira</text>
+<text x="500.0" y="393.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">SonarQube · GitHub Actions</text>
+<polyline points="500,270 500,310" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,310 495.21537912477646,300.0950818741206 504.78462087522354,300.0950818741206" fill="#718396"/>
+<rect x="210" y="455" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="491.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Collect metrics in parallel</text>
+<text x="500.0" y="526.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Each connector reads its tool’s data</text>
+<polyline points="500,415 500,455" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,455 495.21537912477646,445.0950818741206 504.78462087522354,445.0950818741206" fill="#718396"/>
+<rect x="210" y="600" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="636.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Organize and save the data</text>
+<text x="500.0" y="671.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Standard metrics in a dated project snapshot</text>
+<polyline points="500,560 500,600" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,600 495.21537912477646,590.0950818741205 504.78462087522354,590.0950818741205" fill="#718396"/>
+<rect x="210" y="745" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="769.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Calculate seven health scores</text>
+<text x="500.0" y="804.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Weight the available signals</text>
+<text x="500.0" y="828.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Adjust weights when signals are missing</text>
+<polyline points="500,705 500,745" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,745 495.21537912477646,735.0950818741205 504.78462087522354,735.0950818741205" fill="#718396"/>
+<rect x="210" y="890" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="926.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Calculate overall health</text>
+<text x="500.0" y="961.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Average the available category scores</text>
+<polyline points="500,850 500,890" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,890 495.21537912477646,880.0950818741205 504.78462087522354,880.0950818741205" fill="#718396"/>
+<rect x="210" y="1035" width="580" height="105" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="500.0" y="1071.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Show scores and trends</text>
+<text x="500.0" y="1106.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Update the dashboard and health history</text>
+<polyline points="500,995 500,1035" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,1035 495.21537912477646,1025.0950818741205 504.78462087522354,1025.0950818741205" fill="#718396"/>
+<polyline points="790,1087 880,1087 880,216 790,216" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="790,216 799.9049181258795,211.21537912477646 799.9049181258795,220.78462087522354" fill="#718396"/>
+<text x="915" y="660" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Repeat</text>
+<text x="500" y="1210" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="400" fill="#536577">Health scores and trends also guide survey questions.</text>
+</svg>

@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1110" viewBox="0 0 1700 1110">
+<rect width="100%" height="100%" fill="white"/>
+<text x="850.0" y="52" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#183047">Survey Module — System Design</text>
+<text x="850.0" y="94" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Health-aware question generation with anonymous feedback and independent analysis</text>
+<polyline points="48,125 1652,125" fill="none" stroke="#e2e8ef" stroke-width="2" stroke-linejoin="round"/>
+<rect x="35" y="170" width="385" height="730" rx="16" fill="#f3faf7" stroke="#d8e1ea"/>
+<text x="227.5" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#3b9180">CONTEXT &amp; CONTROL</text>
+<rect x="475" y="170" width="570" height="730" rx="16" fill="#f3faf7" stroke="#d8e1ea"/>
+<text x="760.0" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#3b9180">SURVEY SERVICES</text>
+<rect x="1100" y="170" width="565" height="730" rx="16" fill="#f3faf7" stroke="#d8e1ea"/>
+<text x="1382.5" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#3b9180">PARTICIPATION &amp; ANALYSIS</text>
+<rect x="65" y="240" width="325" height="105" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="227.5" y="264.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Survey triggers</text>
+<text x="227.5" y="299.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Manual request</text>
+<text x="227.5" y="323.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Monthly pulse scheduler</text>
+<rect x="65" y="435" width="325" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="227.5" y="468.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Project health context</text>
+<text x="227.5" y="503.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Health scores, trends, raw metrics</text>
+<polyline points="79,445 376,445" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="79,525 376,525" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<rect x="65" y="670" width="325" height="120" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="227.5" y="701.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Admin controls</text>
+<text x="227.5" y="736.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Review and edit questions</text>
+<text x="227.5" y="760.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Send, pause, resume, or close</text>
+<rect x="515" y="240" width="490" height="120" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="760.0" y="271.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">AI question pipeline</text>
+<text x="760.0" y="306.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Gemini generation → deduplication</text>
+<text x="760.0" y="330.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Quality scoring → balanced selection</text>
+<rect x="515" y="435" width="490" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="760.0" y="468.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Survey store</text>
+<text x="760.0" y="503.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Questions, captured context, lifecycle, schedule</text>
+<polyline points="529,445 991,445" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="529,525 991,525" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<rect x="515" y="650" width="490" height="125" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="760.0" y="672.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Distribution service</text>
+<text x="760.0" y="707.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Background delivery jobs</text>
+<text x="760.0" y="731.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Create one shared link per survey</text>
+<text x="760.0" y="755.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Track delivery separately from responses</text>
+<polyline points="390,292 515,292" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="515,292 505.0950818741206,296.78462087522354 505.0950818741206,287.21537912477646" fill="#718396"/>
+<text x="452" y="270" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Start</text>
+<polyline points="390,485 448,485 448,325 515,325" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="515,325 505.0950818741206,329.78462087522354 505.0950818741206,320.21537912477646" fill="#718396"/>
+<polyline points="760,360 760,435" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="760,435 755.2153791247765,425.0950818741206 764.7846208752235,425.0950818741206" fill="#718396"/>
+<text x="814" y="399" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Save draft</text>
+<polyline points="390,715 450,715 450,510 515,510" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="515,510 505.0950818741206,514.7846208752235 505.0950818741206,505.21537912477646" fill="#718396"/>
+<polyline points="760,535 760,650" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="760,650 755.2153791247765,640.0950818741205 764.7846208752235,640.0950818741205" fill="#718396"/>
+<text x="760" y="590" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Send now or when due</text>
+<rect x="1140" y="650" width="485" height="125" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="1382.5" y="684.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Delivery channels &amp; developers</text>
+<text x="1382.5" y="719.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Email · Slack · Telegram · Discord</text>
+<text x="1382.5" y="743.0" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Developers answer through the public link</text>
+<polyline points="1005,712 1140,712" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1140,712 1130.0950818741205,716.7846208752235 1130.0950818741205,707.2153791247765" fill="#718396"/>
+<text x="1072" y="691" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Shared link</text>
+<rect x="1140" y="435" width="485" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="1382.5" y="468.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Anonymous response store</text>
+<text x="1382.5" y="503.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Answers saved without respondent identity</text>
+<polyline points="1154,445 1611,445" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1154,525 1611,525" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1382,650 1382,535" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1382,535 1386.7846208752235,544.9049181258795 1377.2153791247765,544.9049181258795" fill="#718396"/>
+<text x="1460" y="590" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Submit answers</text>
+<rect x="1140" y="240" width="485" height="120" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="1382.5" y="271.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">AI survey analysis</text>
+<text x="1382.5" y="306.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">After closure: analyze collected responses</text>
+<text x="1382.5" y="330.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Produce scores, themes, and summaries</text>
+<polyline points="1382,435 1382,360" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1382,360 1386.7846208752235,369.9049181258794 1377.2153791247765,369.9049181258794" fill="#718396"/>
+<text x="1445" y="399" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Responses</text>
+<polyline points="1005,465 1070,465 1070,300 1140,300" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1140,300 1130.0950818741205,304.78462087522354 1130.0950818741205,295.21537912477646" fill="#718396"/>
+<text x="1070" y="280" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Context</text>
+<rect x="515" y="950" width="490" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="760.0" y="983.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Survey insight store</text>
+<text x="760.0" y="1018.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Separate survey assessments and findings</text>
+<polyline points="529,960 991,960" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="529,1040 991,1040" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<rect x="1140" y="950" width="485" height="100" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="1382.5" y="983.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Survey results dashboard</text>
+<text x="1382.5" y="1018.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Category assessments, themes, summaries</text>
+<polyline points="1625,300 1685,300 1685,925 760,925 760,950" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="760,950 755.2153791247765,940.0950818741205 764.7846208752235,940.0950818741205" fill="#718396"/>
+<polyline points="1005,1000 1140,1000" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1140,1000 1130.0950818741205,1004.7846208752235 1130.0950818741205,995.2153791247765" fill="#718396"/>
+<text x="1070" y="978" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Read</text>
+<text x="850.0" y="1075" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Survey analysis does not overwrite tool-based health scores. No scored insight is produced without responses.</text>
+</svg>

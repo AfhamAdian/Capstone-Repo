@@ -2,7 +2,21 @@ import { describe, it, expect } from 'vitest';
 import { generateQualityQuestions } from './survey-question-generation.service.js';
 import type { AiClient, GeneratedSurveyQuestion, QuestionScore } from '@libs/ai/index.js';
 
-// Relies on the default env values (SURVEY_QUESTION_MIN_SCORE=60, SURVEY_QUESTION_MAX_COUNT=6) - not overridden here.
+// Relies on the default env values (SURVEY_QUESTION_MIN_SCORE=60, SURVEY_QUESTION_MIN_COUNT=5,
+// SURVEY_QUESTION_MAX_COUNT=6) - not overridden here.
+
+const TOPICS = [
+  'sprint delivery confidence',
+  'code review turnaround',
+  'CI pipeline flakiness',
+  'on-call burden lately',
+  'blocked waiting on others',
+  'tooling friction day to day',
+  'onboarding pain points',
+  'meeting load this month',
+  'documentation gaps found',
+  'cross-team handoff delays',
+];
 
 function question(text: string): GeneratedSurveyQuestion {
   return { category: 'delivery', questionText: text, questionType: 'scale' };
@@ -29,17 +43,46 @@ function fakeAiClient(overrides: Partial<AiClient> = {}): AiClient {
 const baseInput = { projectName: 'Acme', trigger: 'test', categories: ['delivery'] };
 
 describe('generateQualityQuestions', () => {
-  it('drops questions scoring below the quality gate', async () => {
-    const questions = [question('A distinct question about delivery risk'), question('A different question about cadence and confidence levels')];
+  it('drops below-gate questions when enough questions pass', async () => {
+    const questions = TOPICS.slice(0, 6).map((t) => question(`Rate your experience with ${t}`));
     const client = fakeAiClient({
       generateSurveyQuestions: async () => questions,
-      scoreSurveyQuestions: async () => [score(90), score(10)],
+      scoreSurveyQuestions: async () => [90, 85, 80, 75, 70, 10].map(score),
     });
 
     const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
 
-    expect(result).toHaveLength(1);
-    expect(result[0]!.score.overall).toBe(90);
+    expect(result).toHaveLength(5);
+    expect(result.every((q) => q.score.overall >= 60)).toBe(true);
+  });
+
+  it('runs another generation round when too few questions pass the gate', async () => {
+    let calls = 0;
+    const client = fakeAiClient({
+      generateSurveyQuestions: async () => {
+        const batch = TOPICS.slice(calls * 3, calls * 3 + 3).map((t) => question(`Rate your experience with ${t}`));
+        calls++;
+        return batch;
+      },
+      scoreSurveyQuestions: async (input) => input.questions.map(() => score(80)),
+    });
+
+    const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
+
+    expect(calls).toBe(2);
+    expect(result).toHaveLength(6);
+  });
+
+  it('tops up to the minimum with the best below-gate questions, ranked after passing ones', async () => {
+    const questions = TOPICS.slice(0, 6).map((t) => question(`Rate your experience with ${t}`));
+    const client = fakeAiClient({
+      generateSurveyQuestions: async () => questions,
+      scoreSurveyQuestions: async () => [90, 70, 50, 40, 30, 20].map(score),
+    });
+
+    const result = await generateQualityQuestions({ aiClient: client, ...baseInput });
+
+    expect(result.map((q) => q.score.overall)).toEqual([90, 70, 50, 40, 30]);
   });
 
   it('deduplicates near-identical questions before scoring', async () => {
@@ -85,19 +128,7 @@ describe('generateQualityQuestions', () => {
   });
 
   it('caps the result at SURVEY_QUESTION_MAX_COUNT (default 6), highest score first', async () => {
-    const topics = [
-      'sprint delivery confidence',
-      'code review turnaround',
-      'CI pipeline flakiness',
-      'on-call burden lately',
-      'blocked waiting on others',
-      'tooling friction day to day',
-      'onboarding pain points',
-      'meeting load this month',
-      'documentation gaps found',
-      'cross-team handoff delays',
-    ];
-    const questions = topics.map((t) => question(`Rate your experience with ${t}`));
+    const questions = TOPICS.map((t) => question(`Rate your experience with ${t}`));
     const scores = questions.map((_, i) => score(61 + i)); // all clear the default min score of 60
     const client = fakeAiClient({
       generateSurveyQuestions: async () => questions,

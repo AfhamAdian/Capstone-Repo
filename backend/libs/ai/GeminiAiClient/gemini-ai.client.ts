@@ -137,7 +137,13 @@ export class GeminiAiClient implements AiClient {
       response = await this.client.models.generateContent({
         model: this.model,
         contents: prompt,
-        config: { responseMimeType: 'application/json' },
+        // High temperature/topP + a fresh seed so Regenerate gives new questions from the same metrics.
+        config: {
+          responseMimeType: 'application/json',
+          temperature: 1.3,
+          topP: 0.95,
+          seed: Math.floor(Math.random() * 2 ** 31),
+        },
       });
     } catch (error) {
       throw describeGeminiError(error, 'question generation');

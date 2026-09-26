@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1430" viewBox="0 0 1000 1430">
+<rect width="100%" height="100%" fill="white"/>
+<text x="500.0" y="52" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#183047">Actions: From Problems to Shared Learning</text>
+<text x="500.0" y="94" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Find past experience, record interventions, and review outcomes</text>
+<polyline points="48,125 952,125" fill="none" stroke="#e2e8ef" stroke-width="2" stroke-linejoin="round"/>
+<rect x="210" y="165" width="580" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="203.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Describe the problem</text>
+<text x="500.0" y="238.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Identify the concern and likely cause</text>
+<rect x="210" y="315" width="580" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="353.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Find similar past actions</text>
+<text x="500.0" y="388.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Keyword search or optional AI Deep Search</text>
+<polyline points="500,275 500,315" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,315 495.21537912477646,305.0950818741206 504.78462087522354,305.0950818741206" fill="#718396"/>
+<rect x="210" y="465" width="580" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="503.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review past experience</text>
+<text x="500.0" y="538.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Read relevant actions and effectiveness ratings</text>
+<polyline points="500,425 500,465" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,465 495.21537912477646,455.0950818741206 504.78462087522354,455.0950818741206" fill="#718396"/>
+<rect x="210" y="615" width="580" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="641.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Take and record action</text>
+<text x="500.0" y="676.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">The team carries out the intervention</text>
+<text x="500.0" y="700.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Save the cause, action, date, and projects</text>
+<polyline points="500,575 500,615" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,615 495.21537912477646,605.0950818741205 504.78462087522354,605.0950818741205" fill="#718396"/>
+<rect x="210" y="765" width="450" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="435.0" y="803.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review the outcome</text>
+<text x="435.0" y="838.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Use observed results to judge effectiveness</text>
+<polyline points="500,725 500,765" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,765 495.21537912477646,755.0950818741205 504.78462087522354,755.0950818741205" fill="#718396"/>
+<polyline points="500,875 500,925" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,925 495.21537912477646,915.0950818741205 504.78462087522354,915.0950818741205" fill="#718396"/>
+<polygon points="500.0,925 650,985.0 500.0,1045 350,985.0" fill="#fff8e9" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="971.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#183047">Ready to</text>
+<text x="500.0" y="998.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#183047">assess?</text>
+<polyline points="500,1045 500,1090" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,1090 495.21537912477646,1080.0950818741205 504.78462087522354,1080.0950818741205" fill="#718396"/>
+<text x="530" y="1065" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Yes</text>
+<rect x="210" y="1090" width="580" height="100" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="1123.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Save effectiveness rating</text>
+<text x="500.0" y="1158.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Team member rates the action from 1 to 5</text>
+<polyline points="650,985 840,985 840,865" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="840,865 844.7846208752235,874.9049181258795 835.2153791247765,874.9049181258795" fill="#718396"/>
+<text x="730" y="964" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">No</text>
+<rect x="720" y="755" width="255" height="110" rx="12" fill="#f7f8fa" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="847.5" y="793.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Set a later review</text>
+<text x="847.5" y="828.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Wait for more evidence</text>
+<polyline points="840,755 840,725 500,725 500,765" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,765 495.21537912477646,755.0950818741205 504.78462087522354,755.0950818741205" fill="#718396"/>
+<polyline points="500,1190 500,1240" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="500,1240 495.21537912477646,1230.0950818741205 504.78462087522354,1230.0950818741205" fill="#718396"/>
+<rect x="210" y="1240" width="580" height="100" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="500.0" y="1273.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Keep searchable action history</text>
+<text x="500.0" y="1308.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Past actions and ratings inform future decisions</text>
+<polyline points="210,1290 105,1290 105,370 210,370" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="210,370 200.09508187412055,374.78462087522354 200.09508187412055,365.21537912477646" fill="#718396"/>
+<text x="500" y="1384" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Pulse supports decisions; the team performs and evaluates the action.</text>
+</svg>
