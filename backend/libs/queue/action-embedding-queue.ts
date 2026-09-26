@@ -22,7 +22,7 @@ export class ActionEmbeddingQueue {
     this.queue = new Queue<ActionEmbeddingJobData>('action-embeddings', {
       connection: {
         url: config.redisUrl,
-        connectTimeout: 2_000,
+        connectTimeout: 10_000,
         enableOfflineQueue: false,
         maxRetriesPerRequest: 1,
         // API producers must fail promptly when Redis is down. A later request
@@ -64,7 +64,7 @@ export class ActionEmbeddingQueue {
     return new Worker<ActionEmbeddingJobData>('action-embeddings', processor, {
       connection: {
         url: this.config.redisUrl,
-        connectTimeout: 2_000,
+        connectTimeout: 10_000,
         maxRetriesPerRequest: null,
       },
       concurrency: this.config.concurrency ?? 4,
