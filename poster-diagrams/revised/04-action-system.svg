@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1110" viewBox="0 0 1700 1110">
+<rect width="100%" height="100%" fill="white"/>
+<text x="850.0" y="52" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#183047">Action Module — System Design</text>
+<text x="850.0" y="94" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">A shared action library with relevance search and human effectiveness review</text>
+<polyline points="48,125 1652,125" fill="none" stroke="#e2e8ef" stroke-width="2" stroke-linejoin="round"/>
+<rect x="35" y="170" width="410" height="715" rx="16" fill="#fffbf3" stroke="#d8e1ea"/>
+<text x="240.0" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#b58a3c">USER INTERFACE</text>
+<rect x="505" y="170" width="670" height="715" rx="16" fill="#fffbf3" stroke="#d8e1ea"/>
+<text x="840.0" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#b58a3c">ACTION SERVICES &amp; DATA</text>
+<rect x="1235" y="170" width="430" height="715" rx="16" fill="#fffbf3" stroke="#d8e1ea"/>
+<text x="1450.0" y="200" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#b58a3c">SEARCH &amp; REVIEW</text>
+<rect x="65" y="240" width="350" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="240.0" y="271.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Action logging</text>
+<text x="240.0" y="306.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Problem · root cause · action taken</text>
+<text x="240.0" y="330.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Date and related projects</text>
+<rect x="65" y="460" width="350" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="240.0" y="491.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Action library &amp; search</text>
+<text x="240.0" y="526.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Keyword matches while typing</text>
+<text x="240.0" y="550.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Optional Deep Search</text>
+<rect x="65" y="680" width="350" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="240.0" y="711.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Effectiveness review</text>
+<text x="240.0" y="746.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Rate results from 1 to 5</text>
+<text x="240.0" y="770.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Or choose a later review date</text>
+<rect x="545" y="240" width="315" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="702.5" y="271.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Action service</text>
+<text x="702.5" y="306.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Validate and save records</text>
+<text x="702.5" y="330.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Enforce access scope</text>
+<rect x="545" y="460" width="590" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="840.0" y="493.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Action store</text>
+<text x="840.0" y="528.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Problems, causes, actions, projects, ratings, review dates</text>
+<polyline points="559,470 1121,470" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="559,550 1121,550" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<rect x="545" y="680" width="315" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="702.5" y="711.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review service</text>
+<text x="702.5" y="746.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Save rating or deferral</text>
+<text x="702.5" y="770.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Update review reminders</text>
+<polyline points="415,300 545,300" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="545,300 535.0950818741205,304.78462087522354 535.0950818741205,295.21537912477646" fill="#718396"/>
+<text x="480" y="278" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Create / edit</text>
+<polyline points="700,360 700,460" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="700,460 695.2153791247765,450.0950818741206 704.7846208752235,450.0950818741206" fill="#718396"/>
+<text x="750" y="409" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Persist</text>
+<polyline points="415,740 545,740" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="545,740 535.0950818741205,744.7846208752235 535.0950818741205,735.2153791247765" fill="#718396"/>
+<text x="480" y="718" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Review</text>
+<polyline points="700,680 700,560" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="700,560 704.7846208752235,569.9049181258795 695.2153791247765,569.9049181258795" fill="#718396"/>
+<text x="750" y="617" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Update</text>
+<polyline points="545,520 415,520" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="415,520 424.9049181258794,515.2153791247765 424.9049181258794,524.7846208752235" fill="#718396"/>
+<text x="480" y="497" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Scoped records</text>
+<rect x="1270" y="240" width="360" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1450.0" y="271.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Deep Search service</text>
+<text x="1450.0" y="306.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Load scoped action candidates</text>
+<text x="1450.0" y="330.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Send query and action text</text>
+<rect x="1270" y="460" width="360" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1450.0" y="491.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">AI relevance ranking</text>
+<text x="1450.0" y="526.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Pinecone reranks action text</text>
+<text x="1450.0" y="550.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Filter and return the best matches</text>
+<polyline points="1135,490 1205,490 1205,300 1270,300" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1270,300 1260.0950818741205,304.78462087522354 1260.0950818741205,295.21537912477646" fill="#718396"/>
+<text x="1204" y="470" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Candidates</text>
+<polyline points="1450,360 1450,460" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1450,460 1445.2153791247765,450.0950818741206 1454.7846208752235,450.0950818741206" fill="#718396"/>
+<polyline points="415,550 470,550 470,405 1450,405 1450,360" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1450,360 1454.7846208752235,369.9049181258794 1445.2153791247765,369.9049181258794" fill="#718396"/>
+<text x="990" y="385" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Deep Search request</text>
+<polyline points="1630,520 1685,520 1685,865 470,865 470,570 415,570" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="415,570 424.9049181258794,565.2153791247765 424.9049181258794,574.7846208752235" fill="#718396"/>
+<text x="1050" y="842" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Ranked matches returned to the action interface</text>
+<rect x="1270" y="680" width="360" height="120" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1450.0" y="711.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review scheduling</text>
+<text x="1450.0" y="746.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Due and deferred actions</text>
+<text x="1450.0" y="770.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Surface reminders in the interface</text>
+<polyline points="1135,535 1205,535 1205,740 1270,740" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1270,740 1260.0950818741205,744.7846208752235 1260.0950818741205,735.2153791247765" fill="#718396"/>
+<rect x="65" y="960" width="1550" height="90" rx="12" fill="#f4f6f8" stroke="#8293a5" stroke-width="1.5"/>
+<text x="840.0" y="988.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Background embedding preparation</text>
+<text x="840.0" y="1023.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Saved action text → queued Gemini embedding job → embedding store (separate from current Deep Search)</text>
+<polyline points="1135,560 1170,560 1170,960" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1170,960 1165.2153791247765,950.0950818741205 1174.7846208752235,950.0950818741205" fill="#718396"/>
+<text x="850.0" y="1075" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">The team performs interventions and judges effectiveness; Pulse stores the history and supports future decisions.</text>
+</svg>

@@ -81,6 +81,47 @@ function formatSurveyBreakdown(breakdown?: SurveyHealthContext['breakdown']): st
   return lines;
 }
 
+export interface ProblemMetric {
+  category: string;
+  label: string;
+  score: number;
+  weight: number;
+  impact: number;
+  raw: string;
+}
+
+const PROBLEM_SCORE_THRESHOLD = 75;
+const MAX_PROBLEM_METRICS = 8;
+
+/** Metrics dragging health down the most, ranked by impact = weight × (100 − score). */
+export function rankProblemMetrics(breakdown?: SurveyHealthContext['breakdown']): ProblemMetric[] {
+  if (!breakdown) return [];
+  const problems: ProblemMetric[] = [];
+  for (const [category, signals] of Object.entries(breakdown)) {
+    for (const s of signals ?? []) {
+      if (s.score === null || s.score >= PROBLEM_SCORE_THRESHOLD) continue;
+      problems.push({
+        category,
+        label: s.label,
+        score: s.score,
+        weight: s.weight,
+        impact: s.weight * (100 - s.score),
+        raw: s.metricFields.map((field, i) => `${field}=${s.metricValues[i]}`).join(', '),
+      });
+    }
+  }
+  return problems.sort((a, b) => b.impact - a.impact).slice(0, MAX_PROBLEM_METRICS);
+}
+
+function formatProblemMetrics(problems: ProblemMetric[]): string {
+  if (problems.length === 0) return '';
+  const lines = problems.map(
+    (p, i) =>
+      `${i + 1}. [${p.category}] ${p.label} — score ${Math.round(p.score)}/100, weight ${Math.round(p.weight * 100)}%${p.raw ? ` (raw: ${p.raw})` : ''}`,
+  );
+  return `\nTop problem metrics, ranked by how much they drag the health score down (these are the problems to probe):\n${lines.join('\n')}`;
+}
+
 const TREND_PHRASES: Record<CategoryTrend['label'], string> = {
   steady: 'steady',
   gradual_increase: 'gradually improving',
@@ -112,10 +153,11 @@ export function formatSurveyHealthContext(context?: SurveyHealthContext): string
       ? `\nRecent incidents from the last sync (ask about these situations, not generic mood):\n${incidents.map((line) => `- ${line}`).join('\n')}`
       : '';
   const trend = context.trend;
+  const problemBlock = formatProblemMetrics(rankProblemMetrics(context.breakdown));
   const breakdownLines = formatSurveyBreakdown(context.breakdown);
   const breakdownBlock =
     breakdownLines.length > 0
-      ? `\nDetailed metric breakdown by category (use to ground questions in specific findings, not just overall scores):\n${breakdownLines.map((line) => `- ${line}`).join('\n')}`
+      ? `\nFull metric breakdown by category (supporting detail):\n${breakdownLines.map((line) => `- ${line}`).join('\n')}`
       : '';
   return `Project health context captured at ${context.capturedAt}:
 - Overall: ${score(context.overallScore)}${trendSuffix(trend?.overall)}
@@ -125,7 +167,7 @@ export function formatSurveyHealthContext(context?: SurveyHealthContext): string
 - CI/CD & deployment health: ${score(context.scores.cicdDeploymentHealth)}${trendSuffix(trend?.cicdDeploymentHealth)}
 - Team health: ${score(context.scores.teamHealth)}${trendSuffix(trend?.teamHealth)}
 - Engineering process: ${score(context.scores.engineeringProcess)}${trendSuffix(trend?.engineeringProcess)}
-- Planning & execution: ${score(context.scores.planningExecution)}${trendSuffix(trend?.planningExecution)}${incidentBlock}${breakdownBlock}`;
+- Planning & execution: ${score(context.scores.planningExecution)}${trendSuffix(trend?.planningExecution)}${problemBlock}${incidentBlock}${breakdownBlock}`;
 }
 
 export function buildSurveyQuestionsPrompt(input: GenerateSurveyQuestionsInput): string {
@@ -138,12 +180,20 @@ Reason this survey is being sent: ${input.trigger}
 ${formatSurveyHealthContext(input.healthContext)}
 ${input.customGuidance ? `\nOptional supplementary guidance from the admin (use only to steer emphasis within a category - the health context above is the primary signal for what to probe): ${input.customGuidance}` : ''}
 
-Generate 6-8 distinct survey questions covering these health categories: ${categories.join(', ')}.
-Use the health context to prioritize weak or declining areas and any listed incidents.
-If an incident is listed for a category (spillover, failed deploys, blocked work, stale PRs, mid-sprint scope changes), ask about that situation rather than a generic morale question.
-Do not mention numeric scores, percentages, people, or ticket/PR identifiers in the questions.
-Do not assume the score is correct — treat incidents as the situation to explore.
-Do not repeat or lightly reword the same underlying question.
+Generate 7-9 distinct survey questions drawn from these health categories: ${categories.join(', ')}.
+
+How to choose what to ask:
+1. Start from the "Top problem metrics" list. Most questions (at least 4, or one per listed problem if fewer) must each target ONE specific problem metric, working from the top of the list down.
+2. For each targeted metric, read its raw values and restate the concrete situation in plain team language, then ask what is causing it or what is getting in the way. Examples of the translation: a high self-merged PR rate becomes "pull requests are often merged without anyone else reviewing them"; many unresolved threads at merge becomes "review comments are still open when code gets merged"; a low sprint completion rate becomes "a lot of planned sprint work doesn't get finished".
+3. Use listed incidents and sharply declining categories to decide emphasis when they reinforce a problem metric.
+4. Spend any remaining questions on other weak or declining categories. Do not spend questions on metrics or categories that are healthy.
+5. If there is no problem-metric list, fall back to the weakest or declining categories and any listed incidents.
+
+Rules for each question:
+- Ask about the situation the metric describes, never about the metric itself: no metric names, field names, scores, percentages, raw numbers, people, or ticket/PR identifiers.
+- Do not assume the metric is correct - asking whether the situation matches the team's experience is valid, and so is asking why it happens.
+- Vary the angle across questions (root cause, blockers, process, tooling, workload, collaboration, priorities) and vary the wording; do not open every question the same way.
+- Do not repeat or lightly reword the same underlying question.
 Each question must be tagged with exactly one category. Default to "text" (free response) questions that ask WHY something is happening, not just how someone feels about it - especially for any category with a listed incident or a declining trend. Use "scale" (1-5 rating) sparingly, only for a quick confidence/sentiment check, not as your default question type; most questions in the survey should be "text".
 Keep questions short, specific, and non-leading - prefer "What's the biggest reason X is happening?" over "How do you feel about X?" Do not ask for names or identifying details - responses are anonymous.
 

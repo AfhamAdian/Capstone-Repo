@@ -111,7 +111,11 @@ function boundedInteger(value: string | undefined, fallback: number, min: number
 
 // Survey feature: AI question quality gate (overall score 0-100) and max questions returned
 const surveyQuestionMinScore = boundedInteger(process.env.SURVEY_QUESTION_MIN_SCORE, 60, 0, 100);
-const surveyQuestionMaxCount = boundedInteger(process.env.SURVEY_QUESTION_MAX_COUNT, 6, 1, 20);
+const surveyQuestionMinCount = boundedInteger(process.env.SURVEY_QUESTION_MIN_COUNT, 5, 1, 20);
+const surveyQuestionMaxCount = Math.max(
+  surveyQuestionMinCount,
+  boundedInteger(process.env.SURVEY_QUESTION_MAX_COUNT, 6, 1, 20),
+);
 
 // One shared monthly pulse per project. Each project gets a randomized send
 // moment inside this window; questions are generated LEAD_DAYS beforehand.
@@ -228,6 +232,7 @@ export const env = {
   telegramChatId,
   discordWebhookUrl,
   surveyQuestionMinScore,
+  surveyQuestionMinCount,
   surveyQuestionMaxCount,
   surveyMonthlyStartDay,
   surveyMonthlyWindowDays,

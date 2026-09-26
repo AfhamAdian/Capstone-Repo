@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1100" viewBox="0 0 1700 1100">
+<rect width="100%" height="100%" fill="white"/>
+<text x="850.0" y="52" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#183047">Pulse — Core Methodology</text>
+<text x="850.0" y="94" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Data ingestion, health scoring, developer surveys, and evidence-based action</text>
+<polyline points="48,125 1652,125" fill="none" stroke="#e2e8ef" stroke-width="2" stroke-linejoin="round"/>
+<rect x="50" y="160" width="490" height="640" rx="16" fill="#f5f8fc" stroke="#d8e1ea"/>
+<text x="295.0" y="190" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#4d77ac">01  DATA INGESTION &amp; HEALTH SCORING</text>
+<rect x="605" y="160" width="490" height="640" rx="16" fill="#f3faf7" stroke="#d8e1ea"/>
+<text x="850.0" y="190" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#3b9180">02  CONTEXT-AWARE SURVEYS</text>
+<rect x="1160" y="160" width="490" height="790" rx="16" fill="#fffbf3" stroke="#d8e1ea"/>
+<text x="1405.0" y="190" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#b58a3c">03  ACTION &amp; EFFECTIVENESS REVIEW</text>
+<rect x="90" y="230" width="410" height="100" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="295.0" y="263.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Engineering tool data</text>
+<text x="295.0" y="298.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Repositories · issues · code quality · CI/CD</text>
+<rect x="90" y="410" width="410" height="110" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="295.0" y="436.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Data ingestion</text>
+<text x="295.0" y="471.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Collect and standardize metrics</text>
+<text x="295.0" y="495.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Maintain project snapshots</text>
+<rect x="90" y="610" width="410" height="130" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="295.0" y="646.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Health score calculation</text>
+<text x="295.0" y="681.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Seven category scores and overall health</text>
+<text x="295.0" y="705.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Track changes over time</text>
+<polyline points="295,330 295,410" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="295,410 290.21537912477646,400.0950818741206 299.78462087522354,400.0950818741206" fill="#718396"/>
+<text x="295" y="370" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Manual or scheduled sync</text>
+<polyline points="295,520 295,610" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="295,610 290.21537912477646,600.0950818741205 299.78462087522354,600.0950818741205" fill="#718396"/>
+<text x="295" y="565" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Available metrics</text>
+<rect x="645" y="230" width="410" height="110" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="850.0" y="256.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">AI survey generation</text>
+<text x="850.0" y="291.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Use health scores, trends, and metrics</text>
+<text x="850.0" y="315.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Generate and select focused questions</text>
+<rect x="645" y="410" width="410" height="110" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="850.0" y="436.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Anonymous survey responses</text>
+<text x="850.0" y="471.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Distribute a shared survey link</text>
+<text x="850.0" y="495.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Collect developer feedback</text>
+<rect x="645" y="610" width="410" height="130" rx="12" fill="#edf8f5" stroke="#3b9180" stroke-width="1.5"/>
+<text x="850.0" y="646.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Survey analysis</text>
+<text x="850.0" y="681.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">AI-generated category assessments,</text>
+<text x="850.0" y="705.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">themes, and summaries</text>
+<polyline points="850,340 850,410" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="850,410 845.2153791247765,400.0950818741206 854.7846208752235,400.0950818741206" fill="#718396"/>
+<text x="850" y="375" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Monthly or on request</text>
+<polyline points="850,520 850,610" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="850,610 845.2153791247765,600.0950818741205 854.7846208752235,600.0950818741205" fill="#718396"/>
+<text x="850" y="565" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Analyze after survey closure</text>
+<polyline points="500,645 570,645 570,285 645,285" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="645,285 635.0950818741205,289.78462087522354 635.0950818741205,280.21537912477646" fill="#718396"/>
+<text x="565" y="835" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="400" fill="#536577">Separate quantitative and qualitative evidence</text>
+<rect x="340" y="875" width="640" height="90" rx="12" fill="#f1f6fa" stroke="#4d77ac" stroke-width="1.5"/>
+<text x="660.0" y="903.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review findings and identify concerns</text>
+<text x="660.0" y="938.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Managers interpret health scores and survey insights</text>
+<polyline points="295,740 295,920 340,920" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="340,920 330.0950818741206,924.7846208752235 330.0950818741206,915.2153791247765" fill="#718396"/>
+<polyline points="850,740 850,875" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="850,875 845.2153791247765,865.0950818741205 854.7846208752235,865.0950818741205" fill="#718396"/>
+<rect x="1200" y="230" width="410" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1405.0" y="256.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Choose an improvement action</text>
+<text x="1405.0" y="291.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Search relevant past actions</text>
+<text x="1405.0" y="315.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Consider previous effectiveness ratings</text>
+<rect x="1200" y="420" width="410" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1405.0" y="446.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Apply and log the action</text>
+<text x="1405.0" y="481.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Team performs the intervention</text>
+<text x="1405.0" y="505.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Record problem, cause, action, and project</text>
+<rect x="1200" y="610" width="410" height="110" rx="12" fill="#fff7ea" stroke="#b58a3c" stroke-width="1.5"/>
+<text x="1405.0" y="636.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Review action effectiveness</text>
+<text x="1405.0" y="671.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Rate observed results from 1 to 5</text>
+<text x="1405.0" y="695.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Defer review when more time is needed</text>
+<rect x="1200" y="800" width="410" height="100" rx="12" fill="#eaf0f6" stroke="#8293a5" stroke-width="1.5"/>
+<text x="1405.0" y="833.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#183047">Reusable action knowledge</text>
+<text x="1405.0" y="868.5" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#536577">Action history and effectiveness ratings</text>
+<polyline points="1214,810 1596,810" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="1214,890 1596,890" fill="none" stroke="#b5c3d1" stroke-width="2" stroke-linejoin="round"/>
+<polyline points="980,920 1125,920 1125,285 1200,285" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1200,285 1190.0950818741205,289.78462087522354 1190.0950818741205,280.21537912477646" fill="#718396"/>
+<polyline points="1405,340 1405,420" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1405,420 1400.2153791247765,410.0950818741206 1409.7846208752235,410.0950818741206" fill="#718396"/>
+<polyline points="1405,530 1405,610" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1405,610 1400.2153791247765,600.0950818741205 1409.7846208752235,600.0950818741205" fill="#718396"/>
+<polyline points="1405,720 1405,800" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1405,800 1400.2153791247765,790.0950818741205 1409.7846208752235,790.0950818741205" fill="#718396"/>
+<polyline points="1610,850 1630,850 1630,205 1405,205 1405,230" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="1405,230 1400.2153791247765,220.09508187412055 1409.7846208752235,220.09508187412055" fill="#718396"/>
+<polyline points="1405,900 1405,1010 25,1010 25,465 90,465" fill="none" stroke="#718396" stroke-width="2" stroke-linejoin="round"/>
+<polygon points="90,465 80.09508187412055,469.78462087522354 80.09508187412055,460.21537912477646" fill="#718396"/>
+<text x="790" y="990" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#536577">Continue monitoring project health after interventions</text>
+<text x="850.0" y="1065" text-anchor="middle" dominant-baseline="central" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#536577">Survey assessments remain separate from tool-based health scores; both support human decisions.</text>
+</svg>
